@@ -1,0 +1,56 @@
+[project]
+name = 'convoy-engine'
+version = '0.0.1'
+description = 'Governed, measurable multi-PR execution engine.'
+readme = 'README.md'
+requires-python = '>=3.14'
+dependencies = [
+    'typer>=0.12',
+    'structlog>=24.0',
+    'tomli-w>=1.0',
+]
+
+[project.scripts]
+convoy = 'convoy.interface.cli:main'
+cvy = 'convoy.interface.cli:main'
+
+[build-system]
+requires = ['hatchling']
+build-backend = 'hatchling.build'
+
+[tool.hatch.build.targets.wheel]
+packages = ['src/convoy']
+
+[dependency-groups]
+dev = [
+    { include-group = 'lint' },
+    { include-group = 'test' },
+]
+lint = [
+    'ruff>=0.15',
+    'ty',
+]
+test = [
+    'pytest>=8.0',
+    'hypothesis>=6.0',
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.format]
+quote-style = 'single'
+
+[tool.ruff.lint]
+select = ['E', 'F', 'I', 'N', 'UP', 'B', 'SIM']
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = 'single'
+docstring-quotes = 'double'
+
+[tool.ruff.lint.isort]
+known-first-party = ['convoy']
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+addopts = '-q'

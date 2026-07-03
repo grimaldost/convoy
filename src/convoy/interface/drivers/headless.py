@@ -1,0 +1,223 @@
+"""The headless driver — the ``convoy run`` engine (shell).
+
+This is the run loop: stage on the base branch, walk the dependency-ordered PRs,
+and integrate as it goes. Each PR branches off the *accumulated* integration
+state, so a dependent sees its predecessors' merged work; its implementation is
+spawned, committed, and gated, and a green PR is merged onto the integration
+branch immediately — before the next PR branches from it. Every agent spawn is
+economy-accounted to the telemetry file; the run ends with a single
+``run_complete`` carrying its outcome, leaving the integration tree checked out
+when the whole series is green.
+
+The loop is deliberately fail-loud: a blocking red is never integrated over. On a
+blocking red the driver runs a *bounded* fix loop — up to
+``series.review.max_fix_attempts`` fix spawns, re-running the gate after each — and
+integrates only if the gate goes green; if it is still red after the attempts the
+run halts ``blocked`` and processes no later PR, so a dependent of a failed PR
+never runs or integrates. The re-gate is the sole arbiter: a red always blocks
+regardless of provenance, so attempting a fix can never make things worse and
+green is never emitted while the gate is still ``blocking_red``. An infrastructure
+failure — whether from the implementation spawn or a fix spawn — halts before the
+gate is trusted so a bad matrix stops cleanly rather than being scored. It iterates
+``dag.order`` for a one-PR series exactly as for many, and a one-PR series is
+behaviorally identical to integrating once at the end.
+
+The pure decisions (DAG order, gate verdict) live in ``core``; this driver owns
+the effects and the orchestration around them, composing the shell adapters
+(spawn, git, gate runner, telemetry writer) behind their ports.
+"""
+
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from secrets import token_hex
+
+from convoy.core.dag import order
+from convoy.core.gate import GateVerdict, decide
+from convoy.core.governance import resolve_spawn
+from convoy.core.spec import Series
+from convoy.core.telemetry import (
+    RunComplete,
+    RunStart,
+    SpawnComplete,
+    apply_cost_fallback,
+)
+from convoy.interface.gate_runner import GateRunner
+from convoy.interface.git import Git
+from convoy.interface.spawn import AgentSpawn, SpawnRequest, SpawnResult
+from convoy.interface.telemetry_writer import TelemetryWriter
+
+EXIT_OK = 0
+EXIT_BLOCKED = 1
+EXIT_INFRASTRUCTURE = 2
+EXIT_USAGE = 3
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """A headless run's result: the coarse outcome, whether it integrated, the exit code."""
+
+    outcome: str  # 'completed' | 'blocked' | 'infrastructure'
+    integrated: bool
+    exit_code: int
+
+
+def make_run_id() -> str:
+    """A lexicographically-sortable run id: UTC ``%Y%m%dT%H%M%SZ`` plus a short random suffix.
+
+    The timestamp prefix orders runs by start time; the random suffix keeps two
+    runs started in the same second distinct.
+    """
+    stamp = datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')
+    return f'{stamp}-{token_hex(4)}'
+
+
+def _fix_brief(original_brief: str, verdict: GateVerdict) -> str:
+    """The original brief plus an appended section naming each failing blocking check.
+
+    Lists every blocking check that is red, with its ``name`` and ``detail``, so a
+    fix agent knows exactly what to repair. Whether any of those reds is
+    *independent* is recorded as provenance only — it never changes that the red
+    blocks; the re-gate is the arbiter.
+    """
+    failures = [r for r in verdict.results if not r.passed and r.check.blocking]
+    lines = [original_brief, '', '## Failing checks to repair', '']
+    if verdict.independent_red:
+        lines.append(
+            'At least one failing check is independent (author-supplied, unreachable '
+            'by you) — its red is a trustworthy signal.'
+        )
+        lines.append('')
+    for result in failures:
+        lines.append(f'- {result.check.name}: {result.detail}')
+    return '\n'.join(lines)
+
+
+def _record_spawn(
+    telemetry: TelemetryWriter, run_id: str, pr_id: str, role: str, result: SpawnResult
+) -> None:
+    """Write a ``spawn_complete`` line for ``result`` under ``role`` (with cost fallback)."""
+    telemetry.write(
+        apply_cost_fallback(
+            SpawnComplete(
+                run_id=run_id,
+                pr_id=pr_id,
+                role=role,
+                exit_code=result.exit_code,
+                input_tokens=result.economy.input_tokens,
+                output_tokens=result.economy.output_tokens,
+                num_turns=result.economy.num_turns,
+                duration_s=result.economy.duration_s,
+                cost_usd=result.economy.cost_usd,
+                effective_model=result.economy.effective_model,
+            )
+        )
+    )
+
+
+def run_series(
+    series: Series,
+    workspace: Path,
+    *,
+    spawn: AgentSpawn,
+    git: Git,
+    gate_runner: GateRunner,
+    telemetry: TelemetryWriter,
+    run_id: str,
+) -> RunOutcome:
+    """Run ``series`` end-to-end in ``workspace``, returning its outcome.
+
+    Stages on ``series.branches.base``, ensures the integration branch exists,
+    then walks ``dag.order(series.prs)`` — always via the DAG, whether one PR or
+    many. Per PR: check out the integration branch (so the PR branches off the
+    *accumulated* integrated state and a dependent sees its predecessors), branch,
+    read the prompt, spawn the implementation, record its economy, and (unless the
+    spawn was an infrastructure failure) commit and run the gate. A green PR is
+    merged onto ``series.branches.integration`` immediately, before the next PR
+    branches from it. A blocking red does not integrate; instead the driver runs a
+    bounded fix loop (up to ``series.review.max_fix_attempts`` fix spawns, re-gating
+    after each) and integrates only if the gate turns green. If it is still red
+    after the attempts the run halts ``blocked`` and processes no later PR, so a
+    dependent of a failed PR never runs or integrates; an infrastructure
+    classification (from the implementation or a fix spawn) halts before the gate is
+    trusted. Green is never emitted while the gate is still ``blocking_red``. When
+    every PR is green, the integration branch — carrying every PR's work — is left
+    checked out.
+    """
+    telemetry.write(RunStart(run_id=run_id, series_id=series.id))
+
+    # Stage on base, then create the integration branch from it. A run starts
+    # from a clean base with no integration branch yet; creating it here is the
+    # "ensure it exists" step, and every PR below branches off the accumulated
+    # integration state rather than off base.
+    git.checkout(series.branches.base)
+    git.checkout(series.branches.integration, create=True)
+
+    for pr in order(series.prs):
+        # Branch off the accumulated integration state so this PR builds on every
+        # predecessor already merged onto the integration branch.
+        git.checkout(series.branches.integration)
+        git.checkout(pr.branch, create=True)
+
+        brief = (Path(series.paths.prompts) / pr.prompt).read_text()
+
+        governed = resolve_spawn(series.governance, 'implementation')
+        request = SpawnRequest(
+            brief=brief,
+            model=governed.model,
+            effort=governed.effort,
+            permission_mode=governed.permission_mode,
+            budget_usd=governed.budget_usd,
+            tools=governed.tools,
+            timeout_seconds=governed.timeout_seconds,
+        )
+        result = spawn.spawn(request, workspace)
+        _record_spawn(telemetry, run_id, pr.id, 'implementation', result)
+
+        if result.classification == 'infrastructure':
+            telemetry.write(RunComplete(run_id=run_id, outcome='infrastructure', integrated=False))
+            return RunOutcome('infrastructure', False, EXIT_INFRASTRUCTURE)
+
+        git.commit_all(pr.id)
+
+        # Gate the PR, then repair on a blocking red. The re-gate after each fix is
+        # the sole arbiter: a red always blocks regardless of provenance, so
+        # attempting a fix never makes things worse and green is never emitted while
+        # the gate is still red. Bounded by ``series.review.max_fix_attempts`` — zero
+        # means a blocking red halts immediately with no fix spawn.
+        verdict = decide(gate_runner.run(workspace, series.checks))
+        attempts = 0
+        while verdict.blocking_red and attempts < series.review.max_fix_attempts:
+            attempts += 1
+            governed = resolve_spawn(series.governance, 'fix')
+            fix_request = SpawnRequest(
+                brief=_fix_brief(brief, verdict),
+                model=governed.model,
+                effort=governed.effort,
+                permission_mode=governed.permission_mode,
+                budget_usd=governed.budget_usd,
+                tools=governed.tools,
+                timeout_seconds=governed.timeout_seconds,
+            )
+            fix_result = spawn.spawn(fix_request, workspace)
+            _record_spawn(telemetry, run_id, pr.id, 'fix', fix_result)
+
+            if fix_result.classification == 'infrastructure':
+                telemetry.write(
+                    RunComplete(run_id=run_id, outcome='infrastructure', integrated=False)
+                )
+                return RunOutcome('infrastructure', False, EXIT_INFRASTRUCTURE)
+
+            git.commit_all(f'{pr.id}-fix-{attempts}')
+            verdict = decide(gate_runner.run(workspace, series.checks))
+
+        if verdict.blocking_red:
+            telemetry.write(RunComplete(run_id=run_id, outcome='blocked', integrated=False))
+            return RunOutcome('blocked', False, EXIT_BLOCKED)
+
+        # Green: integrate this PR now so the next one branches from it. git.merge
+        # checks out the integration branch and leaves it checked out.
+        git.merge(pr.branch, series.branches.integration)
+
+    telemetry.write(RunComplete(run_id=run_id, outcome='completed', integrated=True))
+    return RunOutcome('completed', True, EXIT_OK)
