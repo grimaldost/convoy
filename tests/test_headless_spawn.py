@@ -355,3 +355,86 @@ def test_timeout_recovers_partial_economy(tmp_path: Path) -> None:
     assert got.economy.output_tokens == 8
     # No result event → duration falls back to the timeout bound.
     assert got.economy.duration_s == 2.0
+
+
+def test_effective_model_falls_back_to_request_when_stream_has_none(tmp_path: Path) -> None:
+    """A stream that never names a model records the requested model, never a blank string."""
+    result = _result_line(model='')  # no usable model in the stream (as on a killed spawn)
+    body = f'print({result!r})\nsys.exit(0)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(model='claude-haiku-4-5'), cwd=tmp_path)
+
+    assert got.economy.effective_model == 'claude-haiku-4-5'
+
+
+def test_effective_model_prefers_the_streamed_model_over_the_request(tmp_path: Path) -> None:
+    """When the stream reports a model it wins over the requested one (the resolved model)."""
+    result = _result_line(model='claude-sonnet-5')
+    body = f'print({result!r})\nsys.exit(0)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(model='test-model'), cwd=tmp_path)
+
+    assert got.economy.effective_model == 'claude-sonnet-5'
+
+
+# ---------------------------------------------------------------------------
+# Budget-cap classification
+# ---------------------------------------------------------------------------
+
+
+def test_budget_subtype_classifies_as_budget(tmp_path: Path) -> None:
+    """A result subtype of error_max_budget_usd is classified 'budget', not 'ok'."""
+    result = _result_line(subtype='error_max_budget_usd', is_error=True)
+    body = f'print({result!r})\nsys.exit(1)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'budget'
+    assert got.exit_code == 1
+
+
+def test_budget_subtype_with_auth_signature_is_infrastructure(tmp_path: Path) -> None:
+    """Infrastructure takes precedence: an auth signature on a budget-capped run is infra."""
+    result = _result_line(subtype='error_max_budget_usd', is_error=True)
+    body = f'print({result!r})\nsys.stderr.write("invalid api key")\nsys.exit(1)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'infrastructure'
+
+
+def test_success_subtype_is_ok(tmp_path: Path) -> None:
+    result = _result_line(subtype='success')
+    body = f'print({result!r})\nsys.exit(0)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    assert spawn.spawn(_request(), cwd=tmp_path).classification == 'ok'
+
+
+def test_task_failure_with_error_subtype_stays_ok(tmp_path: Path) -> None:
+    """A non-budget error subtype (exit 1, is_error) is a task failure, classified 'ok'."""
+    result = _result_line(subtype='error', is_error=True)
+    body = f'print({result!r})\nsys.exit(1)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'ok'
+    assert got.exit_code == 1
+
+
+def test_zero_budget_request_omits_the_flag(tmp_path: Path) -> None:
+    """Defense-in-depth: a request built with budget 0 omits --max-budget-usd (no zero cap)."""
+    result = _result_line()
+    body = f'print({result!r})\nsys.exit(0)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    spawn.spawn(_request(budget_usd=0.0), cwd=tmp_path)
+
+    argv = _read_capture(tmp_path)['argv']
+    assert isinstance(argv, list)
+    assert '--max-budget-usd' not in argv

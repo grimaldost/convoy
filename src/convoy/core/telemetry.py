@@ -54,8 +54,8 @@ class SpawnComplete:
 @dataclass(frozen=True)
 class RunComplete:
     """Emitted once per ``convoy run``. ``outcome`` is one of ``completed``,
-    ``blocked``, ``infrastructure``; ``integrated`` records whether the result
-    reached the integration branch.
+    ``blocked``, ``infrastructure``, ``budget``; ``integrated`` records whether the
+    result reached the integration branch.
     """
 
     run_id: str
@@ -63,11 +63,60 @@ class RunComplete:
     integrated: bool
 
 
-Event = RunStart | SpawnComplete | RunComplete
+@dataclass(frozen=True)
+class GateCheckLine:
+    """One check's outcome inside a ``gate_complete`` event — not itself an event.
+
+    A plain nested record: no ``schema_version`` / ``event`` tag and no ``_EVENT_TAGS``
+    entry. It serializes to a JSON object via ``dataclasses.asdict`` recursion when the
+    enclosing :class:`GateComplete` is written.
+    """
+
+    name: str
+    passed: bool
+    blocking: bool
+    independent: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class GateComplete:
+    """Emitted after every gate evaluation of a PR — the per-check verdict record.
+
+    ``attempt`` is 0 for the initial gate and 1..N after the Nth fix spawn's re-gate.
+    ``checks`` carries one :class:`GateCheckLine` per check in run order; ``blocking_red``
+    and ``independent_red`` are the derived verdict flags (see ``core.gate``). This makes a
+    blocked run self-explaining in telemetry: a consumer sees which check failed and why.
+    """
+
+    run_id: str
+    pr_id: str
+    attempt: int
+    blocking_red: bool
+    independent_red: bool
+    checks: tuple[GateCheckLine, ...]
+
+
+@dataclass(frozen=True)
+class PRSkipped:
+    """Emitted for each PR the run never processed because an earlier PR halted the series.
+
+    ``reason`` is free-form provenance (e.g. ``'upstream pr-a blocked'``): it states why
+    the series stopped, not a claim of a direct dependency edge.
+    """
+
+    run_id: str
+    pr_id: str
+    reason: str
+
+
+Event = RunStart | SpawnComplete | RunComplete | GateComplete | PRSkipped
 
 _EVENT_TAGS[RunStart] = 'run_start'
 _EVENT_TAGS[SpawnComplete] = 'spawn_complete'
 _EVENT_TAGS[RunComplete] = 'run_complete'
+_EVENT_TAGS[GateComplete] = 'gate_complete'
+_EVENT_TAGS[PRSkipped] = 'pr_skipped'
 
 
 def to_json_line(event: Event) -> str:

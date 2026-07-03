@@ -19,8 +19,10 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import cast
 
 import pytest
+from test_reporter import RecordingReporter
 
 from convoy.core.spec import (
     Branches,
@@ -34,6 +36,7 @@ from convoy.core.spec import (
 )
 from convoy.interface.drivers.headless import (
     EXIT_BLOCKED,
+    EXIT_BUDGET,
     EXIT_INFRASTRUCTURE,
     EXIT_OK,
     RunOutcome,
@@ -47,6 +50,7 @@ from convoy.interface.spawn import (
     SpawnEconomy,
     SpawnRequest,
     SpawnResult,
+    budget_result,
     ok_result,
 )
 from convoy.interface.telemetry_writer import TelemetryWriter
@@ -84,7 +88,9 @@ def _git(repo: Path, *args: str) -> None:
 
 def _make_series(repo: Path, check: Check) -> Series:
     prompts = repo / 'prompts'
-    outputs = repo / 'outputs'
+    # Telemetry outputs live OUTSIDE the scored workspace (as in real usage), so writing
+    # spawns.jsonl never dirties the git tree between a commit and the next checkout.
+    outputs = repo.parent / 'outputs'
     return Series(
         id='demo-series',
         version='1',
@@ -131,7 +137,7 @@ def harness(tmp_path: Path) -> Harness:
         series=series,
         git=Git(repo),
         gate_runner=SubprocessGateRunner(series.governance.timeout_seconds),
-        outputs=repo / 'outputs',
+        outputs=repo.parent / 'outputs',
     )
 
 
@@ -554,3 +560,311 @@ def test_make_run_id_shape() -> None:
     """``make_run_id`` is a sortable ``YYYYMMDDTHHMMSSZ`` timestamp plus a short suffix."""
     run_id = make_run_id()
     assert re.fullmatch(r'\d{8}T\d{6}Z-[0-9a-f]+', run_id), run_id
+
+
+# ---------------------------------------------------------------------------
+# gate_complete + pr_skipped telemetry (additive events)
+# ---------------------------------------------------------------------------
+
+
+def _run(harness: Harness, series: Series, spawn: FakeSpawn, run_id: str) -> RunOutcome:
+    """Run ``series`` against ``harness`` with ``spawn``, returning the outcome."""
+    return run_series(
+        series,
+        harness.repo,
+        spawn=spawn,
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id=run_id,
+    )
+
+
+def _checks_of(gate_event: dict[str, object]) -> list[dict[str, object]]:
+    """The per-check breakdown list from a ``gate_complete`` event."""
+    checks = gate_event['checks']
+    assert isinstance(checks, list)
+    return cast('list[dict[str, object]]', checks)
+
+
+def test_green_run_emits_gate_complete_attempt_zero(harness: Harness) -> None:
+    """A green PR records one gate_complete at attempt 0 with its passing check, and no skips."""
+    series = _one_pr_series(harness.series)  # default check is _PASS_CMD (blocking, name 'green')
+    _run(harness, series, FakeSpawn([ok_result()]), 'run-gc-green')
+
+    events = _read_events(harness.outputs)
+    gates = _events_of(events, 'gate_complete')
+    assert len(gates) == 1
+    assert gates[0]['pr_id'] == 'pr-1'
+    assert gates[0]['attempt'] == 0
+    assert gates[0]['blocking_red'] is False
+    checks = _checks_of(gates[0])
+    assert [c['name'] for c in checks] == ['green']
+    assert checks[0]['passed'] is True
+    assert _events_of(events, 'pr_skipped') == []
+
+
+def test_blocked_one_pr_emits_red_gate_and_no_skips(harness: Harness) -> None:
+    """A blocked single PR records a red gate_complete and no pr_skipped (nothing follows it)."""
+    red_series = _make_series(harness.repo, Check(name='red', run=_FAIL_CMD, blocking=True))
+    series = _one_pr_series(red_series)
+    _run(harness, series, FakeSpawn([ok_result()]), 'run-gc-red')
+
+    events = _read_events(harness.outputs)
+    gates = _events_of(events, 'gate_complete')
+    assert len(gates) == 1
+    assert gates[0]['blocking_red'] is True
+    checks = _checks_of(gates[0])
+    assert checks[0]['name'] == 'red'
+    assert checks[0]['passed'] is False
+    assert _events_of(events, 'pr_skipped') == []
+
+
+def test_blocked_two_pr_skips_the_dependent(harness: Harness) -> None:
+    """When pr-a blocks, pr-b is recorded skipped and never gated or spawned."""
+    red_series = _make_series(harness.repo, Check(name='red', run=_FAIL_CMD, blocking=True))
+    series = _two_pr_series(red_series)
+    (harness.repo / 'prompts' / 'impl-a.md').write_text('Implement A.')
+    (harness.repo / 'prompts' / 'impl-b.md').write_text('Implement B.')
+    spawn = MarkerSpawn([ok_result(), ok_result()], markers_for=('marker-a', 'marker-b'))
+    _run(harness, series, spawn, 'run-gc-skip')
+
+    events = _read_events(harness.outputs)
+    skips = _events_of(events, 'pr_skipped')
+    assert len(skips) == 1
+    assert skips[0]['pr_id'] == 'pr-b'
+    assert skips[0]['reason'] == 'upstream pr-a blocked'
+    # Only pr-a was gated; pr-b was never spawned.
+    assert [g['pr_id'] for g in _events_of(events, 'gate_complete')] == ['pr-a']
+    assert len(spawn.calls) == 1
+
+
+def test_fix_converge_emits_gate_attempts_zero_then_one(harness: Harness) -> None:
+    """A converging fix loop records gate_complete at attempt 0 (red) then attempt 1 (green)."""
+    series = _marker_series(harness, max_fix_attempts=2)
+    spawn = FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True)
+    _run(harness, series, spawn, 'run-gc-fix')
+
+    gates = _events_of(_read_events(harness.outputs), 'gate_complete')
+    assert [g['attempt'] for g in gates] == [0, 1]
+    assert gates[0]['blocking_red'] is True
+    assert gates[1]['blocking_red'] is False
+
+
+def test_fix_exhaust_emits_one_red_gate_per_regate(harness: Harness) -> None:
+    """An exhausted fix loop records a red gate_complete at attempts 0..max_fix_attempts."""
+    series = _marker_series(harness, max_fix_attempts=3)
+    results = [ok_result() for _ in range(1 + 3)]
+    spawn = FixMarkerSpawn(results, fix_creates_marker=False)
+    _run(harness, series, spawn, 'run-gc-exhaust')
+
+    gates = _events_of(_read_events(harness.outputs), 'gate_complete')
+    assert [g['attempt'] for g in gates] == [0, 1, 2, 3]
+    assert all(g['blocking_red'] is True for g in gates)
+
+
+def test_infra_halt_skips_downstream_and_emits_no_gate(harness: Harness) -> None:
+    """An infra halt on pr-a records pr-b skipped and writes no gate_complete (gate never runs)."""
+    series = _two_pr_series(harness.series)
+    (harness.repo / 'prompts' / 'impl-a.md').write_text('Implement A.')
+    (harness.repo / 'prompts' / 'impl-b.md').write_text('Implement B.')
+    infra = SpawnResult(
+        exit_code=1,
+        output='auth expired',
+        economy=SpawnEconomy(
+            input_tokens=0,
+            output_tokens=0,
+            num_turns=0,
+            duration_s=0.0,
+            cost_usd=0.0,
+            effective_model='test-model',
+        ),
+        classification='infrastructure',
+    )
+    _run(harness, series, FakeSpawn([infra]), 'run-gc-infra')
+
+    events = _read_events(harness.outputs)
+    assert _events_of(events, 'gate_complete') == []
+    skips = _events_of(events, 'pr_skipped')
+    assert [s['pr_id'] for s in skips] == ['pr-b']
+    assert 'infrastructure' in cast('str', skips[0]['reason'])
+
+
+def test_gate_and_skip_precede_run_complete_in_the_stream(harness: Harness) -> None:
+    """run_complete is the terminal line; gate_complete and pr_skipped are written before it."""
+    red_series = _make_series(harness.repo, Check(name='red', run=_FAIL_CMD, blocking=True))
+    series = _two_pr_series(red_series)
+    (harness.repo / 'prompts' / 'impl-a.md').write_text('Implement A.')
+    (harness.repo / 'prompts' / 'impl-b.md').write_text('Implement B.')
+    spawn = MarkerSpawn([ok_result(), ok_result()], markers_for=('marker-a', 'marker-b'))
+    _run(harness, series, spawn, 'run-gc-order')
+
+    tags = [event['event'] for event in _read_events(harness.outputs)]
+    assert tags[-1] == 'run_complete'
+    assert tags.index('gate_complete') < tags.index('run_complete')
+    assert tags.index('pr_skipped') < tags.index('run_complete')
+
+
+# (The never-blank effective_model fallback is exercised where it lives — at the spawn
+# adapter — in tests/test_headless_spawn.py; a driver-level check would only assert its own
+# fixtures, which hardcode a model, so it is omitted here as non-discriminating.)
+
+
+# ---------------------------------------------------------------------------
+# Reporter narration (stderr run log) — the same moments as telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_reporter_narrates_a_green_run(harness: Harness) -> None:
+    """A green single-PR run fires run_start, spawn_done, gate_result, integrated, run_done."""
+    series = _one_pr_series(harness.series)
+    rec = RecordingReporter()
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='rep-green',
+        reporter=rec,
+    )
+    assert rec.names() == ['run_start', 'spawn_done', 'gate_result', 'integrated', 'run_done']
+    assert rec.calls[-1] == ('run_done', 'completed', True)
+
+
+def test_reporter_narrates_a_blocked_run_with_a_skip(harness: Harness) -> None:
+    """A blocked two-PR run narrates the gate red, the dependent skip, and a blocked run_done."""
+    red_series = _make_series(harness.repo, Check(name='red', run=_FAIL_CMD, blocking=True))
+    series = _two_pr_series(red_series)
+    (harness.repo / 'prompts' / 'impl-a.md').write_text('Implement A.')
+    (harness.repo / 'prompts' / 'impl-b.md').write_text('Implement B.')
+    rec = RecordingReporter()
+    run_series(
+        series,
+        harness.repo,
+        spawn=MarkerSpawn([ok_result(), ok_result()], markers_for=('marker-a', 'marker-b')),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='rep-blocked',
+        reporter=rec,
+    )
+    assert rec.names() == ['run_start', 'spawn_done', 'gate_result', 'pr_skipped', 'run_done']
+    assert ('pr_skipped', 'pr-b', 'upstream pr-a blocked') in rec.calls
+    assert rec.calls[-1] == ('run_done', 'blocked', False)
+
+
+def test_reporter_narrates_a_fix_converge_run(harness: Harness) -> None:
+    """A converging fix loop narrates impl, red gate, fix, fix spawn, green gate, integrate."""
+    series = _marker_series(harness, max_fix_attempts=2)
+    rec = RecordingReporter()
+    run_series(
+        series,
+        harness.repo,
+        spawn=FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='rep-fix',
+        reporter=rec,
+    )
+    assert rec.names() == [
+        'run_start',
+        'spawn_done',
+        'gate_result',
+        'fix_attempt',
+        'spawn_done',
+        'gate_result',
+        'integrated',
+        'run_done',
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Budget-truncation halts the PR before commit / gate / integrate
+# ---------------------------------------------------------------------------
+
+
+def test_budget_arm_halts_before_commit_and_gate(harness: Harness) -> None:
+    """A budget-classified spawn halts 'budget' before the gate runs and never integrates."""
+    # The check would ERROR if ever run (it removes a sentinel), so a surviving sentinel
+    # proves the gate never ran — the budget halt precedes it.
+    sentinel = harness.repo / 'gate-ran.marker'
+    sentinel.write_text('present')
+    gate_probe = f'"{sys.executable}" -c "import os; os.remove(r\'{sentinel}\')"'
+    probe_series = _make_series(harness.repo, Check(name='probe', run=gate_probe, blocking=True))
+    series = _one_pr_series(probe_series)
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([budget_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-budget',
+    )
+
+    assert outcome == RunOutcome('budget', False, EXIT_BUDGET)
+    assert harness.git.current_branch() != 'integration'
+    assert sentinel.exists()  # the gate never ran
+
+    events = _read_events(harness.outputs)
+    assert len(_events_of(events, 'spawn_complete')) == 1
+    assert _events_of(events, 'gate_complete') == []
+    run_completes = _events_of(events, 'run_complete')
+    assert run_completes[0]['outcome'] == 'budget'
+    assert run_completes[0]['integrated'] is False
+
+
+def test_budget_in_the_fix_loop_halts(harness: Harness) -> None:
+    """A budget-capped fix spawn halts 'budget' before its commit."""
+    series = _marker_series(harness, max_fix_attempts=2)
+    # impl leaves the marker check red; the fix spawn is budget-capped.
+    spawn = FixMarkerSpawn([ok_result(), budget_result()], fix_creates_marker=False)
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=spawn,
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-budget-fix',
+    )
+
+    assert outcome == RunOutcome('budget', False, EXIT_BUDGET)
+    run_completes = _events_of(_read_events(harness.outputs), 'run_complete')
+    assert run_completes[0]['outcome'] == 'budget'
+
+
+def test_budget_halt_skips_the_dependent(harness: Harness) -> None:
+    """A budget halt on pr-a records pr-b skipped (never spawned) and narrates it."""
+    series = _two_pr_series(harness.series)
+    (harness.repo / 'prompts' / 'impl-a.md').write_text('Implement A.')
+    (harness.repo / 'prompts' / 'impl-b.md').write_text('Implement B.')
+    rec = RecordingReporter()
+    spawn = MarkerSpawn([budget_result(), ok_result()], markers_for=('marker-a', 'marker-b'))
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=spawn,
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-budget-skip',
+        reporter=rec,
+    )
+
+    assert outcome == RunOutcome('budget', False, EXIT_BUDGET)
+    events = _read_events(harness.outputs)
+    skips = _events_of(events, 'pr_skipped')
+    assert len(skips) == 1
+    assert skips[0]['pr_id'] == 'pr-b'
+    assert skips[0]['reason'] == 'upstream pr-a halted (budget)'
+    # pr-b was never spawned and no gate ran (budget halts before commit / gate).
+    assert len(spawn.calls) == 1
+    assert _events_of(events, 'gate_complete') == []
+    assert ('pr_skipped', 'pr-b', 'upstream pr-a halted (budget)') in rec.calls

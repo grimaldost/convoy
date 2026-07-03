@@ -23,8 +23,8 @@ from convoy.core.spec import (
 )
 
 # A complete, valid spec. Mirrors the worked example in docs/design/02-formats.md,
-# except the independent check is non-blocking (the worked example's blocking +
-# independent check is rejected by rule 5 until isolation enforcement lands).
+# except the independent check is non-blocking (a blocking independent check would need an
+# out-of-tree ``asset``, which fail-closed isolation guards at gate time — see fs_probe).
 VALID_TOML = """
 [series]
 id = "add-comparison-ops"
@@ -240,7 +240,8 @@ _TEXT = st.text(
     max_size=12,
 )
 _TOOL_LIST = st.lists(_TEXT, max_size=4).map(tuple)
-_MONEY = st.floats(min_value=0, max_value=1000, allow_nan=False, allow_infinity=False)
+# Budgets must be strictly positive (load_series rejects <= 0), so keep the strategy above 0.
+_MONEY = st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infinity=False)
 
 
 @st.composite
@@ -316,3 +317,41 @@ def test_round_trip(series: Series) -> None:
 def test_dump_is_valid_toml(series: Series) -> None:
     # dump_series output must itself be parseable TOML.
     tomllib.loads(dump_series(series))
+
+
+# --- budgets must be strictly positive (a zero budget silently disables the spend cap) ----
+
+_BUDGET_LINES = {
+    'implementation': 'implementation = 2.50',
+    'review': 'review = 0.75',
+    'fix': 'fix = 1.00',
+}
+
+
+@pytest.mark.parametrize('role', ['implementation', 'review', 'fix'])
+@pytest.mark.parametrize('bad', ['0', '0.0', '-1'])
+def test_nonpositive_budget_is_rejected(role: str, bad: str) -> None:
+    toml = VALID_TOML.replace(_BUDGET_LINES[role], f'{role} = {bad}')
+    with pytest.raises(SpecError, match='must be > 0'):
+        load_series(toml)
+
+
+def test_small_positive_budget_parses() -> None:
+    toml = VALID_TOML.replace('implementation = 2.50', 'implementation = 0.001')
+    series = load_series(toml)
+    assert series.governance.budgets.implementation == 0.001
+
+
+# --- an empty model / tier is rejected (it would resolve to a blank effective_model) -------
+
+
+def test_empty_model_is_rejected() -> None:
+    toml = VALID_TOML.replace('model = "claude-sonnet-5"', 'model = ""')
+    with pytest.raises(SpecError, match='non-empty'):
+        load_series(toml)
+
+
+def test_empty_tier_is_rejected() -> None:
+    toml = VALID_TOML.replace('model = "claude-sonnet-5"', 'model = "claude-sonnet-5"\ntier = ""')
+    with pytest.raises(SpecError, match='non-empty'):
+        load_series(toml)

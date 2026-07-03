@@ -7,7 +7,7 @@ general-purpose; **no references to any other tool** in code or docs.
 
 ```
 uv sync                                              # install deps
-uv run ruff check src && uv run ruff format --check src   # lint + format
+uv run ruff check src tests && uv run ruff format --check src tests   # lint + format
 uv run ty check src                                  # type check
 uv run pytest                                        # tests
 ```

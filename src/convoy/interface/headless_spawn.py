@@ -100,6 +100,12 @@ _RETRY_EXHAUSTED_RE = re.compile(
 )
 
 
+# The CLI's ``result`` subtype when a spawn was cut short by its ``--max-budget-usd`` cap. A
+# budget truncation is a governance limit — not infrastructure, not a clean task result — so
+# convoy classifies it distinctly and the driver halts the PR (truncated work is untrustworthy).
+_BUDGET_RESULT_SUBTYPE = 'error_max_budget_usd'
+
+
 def _is_infrastructure_signature(text: str) -> bool:
     """True when ``text`` carries an auth / usage-limit / retry-exhausted signature."""
     return bool(
@@ -120,6 +126,7 @@ class _Parsed:
     model: str = ''
     is_error: bool = False
     saw_result: bool = False
+    subtype: str = ''
 
 
 def _tokens(usage: Mapping[str, Any]) -> tuple[int, int]:
@@ -173,6 +180,9 @@ def _parse_stream(stdout: str) -> _Parsed:
                     parsed.model = model
         elif kind == 'result':
             parsed.saw_result = True
+            subtype = obj.get('subtype')
+            if isinstance(subtype, str):
+                parsed.subtype = subtype
             result_text = obj.get('result')
             if isinstance(result_text, str):
                 parsed.result_text = result_text
@@ -257,8 +267,15 @@ class HeadlessSpawn:
             env['CLAUDE_CONFIG_DIR'] = str(self._config_dir)
         return env
 
-    def _economy(self, parsed: _Parsed, fallback_duration_s: float) -> SpawnEconomy:
-        """Build the :class:`SpawnEconomy` from parsed fields, falling back on wall time."""
+    def _economy(
+        self, parsed: _Parsed, request: SpawnRequest, fallback_duration_s: float
+    ) -> SpawnEconomy:
+        """Build the :class:`SpawnEconomy` from parsed fields, falling back on wall time.
+
+        ``effective_model`` falls back to ``request.model`` when the stream carried no
+        model (a timeout or crash kills it before the ``system/init`` event), so a
+        telemetry consumer never reads a blank model on a partial spawn.
+        """
         duration_s = parsed.duration_s if parsed.duration_s else fallback_duration_s
         return SpawnEconomy(
             input_tokens=parsed.input_tokens,
@@ -266,7 +283,7 @@ class HeadlessSpawn:
             num_turns=parsed.num_turns,
             duration_s=duration_s,
             cost_usd=parsed.cost_usd,
-            effective_model=parsed.model,
+            effective_model=parsed.model or request.model,
         )
 
     def spawn(self, request: SpawnRequest, cwd: Path) -> SpawnResult:
@@ -316,7 +333,9 @@ class HeadlessSpawn:
             return SpawnResult(
                 exit_code=-1,
                 output=(stdout or '') + (stderr or ''),
-                economy=self._economy(parsed, fallback_duration_s=float(request.timeout_seconds)),
+                economy=self._economy(
+                    parsed, request, fallback_duration_s=float(request.timeout_seconds)
+                ),
                 classification='infrastructure',
             )
 
@@ -333,11 +352,18 @@ class HeadlessSpawn:
         infrastructure = _is_infrastructure_signature(stderr) or (
             not success and _is_infrastructure_signature(parsed.result_text)
         )
-        classification = 'infrastructure' if infrastructure else 'ok'
+        # Infrastructure takes precedence (an auth/usage signature on a budget-capped run is
+        # still an infra halt); otherwise a budget-cap subtype is its own classification.
+        if infrastructure:
+            classification = 'infrastructure'
+        elif parsed.subtype == _BUDGET_RESULT_SUBTYPE:
+            classification = 'budget'
+        else:
+            classification = 'ok'
 
         return SpawnResult(
             exit_code=exit_code,
             output=stdout + stderr,
-            economy=self._economy(parsed, fallback_duration_s=0.0),
+            economy=self._economy(parsed, request, fallback_duration_s=0.0),
             classification=classification,
         )

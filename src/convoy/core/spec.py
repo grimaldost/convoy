@@ -144,6 +144,19 @@ def _require_float(data: Mapping[str, Any], key: str, where: str) -> float:
     return float(value)
 
 
+def _require_positive_float(data: Mapping[str, Any], key: str, where: str) -> float:
+    """A required float that must be strictly positive.
+
+    A budget is a spend ceiling; a zero or negative ceiling is meaningless — and a ``0.0``
+    budget silently disables the spawn's ``--max-budget-usd`` cap (unlimited spend), a
+    footgun. Reject it at load so a mistake surfaces as a clear ``SpecError``.
+    """
+    value = _require_float(data, key, where)
+    if value <= 0:
+        raise SpecError(f'{where}: {key!r} must be > 0, got {value:g}')
+    return value
+
+
 def _require_bool(data: Mapping[str, Any], key: str, where: str) -> bool:
     if key not in data:
         raise SpecError(f'{where}: missing required field {key!r}')
@@ -159,6 +172,20 @@ def _optional_str(data: Mapping[str, Any], key: str, where: str) -> str | None:
     value = data[key]
     if not isinstance(value, str):
         raise SpecError(f'{where}: {key!r} must be a string, got {type(value).__name__}')
+    return value
+
+
+def _optional_nonempty_str(data: Mapping[str, Any], key: str, where: str) -> str | None:
+    """An optional string that, when present, must be non-blank.
+
+    An empty ``model`` would resolve to an empty ``effective_model`` (never-blank is a
+    telemetry contract); an empty ``tier`` is unresolvable. Reject both at load so the
+    mistake surfaces as a clear ``SpecError`` — caught by ``convoy validate`` and the run
+    pre-flight — rather than as a blank field or a runtime error.
+    """
+    value = _optional_str(data, key, where)
+    if value is not None and not value.strip():
+        raise SpecError(f'{where}: {key!r} must be non-empty when set')
     return value
 
 
@@ -210,9 +237,9 @@ def _require_table_array(data: Mapping[str, Any], key: str, where: str) -> list[
 def _parse_budgets(data: Mapping[str, Any]) -> Budgets:
     where = '[governance.budgets]'
     return Budgets(
-        implementation=_require_float(data, 'implementation', where),
-        review=_require_float(data, 'review', where),
-        fix=_require_float(data, 'fix', where),
+        implementation=_require_positive_float(data, 'implementation', where),
+        review=_require_positive_float(data, 'review', where),
+        fix=_require_positive_float(data, 'fix', where),
     )
 
 
@@ -237,8 +264,8 @@ def _parse_governance(data: Mapping[str, Any]) -> Governance:
         timeout_seconds=_require_int(data, 'timeout_seconds', where),
         budgets=_parse_budgets(_require_table(data, 'budgets', where)),
         tools=_parse_tools(_require_table(data, 'tools', where)),
-        model=_optional_str(data, 'model', where),
-        tier=_optional_str(data, 'tier', where),
+        model=_optional_nonempty_str(data, 'model', where),
+        tier=_optional_nonempty_str(data, 'tier', where),
     )
 
 

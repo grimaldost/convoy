@@ -46,9 +46,11 @@ class SpawnEconomy:
 class SpawnResult:
     """An agent spawn's outcome: exit code, output, economy, and a coarse classification.
 
-    ``classification`` is ``'ok'`` for a normal task result (whatever the exit code) or
-    ``'infrastructure'`` when the spawn failed for a transient/auth/usage reason rather
-    than the task itself — the distinction a driver needs to halt cleanly on a bad matrix.
+    ``classification`` is one of: ``'ok'`` for a normal task result (whatever the exit code);
+    ``'infrastructure'`` when the spawn failed for a transient/auth/usage reason rather than
+    the task itself (the distinction a driver needs to halt cleanly on a bad matrix); or
+    ``'budget'`` when the spawn was cut short by its ``--max-budget-usd`` cap (truncated,
+    untrustworthy work — the driver halts the PR rather than gating a partial result).
     """
 
     exit_code: int
@@ -107,4 +109,23 @@ def ok_result(
             effective_model=model,
         ),
         classification='ok',
+    )
+
+
+def budget_result(
+    cost_usd: float = 0.02, model: str = 'test-model', output: str = 'truncated'
+) -> SpawnResult:
+    """A ``budget``-classified :class:`SpawnResult`: a spawn cut short by its budget cap."""
+    return SpawnResult(
+        exit_code=1,
+        output=output,
+        economy=SpawnEconomy(
+            input_tokens=0,
+            output_tokens=0,
+            num_turns=1,
+            duration_s=1.0,
+            cost_usd=cost_usd,
+            effective_model=model,
+        ),
+        classification='budget',
     )
