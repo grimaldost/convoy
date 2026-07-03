@@ -27,6 +27,7 @@ the effects and the orchestration around them, composing the shell adapters
 (spawn, git, gate runner, telemetry writer) behind their ports.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,8 +36,12 @@ from secrets import token_hex
 from convoy.core.dag import order
 from convoy.core.gate import GateVerdict, decide
 from convoy.core.governance import resolve_spawn
-from convoy.core.spec import Series
+from convoy.core.preflight import Problem
+from convoy.core.spec import PR, Series
 from convoy.core.telemetry import (
+    GateCheckLine,
+    GateComplete,
+    PRSkipped,
     RunComplete,
     RunStart,
     SpawnComplete,
@@ -44,6 +49,7 @@ from convoy.core.telemetry import (
 )
 from convoy.interface.gate_runner import GateRunner
 from convoy.interface.git import Git
+from convoy.interface.reporter import NullReporter, Reporter
 from convoy.interface.spawn import AgentSpawn, SpawnRequest, SpawnResult
 from convoy.interface.telemetry_writer import TelemetryWriter
 
@@ -51,13 +57,21 @@ EXIT_OK = 0
 EXIT_BLOCKED = 1
 EXIT_INFRASTRUCTURE = 2
 EXIT_USAGE = 3
+EXIT_BUDGET = 4
+
+
+def format_problems(problems: Sequence[Problem]) -> str:
+    """A human-readable summary of pre-flight problems: a count plus one located line each."""
+    lines = [f'{len(problems)} problem(s) found:']
+    lines += [f'  - {problem.where} [{problem.kind}] {problem.message}' for problem in problems]
+    return '\n'.join(lines)
 
 
 @dataclass(frozen=True)
 class RunOutcome:
     """A headless run's result: the coarse outcome, whether it integrated, the exit code."""
 
-    outcome: str  # 'completed' | 'blocked' | 'infrastructure'
+    outcome: str  # 'completed' | 'blocked' | 'infrastructure' | 'budget'
     integrated: bool
     exit_code: int
 
@@ -93,6 +107,54 @@ def _fix_brief(original_brief: str, verdict: GateVerdict) -> str:
     return '\n'.join(lines)
 
 
+def _gate_event(run_id: str, pr_id: str, attempt: int, verdict: GateVerdict) -> GateComplete:
+    """A ``gate_complete`` event for ``verdict``: one line per check plus the derived flags.
+
+    ``attempt`` is 0 for the initial gate and ``n`` after the nth fix spawn's re-gate.
+    """
+    checks = tuple(
+        GateCheckLine(
+            name=result.check.name,
+            passed=result.passed,
+            blocking=result.check.blocking,
+            independent=result.check.independent,
+            detail=result.detail,
+        )
+        for result in verdict.results
+    )
+    return GateComplete(
+        run_id=run_id,
+        pr_id=pr_id,
+        attempt=attempt,
+        blocking_red=verdict.blocking_red,
+        independent_red=verdict.independent_red,
+        checks=checks,
+    )
+
+
+def _skip_remaining(
+    telemetry: TelemetryWriter,
+    reporter: Reporter,
+    run_id: str,
+    ordered: Sequence[PR],
+    halted_pr_id: str,
+    reason: str,
+) -> None:
+    """Record every PR after ``halted_pr_id`` in ``ordered`` as skipped — telemetry and reporter.
+
+    Once the series halts on ``halted_pr_id`` no later PR in the dependency order is ever
+    processed, so each is recorded as skipped with ``reason``. A halt on the last PR
+    writes nothing. ``reason`` states why the series stopped, not a direct dependency edge.
+    """
+    seen_halt = False
+    for pr in ordered:
+        if seen_halt:
+            telemetry.write(PRSkipped(run_id=run_id, pr_id=pr.id, reason=reason))
+            reporter.pr_skipped(pr.id, reason)
+        elif pr.id == halted_pr_id:
+            seen_halt = True
+
+
 def _record_spawn(
     telemetry: TelemetryWriter, run_id: str, pr_id: str, role: str, result: SpawnResult
 ) -> None:
@@ -124,6 +186,7 @@ def run_series(
     gate_runner: GateRunner,
     telemetry: TelemetryWriter,
     run_id: str,
+    reporter: Reporter | None = None,
 ) -> RunOutcome:
     """Run ``series`` end-to-end in ``workspace``, returning its outcome.
 
@@ -144,7 +207,9 @@ def run_series(
     every PR is green, the integration branch — carrying every PR's work — is left
     checked out.
     """
+    reporter = reporter if reporter is not None else NullReporter()
     telemetry.write(RunStart(run_id=run_id, series_id=series.id))
+    reporter.run_start(series.id, run_id, len(series.prs))
 
     # Stage on base, then create the integration branch from it. A run starts
     # from a clean base with no integration branch yet; creating it here is the
@@ -153,7 +218,8 @@ def run_series(
     git.checkout(series.branches.base)
     git.checkout(series.branches.integration, create=True)
 
-    for pr in order(series.prs):
+    ordered = order(series.prs)
+    for pr in ordered:
         # Branch off the accumulated integration state so this PR builds on every
         # predecessor already merged onto the integration branch.
         git.checkout(series.branches.integration)
@@ -173,10 +239,23 @@ def run_series(
         )
         result = spawn.spawn(request, workspace)
         _record_spawn(telemetry, run_id, pr.id, 'implementation', result)
+        reporter.spawn_done(pr.id, 'implementation', result)
 
         if result.classification == 'infrastructure':
+            reason = f'upstream {pr.id} halted (infrastructure)'
+            _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
             telemetry.write(RunComplete(run_id=run_id, outcome='infrastructure', integrated=False))
+            reporter.run_done('infrastructure', False)
             return RunOutcome('infrastructure', False, EXIT_INFRASTRUCTURE)
+
+        if result.classification == 'budget':
+            # A budget-truncated spawn is untrustworthy partial work: halt the PR before
+            # committing, gating, or integrating it. Distinct outcome/exit for an observer.
+            reason = f'upstream {pr.id} halted (budget)'
+            _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
+            telemetry.write(RunComplete(run_id=run_id, outcome='budget', integrated=False))
+            reporter.run_done('budget', False)
+            return RunOutcome('budget', False, EXIT_BUDGET)
 
         git.commit_all(pr.id)
 
@@ -186,9 +265,12 @@ def run_series(
         # the gate is still red. Bounded by ``series.review.max_fix_attempts`` — zero
         # means a blocking red halts immediately with no fix spawn.
         verdict = decide(gate_runner.run(workspace, series.checks))
+        telemetry.write(_gate_event(run_id, pr.id, 0, verdict))
+        reporter.gate_result(pr.id, 0, verdict)
         attempts = 0
         while verdict.blocking_red and attempts < series.review.max_fix_attempts:
             attempts += 1
+            reporter.fix_attempt(pr.id, attempts, series.review.max_fix_attempts)
             governed = resolve_spawn(series.governance, 'fix')
             fix_request = SpawnRequest(
                 brief=_fix_brief(brief, verdict),
@@ -201,23 +283,42 @@ def run_series(
             )
             fix_result = spawn.spawn(fix_request, workspace)
             _record_spawn(telemetry, run_id, pr.id, 'fix', fix_result)
+            reporter.spawn_done(pr.id, 'fix', fix_result)
 
             if fix_result.classification == 'infrastructure':
+                reason = f'upstream {pr.id} halted (infrastructure)'
+                _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
                 telemetry.write(
                     RunComplete(run_id=run_id, outcome='infrastructure', integrated=False)
                 )
+                reporter.run_done('infrastructure', False)
                 return RunOutcome('infrastructure', False, EXIT_INFRASTRUCTURE)
+
+            if fix_result.classification == 'budget':
+                reason = f'upstream {pr.id} halted (budget)'
+                _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
+                telemetry.write(RunComplete(run_id=run_id, outcome='budget', integrated=False))
+                reporter.run_done('budget', False)
+                return RunOutcome('budget', False, EXIT_BUDGET)
 
             git.commit_all(f'{pr.id}-fix-{attempts}')
             verdict = decide(gate_runner.run(workspace, series.checks))
+            telemetry.write(_gate_event(run_id, pr.id, attempts, verdict))
+            reporter.gate_result(pr.id, attempts, verdict)
 
         if verdict.blocking_red:
+            _skip_remaining(
+                telemetry, reporter, run_id, ordered, pr.id, f'upstream {pr.id} blocked'
+            )
             telemetry.write(RunComplete(run_id=run_id, outcome='blocked', integrated=False))
+            reporter.run_done('blocked', False)
             return RunOutcome('blocked', False, EXIT_BLOCKED)
 
         # Green: integrate this PR now so the next one branches from it. git.merge
         # checks out the integration branch and leaves it checked out.
         git.merge(pr.branch, series.branches.integration)
+        reporter.integrated(pr.id)
 
     telemetry.write(RunComplete(run_id=run_id, outcome='completed', integrated=True))
+    reporter.run_done('completed', True)
     return RunOutcome('completed', True, EXIT_OK)

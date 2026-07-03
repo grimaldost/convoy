@@ -42,15 +42,20 @@ a red blocks the merge.
 ## Interface — pure verdict, shell execution and probing
 
 ```python
-# src/convoy/core/gate.py — pure, no I/O
-from dataclasses import dataclass
-from collections.abc import Sequence
-
+# src/convoy/core/spec.py — pure, no I/O
 @dataclass(frozen=True)
 class Check:
     name: str
+    run: str                    # the shell command run against the workspace
     blocking: bool
     independent: bool = False   # supplied by the author, unreachable by the implementer
+    asset: str = ''             # out-of-tree oracle path; isolation verified fail-closed at gate time
+```
+
+```python
+# src/convoy/core/gate.py — pure, no I/O
+from dataclasses import dataclass
+from collections.abc import Sequence
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -87,10 +92,12 @@ class GateRunner(Protocol):
 # src/convoy/interface/fs_probe.py — shell
 class IsolationProbe(Protocol):
     def check_isolation(self, workspace: Path, check: Check) -> CheckResult | None:
-        'For each independent check, verify its assets are outside the workspace '
-        'and not writable by the implementer. On violation, return a synthetic '
-        'FAILING CheckResult so the pure verdict fails closed. I/O lives here, '
-        'never in gate.decide.'
+        'For a blocking independent check, verify its asset is outside the scored '
+        'workspace and exists. convoy checks workspace containment and existence; '
+        'it does NOT verify write permissions. On violation (no asset, in-tree '
+        'asset, or missing asset), return a synthetic FAILING CheckResult so the '
+        'pure verdict fails closed; otherwise return None. I/O lives here, never '
+        'in gate.decide.'
         ...
 ```
 
@@ -127,7 +134,8 @@ actually matters (the implementer's code cannot influence the check's judgment),
 and the proxy leaks. State this plainly rather than imply a guarantee:
 
 - **Asset-independence ≠ input-independence.** convoy checks where the check
-  *lives* (out-of-tree, non-writable). A check whose `run` reads an in-tree
+  *lives* (out-of-tree and present — containment and existence, not write
+  permissions). A check whose `run` reads an in-tree
   fixture, or imports the implementer's module, is reachable through its inputs
   even though its asset is isolated. convoy isolates the asset; it does not
   isolate everything the asset reads.
@@ -147,11 +155,12 @@ true independence.
 
 For a **blocking** independent check, isolation must hold or the gate degrades
 silently to self-grading — the exact thing the marker was for. So `IsolationProbe`
-runs before execution and, if a blocking independent check's asset is found
-in-tree or writable by the implementer, injects a failing `CheckResult` — the
-gate **fails closed** rather than running a check whose independence it cannot
-back. (Non-blocking independent checks warn instead.) This is cheap and it
-protects the one property the marker claims.
+runs before execution and, if a blocking independent check declares no asset, or
+its asset resolves inside the scored workspace, or its asset does not exist,
+injects a failing `CheckResult` — the gate **fails closed** rather than running a
+check whose independence it cannot back. (Non-blocking or non-independent checks
+run normally.) convoy verifies workspace containment and existence, not write
+permissions. This is cheap and it protects the one property the marker claims.
 
 ## Escape telemetry — a research direction, not a v1 mechanism
 

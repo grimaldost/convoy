@@ -115,7 +115,7 @@ convoy/
       governance.py         # C4 config resolution + parity enforcement
       telemetry.py          # C3 event schema + economy materialization (pure)
     interface/              # imperative shell — adapters behind ports
-      cli.py                # typer app: run, gate, ...
+      cli.py                # typer app: run, validate, init
       spawn.py              # C5 AgentSpawn Protocol + headless impl
       gate_runner.py        # C2 shell: executes check commands
       fs_probe.py           # C2 shell: independence/isolation checks (filesystem)
@@ -181,7 +181,11 @@ uv / ruff / ty, single-quote code, `typer` CLI, `pydantic-settings`, `structlog`
   not share one loop** — C6 owns its loop; the shared core is the pure leaves
   (`spec`, `dag`, `gate.decide`, `governance`, `telemetry` model) plus the step
   primitives (spawn-one, gate-one, integrate-one). C7 (v2) will own its own loop
-  with human checkpoints, calling the same primitives.
+  with human checkpoints, calling the same primitives. `convoy run` narrates
+  progress to **stderr** via an injectable reporter (silenced with `--quiet`),
+  keeping **stdout** machine-clean; alongside `run`, the CLI also offers `convoy
+  validate` (structure + pre-flight, no run) and `convoy init` (scaffold a runnable
+  starter series).
 - **C7 in-session driver (v2)** — a Claude Code *skill* (a playbook the main
   agent follows) that calls the same core library and the `convoy gate` CLI, with
   human checkpoints. It is a skill, not a second `AgentSpawn` implementation —

@@ -5,7 +5,11 @@ import json
 from pathlib import Path
 
 from convoy.core.telemetry import (
+    _EVENT_TAGS,
     SCHEMA_VERSION,
+    GateCheckLine,
+    GateComplete,
+    PRSkipped,
     RunComplete,
     RunStart,
     SpawnComplete,
@@ -120,3 +124,91 @@ def test_writer_appends_three_lines_that_parse_back(tmp_path: Path) -> None:
     assert parsed[2]['event'] == 'run_complete'
     assert all(entry['schema_version'] == 1 for entry in parsed)
     assert parsed[1]['pr_id'] == 'pr-1-lexer'
+
+
+# --- additive v1 events: gate_complete + pr_skipped (schema_version stays 1) -------------
+
+
+def test_gate_complete_json_line_has_schema_tag_and_all_fields() -> None:
+    event = GateComplete(
+        run_id='20260703T142210Z-a1',
+        pr_id='pr-1',
+        attempt=0,
+        blocking_red=True,
+        independent_red=False,
+        checks=(
+            GateCheckLine(
+                name='suite',
+                passed=False,
+                blocking=True,
+                independent=False,
+                detail='exited 1: boom',
+            ),
+            GateCheckLine(name='types', passed=True, blocking=True, independent=True, detail=''),
+        ),
+    )
+    parsed = json.loads(to_json_line(event))
+    assert parsed == {
+        'schema_version': 1,
+        'event': 'gate_complete',
+        'run_id': '20260703T142210Z-a1',
+        'pr_id': 'pr-1',
+        'attempt': 0,
+        'blocking_red': True,
+        'independent_red': False,
+        'checks': [
+            {
+                'name': 'suite',
+                'passed': False,
+                'blocking': True,
+                'independent': False,
+                'detail': 'exited 1: boom',
+            },
+            {'name': 'types', 'passed': True, 'blocking': True, 'independent': True, 'detail': ''},
+        ],
+    }
+
+
+def test_gate_complete_with_no_checks_serializes_an_empty_list() -> None:
+    event = GateComplete(
+        run_id='r', pr_id='p', attempt=2, blocking_red=False, independent_red=False, checks=()
+    )
+    parsed = json.loads(to_json_line(event))
+    assert parsed['checks'] == []
+    assert parsed['attempt'] == 2
+
+
+def test_pr_skipped_json_line_has_schema_tag_and_all_fields() -> None:
+    event = PRSkipped(run_id='r', pr_id='pr-b', reason='upstream pr-a blocked')
+    parsed = json.loads(to_json_line(event))
+    assert parsed == {
+        'schema_version': 1,
+        'event': 'pr_skipped',
+        'run_id': 'r',
+        'pr_id': 'pr-b',
+        'reason': 'upstream pr-a blocked',
+    }
+
+
+def test_new_events_do_not_bump_schema_version() -> None:
+    lines = (
+        to_json_line(
+            GateComplete(
+                run_id='r',
+                pr_id='p',
+                attempt=0,
+                blocking_red=False,
+                independent_red=False,
+                checks=(),
+            )
+        ),
+        to_json_line(PRSkipped(run_id='r', pr_id='p', reason='x')),
+    )
+    for line in lines:
+        assert json.loads(line)['schema_version'] == SCHEMA_VERSION
+    assert SCHEMA_VERSION == 1
+
+
+def test_gate_check_line_is_not_a_standalone_event() -> None:
+    # A nested record inside gate_complete, never written on its own line.
+    assert GateCheckLine not in _EVENT_TAGS

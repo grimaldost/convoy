@@ -20,7 +20,7 @@ PR-sized tasks plus the governance and gate that apply to them.
 | `[governance.budgets]` | `implementation`, `review`, `fix` | USD ceiling per phase |
 | `[governance.tools]` | `implementation`, `review`, `fix` | Tool allow-list per phase |
 | `[review]` | `blocking`, `max_fix_attempts` | Review gate + bounded fix loop |
-| `[[checks]]` | `name`, `run`, `blocking`, `independent` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)) |
+| `[[checks]]` | `name`, `run`, `blocking`, `independent`, `asset` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)); `asset` is an optional absolute out-of-tree path to a blocking independent check's oracle |
 | `[[prs]]` | `id`, `branch`, `prompt`, `phase`, `depends_on` | The PR decomposition as a DAG |
 
 `permission_mode` ∈ {`default`, `acceptEdits`, `plan`, `bypassPermissions`};
@@ -28,6 +28,26 @@ convoy never *forces* `bypassPermissions` (a caller may set it, but governance
 resolution defaults to a non-auto-approve mode). `model`/`effort` are
 **phase-level** only — there is no per-PR model field, so authoring-time and
 runtime cannot disagree about which model runs a PR.
+
+- **`asset`** is the optional out-of-tree path to a blocking independent check's
+  oracle. Its isolation is verified **fail-closed at gate time**, not at spec-load:
+  a blocking independent check with no `asset`, an `asset` inside the scored
+  workspace, or a missing `asset` **fails closed** (a synthetic failing result; the
+  check is not run). See [01-gate.md](01-gate.md). It is empty (and omitted from a
+  round-tripped spec) for any check that does not use it.
+- **The gate is series-global.** The same `[[checks]]` run after **every** PR —
+  there is no per-PR check. A PR either passes the one shared gate or is repaired
+  against it.
+- **`[governance.budgets]` and `[governance.tools]` each require all three roles**
+  — `implementation`, `review`, and `fix`. A missing role is a load-time error.
+- **Every budget must be `> 0`.** A `0` (or negative) budget is rejected at load;
+  a `0` budget would otherwise silently disable the spawn's `--max-budget-usd` cap
+  (unlimited spend), so it is a footgun convoy refuses.
+- **"Phase" has two unrelated meanings.** The governance **role**
+  (`implementation` / `review` / `fix`) — what `[governance.budgets]`,
+  `[governance.tools]`, and the spawn resolution key on — is distinct from the
+  free-form `[[prs]].phase` grouping tag on the DAG. PR execution order is
+  determined by `depends_on`; the `phase` tag imposes no cross-phase ordering.
 
 ### Worked example
 
@@ -73,6 +93,7 @@ independent = false
 [[checks]]
 name = "type-contract"
 run = "python /abs/assets/oracles/type_probe.py"   # author-supplied, out-of-tree
+asset = "/abs/assets/oracles/type_probe.py"        # isolation verified fail-closed at gate time
 blocking = true
 independent = true
 
@@ -95,9 +116,11 @@ depends_on = ["pr-1-lexer"]
 
 `spec.py` validates *structure* purely (required fields, types, DAG acyclicity,
 `depends_on` references resolve, no per-PR model field). Anything that touches
-the filesystem — do `[paths]` exist, is an `independent` check's asset actually
-out-of-tree and non-writable — is a **shell** concern (`fs_probe.py`), fed back
-into the pure verdict as data. `spec.py` never reads the disk.
+the filesystem — do `[paths]` exist, and does a blocking `independent` check's
+asset live **outside the scored workspace and exist** — is a **shell** concern
+(`fs_probe.py`), fed back into the pure verdict as data. convoy verifies workspace
+containment (the asset is outside the scored tree) and existence; it does **not**
+verify write permissions. `spec.py` never reads the disk.
 
 ## The telemetry — `spawns.jsonl`
 
@@ -106,20 +129,38 @@ This is convoy's economy record and its primary observability surface — design
 so *any* external consumer (a dashboard, a cost report, a blind scorer) can join
 on it without convoy knowing about that consumer.
 
-Every line carries `schema_version` and an `event`. v1 defines three events:
+Every line carries `schema_version` and an `event`. v1 defines five events:
 
 | `event` | Emitted | Required fields |
 |---|---|---|
 | `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id` |
 | `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model` |
+| `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
+| `pr_skipped` | for each PR the run never processed because an earlier PR halted the series | `schema_version`, `event`, `run_id`, `pr_id`, `reason` |
 | `run_complete` | once per `convoy run` | `schema_version`, `event`, `run_id`, `outcome`, `integrated` |
 
 - **`run_id`** — a lexicographically-sortable stamp (`%Y%m%dT%H%M%SZ` + short
   suffix) grouping one invocation's events; a reused `outputs` dir stays safe
   because a consumer selects the most-recent `run_id`.
 - **`role`** ∈ {`implementation`, `review`, `fix`}.
-- **`outcome`** ∈ {`completed`, `blocked`, `infrastructure`} — task success,
-  gate-blocked merge, or an infra halt (auth/quota/retry) that is re-runnable.
+- **`gate_complete.attempt`** is `0` for the initial gate and `1..N` after the Nth
+  fix re-gate. **`checks`** is a list of objects `{name, passed, blocking,
+  independent, detail}` — one per check, in run order — so a blocked run is
+  self-explaining: a consumer sees which check failed and why.
+- **`pr_skipped.reason`** is free-form (e.g. `upstream pr-1 blocked`): it states
+  *why the series stopped*, not a claim of a direct dependency edge to the halted
+  PR.
+- **`effective_model` is never blank.** On a killed or partial spawn it falls back
+  to the requested model, so an economy consumer always has a model to attribute
+  the row to.
+- **These two events are additive.** `schema_version` stays `1`; a consumer keys on
+  `event` + `schema_version` and ignores unknown events, so an older reader that
+  only knows `run_start` / `spawn_complete` / `run_complete` skips `gate_complete`
+  and `pr_skipped` lines without breaking.
+- **`outcome`** ∈ {`completed`, `blocked`, `infrastructure`, `budget`} — task
+  success, a gate-blocked merge, an infra halt (auth/quota/retry) that is
+  re-runnable, or a spend-cap truncation. On `budget` the PR is halted and its
+  partial work is **not** integrated.
 - **Per-spawn granularity is mandatory.** A run-total-only file cannot be joined
   per spawn and is useless for economy analysis. Each spawn is one line.
 - **`cost_usd` fallback.** When the provider reports `0.0` under a subscription
@@ -135,6 +176,33 @@ Every line carries `schema_version` and an `event`. v1 defines three events:
 {"schema_version": 1, "event": "spawn_complete", "run_id": "20260703T142210Z-a1", "pr_id": "pr-1-lexer", "role": "fix", "exit_code": 0, "input_tokens": 9004, "output_tokens": 1520, "num_turns": 4, "duration_s": 38.9, "cost_usd": 0.05, "effective_model": "claude-sonnet-5"}
 {"schema_version": 1, "event": "run_complete", "run_id": "20260703T142210Z-a1", "outcome": "completed", "integrated": true}
 ```
+
+A **blocked** two-PR run (`pr-1-lexer` → `pr-2-parser`). The initial gate is red on
+a blocking independent check; the bounded fix loop is exhausted and still red, so
+`pr-1-lexer` never integrates and its dependent `pr-2-parser` is never processed.
+(Fix spawns and intermediate re-gates elided for brevity; the final `gate_complete`
+is still `blocking_red`.)
+
+```json
+{"schema_version": 1, "event": "run_start", "run_id": "20260703T160102Z-b7", "series_id": "add-comparison-ops"}
+{"schema_version": 1, "event": "spawn_complete", "run_id": "20260703T160102Z-b7", "pr_id": "pr-1-lexer", "role": "implementation", "exit_code": 0, "input_tokens": 17330, "output_tokens": 2980, "num_turns": 8, "duration_s": 69.5, "cost_usd": 0.10, "effective_model": "claude-sonnet-5"}
+{"schema_version": 1, "event": "gate_complete", "run_id": "20260703T160102Z-b7", "pr_id": "pr-1-lexer", "attempt": 2, "blocking_red": true, "independent_red": true, "checks": [{"name": "suite", "passed": true, "blocking": true, "independent": false, "detail": "12 passed"}, {"name": "type-contract", "passed": false, "blocking": true, "independent": true, "detail": "type_probe: expected Ordering, got object"}]}
+{"schema_version": 1, "event": "pr_skipped", "run_id": "20260703T160102Z-b7", "pr_id": "pr-2-parser", "reason": "upstream pr-1-lexer blocked"}
+{"schema_version": 1, "event": "run_complete", "run_id": "20260703T160102Z-b7", "outcome": "blocked", "integrated": false}
+```
+
+### Exit codes
+
+`convoy run` maps its outcome to a process exit code, so a caller can branch
+without parsing telemetry:
+
+| Code | Meaning |
+|---|---|
+| `0` | completed — every PR passed the gate and integrated |
+| `1` | blocked — a blocking check stayed red after the bounded fix loop |
+| `2` | infrastructure — an auth / quota / retry / timeout halt, re-runnable |
+| `3` | usage — a bad spec, an unreadable file, or a pre-flight problem |
+| `4` | budget — a spawn hit its `--max-budget-usd` cap |
 
 ## Versioning discipline
 

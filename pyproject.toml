@@ -51,6 +51,11 @@ docstring-quotes = 'double'
 [tool.ruff.lint.isort]
 known-first-party = ['convoy']
 
+[tool.ruff.lint.flake8-bugbear]
+# typer's Argument lives in a parameter default by design (as the already-exempt
+# typer.Option does); treat it as immutable so B008 does not flag the typer idiom.
+extend-immutable-calls = ['typer.Argument']
+
 [tool.pytest.ini_options]
 testpaths = ['tests']
 addopts = '-q'
