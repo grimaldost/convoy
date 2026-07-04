@@ -134,7 +134,9 @@ def test_run_aborts_before_running_when_a_problem_exists(
     monkeypatch.chdir(workspace)
 
     calls: list[object] = []
-    monkeypatch.setattr(cli, 'run_series', lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setattr(
+        'convoy.interface.run_service.run_series', lambda *a, **k: calls.append((a, k))
+    )
 
     result = runner.invoke(cli.app, ['run', str(series_file)])
     assert result.exit_code == EXIT_USAGE
@@ -151,7 +153,7 @@ def test_run_unknown_tier_is_usage_not_blocked(
     monkeypatch.chdir(workspace)
 
     called: list[object] = []
-    monkeypatch.setattr(cli, 'run_series', lambda *a, **k: called.append(1))
+    monkeypatch.setattr('convoy.interface.run_service.run_series', lambda *a, **k: called.append(1))
 
     result = runner.invoke(cli.app, ['run', str(series_file)])
     assert result.exit_code == EXIT_USAGE
@@ -174,7 +176,7 @@ def test_run_clean_series_reaches_run_series(
         called.append(1)
         return RunOutcome('completed', True, EXIT_OK)
 
-    monkeypatch.setattr(cli, 'run_series', _fake_run_series)
+    monkeypatch.setattr('convoy.interface.run_service.run_series', _fake_run_series)
 
     result = runner.invoke(cli.app, ['run', str(series_file)])
     assert result.exit_code == EXIT_OK
@@ -192,7 +194,7 @@ def test_run_maps_runtime_error_to_usage(
     def _boom(*_a: object, **_k: object) -> RunOutcome:
         raise exc('runtime failure')
 
-    monkeypatch.setattr(cli, 'run_series', _boom)
+    monkeypatch.setattr('convoy.interface.run_service.run_series', _boom)
 
     result = runner.invoke(cli.app, ['run', str(series_file)])
     assert result.exit_code == EXIT_USAGE
@@ -214,7 +216,7 @@ def test_run_outputs_mkdir_failure_maps_to_usage(
     monkeypatch.chdir(workspace)
 
     called: list[object] = []
-    monkeypatch.setattr(cli, 'run_series', lambda *a, **k: called.append(1))
+    monkeypatch.setattr('convoy.interface.run_service.run_series', lambda *a, **k: called.append(1))
 
     result = runner.invoke(cli.app, ['run', str(series_file)])
     assert result.exit_code == EXIT_USAGE
@@ -291,7 +293,7 @@ def test_run_uses_isolated_config_by_default(
         captured['spawn'] = k['spawn']
         return RunOutcome('completed', True, EXIT_OK)
 
-    monkeypatch.setattr(cli, 'run_series', _fake)
+    monkeypatch.setattr('convoy.interface.run_service.run_series', _fake)
 
     result = runner.invoke(cli.app, ['run', str(series_file)])
     assert result.exit_code == EXIT_OK
@@ -308,7 +310,7 @@ def test_run_flag_opts_out_of_isolation(tmp_path: Path, monkeypatch: pytest.Monk
         captured['spawn'] = k['spawn']
         return RunOutcome('completed', True, EXIT_OK)
 
-    monkeypatch.setattr(cli, 'run_series', _fake)
+    monkeypatch.setattr('convoy.interface.run_service.run_series', _fake)
 
     result = runner.invoke(cli.app, ['run', '--no-config-isolation', str(series_file)])
     assert result.exit_code == EXIT_OK
@@ -326,7 +328,7 @@ def test_run_env_opts_out_of_isolation(tmp_path: Path, monkeypatch: pytest.Monke
         captured['spawn'] = k['spawn']
         return RunOutcome('completed', True, EXIT_OK)
 
-    monkeypatch.setattr(cli, 'run_series', _fake)
+    monkeypatch.setattr('convoy.interface.run_service.run_series', _fake)
 
     result = runner.invoke(cli.app, ['run', str(series_file)])
     assert result.exit_code == EXIT_OK
@@ -347,7 +349,7 @@ def test_isolated_config_is_cleaned_up_even_when_run_raises(
         captured['config_dir'] = spawn._config_dir
         raise GovernanceError('boom at runtime')
 
-    monkeypatch.setattr(cli, 'run_series', _boom)
+    monkeypatch.setattr('convoy.interface.run_service.run_series', _boom)
 
     result = runner.invoke(cli.app, ['run', str(series_file)])
     assert result.exit_code == EXIT_USAGE

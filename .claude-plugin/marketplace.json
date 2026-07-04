@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/schemas/marketplace.schema.json",
+  "name": "convoy",
+  "owner": {
+    "name": "Grimaldo Stanzani",
+    "email": "grimaldosj93@gmail.com"
+  },
+  "metadata": {
+    "description": "Governed, measurable multi-PR execution for agents — a dependency-ordered PR series, driven under a per-phase budget, gated, repaired, and integrated, with a structured per-spawn economy + gate summary."
+  },
+  "plugins": [
+    {
+      "name": "convoy",
+      "source": ".",
+      "description": "`convoy_run` + `convoy_init` MCP tools that run a governed multi-PR series (implement -> gate -> repair -> integrate) and return a structured economy + gate summary. `convoy_run` spawns `claude -p` per PR, so run co-located with an authenticated Claude Code seat."
+    }
+  ]
+}

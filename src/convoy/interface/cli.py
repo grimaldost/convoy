@@ -9,21 +9,12 @@ import typer
 from convoy import __version__
 from convoy.core.governance import GovernanceError
 from convoy.core.spec import Series, SpecError, load_series
-from convoy.interface.config_isolation import isolated_config
-from convoy.interface.drivers.headless import (
-    EXIT_USAGE,
-    RunOutcome,
-    format_problems,
-    make_run_id,
-    run_series,
-)
-from convoy.interface.gate_runner import SubprocessGateRunner
-from convoy.interface.git import Git, GitError
-from convoy.interface.headless_spawn import HeadlessSpawn
+from convoy.interface.drivers.headless import EXIT_USAGE, format_problems, make_run_id
+from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
+from convoy.interface.run_service import PreflightError, run_series_headless
 from convoy.interface.scaffold import ScaffoldError, scaffold
-from convoy.interface.telemetry_writer import TelemetryWriter
 
 app = typer.Typer(
     help='Governed, measurable multi-PR execution engine.',
@@ -106,38 +97,18 @@ def run(
 ) -> None:
     """Run a convoy series headless."""
     series = _load_or_exit(series_file)
-
-    workspace = Path.cwd()
-    problems = preflight(series, workspace)
-    if problems:
-        typer.echo(format_problems(problems), err=True)
-        raise typer.Exit(EXIT_USAGE)
-
-    def _execute(spawn: HeadlessSpawn) -> RunOutcome:
-        return run_series(
+    try:
+        outcome = run_series_headless(
             series,
-            workspace,
-            spawn=spawn,
-            git=Git(workspace),
-            gate_runner=SubprocessGateRunner(series.governance.timeout_seconds),
-            telemetry=TelemetryWriter(Path(series.paths.outputs) / 'spawns.jsonl'),
+            Path.cwd(),
             run_id=make_run_id(),
+            config_isolation=not _isolation_disabled(os.environ, no_config_isolation),
             reporter=_select_reporter(quiet),
         )
-
-    try:
-        # Create the telemetry output dir before the run. A filesystem failure here (e.g. an
-        # ancestor path component is a regular file) maps to EXIT_USAGE like any other pre-git
-        # error, never an uncaught traceback — and it still precedes every git mutation.
-        Path(series.paths.outputs).mkdir(parents=True, exist_ok=True)
-        if _isolation_disabled(os.environ, no_config_isolation):
-            # Opt-out: the scored spawn inherits the operator's config dir (pre-isolation behavior).
-            outcome = _execute(HeadlessSpawn())
-        else:
-            # Default: a credential-only CLAUDE_CONFIG_DIR so no operator settings, hooks,
-            # plugins, or memory leak into the scored spawn. Removed on exit (incl. on error).
-            with isolated_config() as cfg:
-                outcome = _execute(HeadlessSpawn(config_dir=cfg.path))
+    except PreflightError as exc:
+        # A misconfigured series fails fast and whole, before any git mutation or spawn.
+        typer.echo(format_problems(exc.problems), err=True)
+        raise typer.Exit(EXIT_USAGE) from exc
     except (GovernanceError, GitError, OSError) as exc:
         # A resolvable-only-at-runtime misconfiguration, or a git / filesystem failure, must
         # not escape as a traceback and must not collide with EXIT_BLOCKED — map to EXIT_USAGE.
