@@ -6,6 +6,40 @@ so changes accumulate under **Unreleased** and are cut into tagged releases.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-04
+
+Fixes found by the 0.1.0 install verification (a blind-agent probe passed the docs, and
+the smoke-call-through-the-installed-plugin step caught the blocker below).
+
+### Fixed
+
+- **MCP tools no longer hang the client when they shell out (the blocker).** Under a stdio
+  MCP server, a `git` subprocess that inherited the server's JSON-RPC stdin — or left a
+  Git-for-Windows background daemon (fsmonitor / auto-maintenance / auto-gc) holding an
+  inherited pipe — kept `subprocess` from ever seeing EOF, so `convoy_init` completed its
+  scaffold yet never returned its result, and a real `convoy_run` (which drives git and
+  `claude -p`) would hang the same way. Every subprocess convoy spawns now runs with
+  `stdin=subprocess.DEVNULL`, and every `git` invocation is passed
+  `-c core.fsmonitor=false -c maintenance.auto=false -c gc.auto=0` to suppress those
+  daemons (`interface/proc.py` `GIT_HERMETIC_FLAGS`, applied in `interface/git.py`,
+  `interface/scaffold.py`, and `interface/proc.py::run_with_timeout`). A new integration
+  test (`tests/test_mcp_stdio_integration.py`) drives the tools over a **real** stdio server
+  subprocess and asserts they return — the unit tests call the coroutines directly and could
+  not catch this.
+
+### Changed
+
+- **`[review].blocking` is now optional (default `false`).** It is reserved for an optional
+  blocking LLM self-review the v1 headless driver does not run, so requiring it forced
+  authors to set a field with no v1 effect (and read as contradicting `[[checks]].blocking`).
+  The deterministic `[[checks]]` gate remains the sole merge arbiter (`core/spec.py`,
+  `docs/design/02-formats.md`, `skills/convoy/SKILL.md`). Additive/loosening — existing
+  series that set it still parse.
+- **A could-not-start `convoy_run` result now carries an `error_kind`** (`spec` |
+  `governance` | `git` | `filesystem`) alongside the human-readable `error`, so an agent can
+  branch on the failure class instead of parsing a string (`interface/mcp/server.py`).
+  Additive.
+
 ## [0.1.0] - 2026-07-04
 
 First tagged release. Bundles the v1 headless engine with an agent-facing serving

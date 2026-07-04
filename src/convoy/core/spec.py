@@ -166,6 +166,16 @@ def _require_bool(data: Mapping[str, Any], key: str, where: str) -> bool:
     return value
 
 
+def _optional_bool(data: Mapping[str, Any], key: str, where: str, *, default: bool) -> bool:
+    """An optional boolean; ``default`` when absent, type-checked when present."""
+    if key not in data:
+        return default
+    value = data[key]
+    if not isinstance(value, bool):
+        raise SpecError(f'{where}: {key!r} must be a boolean, got {type(value).__name__}')
+    return value
+
+
 def _optional_str(data: Mapping[str, Any], key: str, where: str) -> str | None:
     if key not in data:
         return None
@@ -271,8 +281,11 @@ def _parse_governance(data: Mapping[str, Any]) -> Governance:
 
 def _parse_review(data: Mapping[str, Any]) -> Review:
     where = '[review]'
+    # ``blocking`` is reserved for an optional blocking LLM self-review that the v1 headless
+    # driver does not run; it is optional (default False) so authors are not forced to set a
+    # field with no v1 effect. The merge-blocking gate is ``[[checks]]``, not this flag.
     return Review(
-        blocking=_require_bool(data, 'blocking', where),
+        blocking=_optional_bool(data, 'blocking', where, default=False),
         max_fix_attempts=_require_int(data, 'max_fix_attempts', where),
     )
 

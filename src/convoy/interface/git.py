@@ -10,6 +10,8 @@ a nonzero exit becomes a :class:`GitError` carrying the command's stderr.
 import subprocess
 from pathlib import Path
 
+from convoy.interface.proc import GIT_HERMETIC_FLAGS
+
 
 class GitError(RuntimeError):
     """A git command failed."""
@@ -27,8 +29,9 @@ class Git:
         what a failure means.
         """
         return subprocess.run(
-            ['git', *args],
+            ['git', *GIT_HERMETIC_FLAGS, *args],
             cwd=self._repo,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             check=False,

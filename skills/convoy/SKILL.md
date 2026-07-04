@@ -110,9 +110,10 @@ offending section or entry, e.g. `[[prs]] 'pr-2'`).
 **`convoy_run`, could-not-start** — a real run returns this same `outcome: "usage"`
 (`ok: false`) shape if it cannot start, never a raised exception. It carries `problems` (a
 located `{ kind, where, message }` list, same as `dry_run`) for a structure or pre-flight
-failure, or `error` (a message string) for an unreadable / invalid spec or a runtime git /
-filesystem failure. So `usage` is the one `outcome` a real-run call can return **besides**
-the four engine outcomes above.
+failure, or `error` (a message string) with an `error_kind` (`spec` | `governance` | `git`
+| `filesystem`) for an unreadable / invalid spec or a runtime git / filesystem failure. So
+`usage` is the one `outcome` a real-run call can return **besides** the four engine outcomes
+above.
 
 **`convoy_init`** — `{ ok, created, series_file, workspace, next }`: the paths
 written, and the `series_file` / `workspace` to hand straight to `convoy_run`.
@@ -133,7 +134,7 @@ least one entry.
 | `[governance]` | `model` **or** `tier`, `effort`, `permission_mode`, `timeout_seconds` | one of `model`/`tier` required; `effort`, `permission_mode`, `timeout_seconds` all required (no defaults); see below |
 | `[governance.budgets]` | `implementation`, `review`, `fix` (USD numbers) | all three required; each must be **> 0** (a `0` budget is rejected — it would disable the spend cap) |
 | `[governance.tools]` | `implementation`, `review`, `fix` (arrays of tool names) | all three required; the per-role tool allow-list |
-| `[review]` | `blocking` (bool), `max_fix_attempts` (int) | `max_fix_attempts` bounds the repair loop (`0` = a blocking red halts immediately); `blocking` is reserved — see "What blocks a merge" below |
+| `[review]` | `blocking` (bool, optional, default `false`), `max_fix_attempts` (int) | `max_fix_attempts` bounds the repair loop (`0` = a blocking red halts immediately); `blocking` is reserved and optional — see "What blocks a merge" below |
 | `[[checks]]` | `name`, `run` (shell command), `blocking` (bool), `independent` (bool, default `false`), `asset` (optional path) | the gate; the same checks run after **every** PR (series-global) |
 | `[[prs]]` | `id`, `branch`, `prompt` (file under `[paths].prompts`), `phase` (tag), `depends_on` (array of PR ids, default `[]`) | the PR DAG |
 

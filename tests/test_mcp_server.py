@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from convoy.interface.drivers.headless import EXIT_OK, RunOutcome
+from convoy.interface.git import GitError
 from convoy.interface.mcp import server as srv
 from convoy.interface.mcp.server import (
     build_server,
@@ -152,6 +153,31 @@ def test_convoy_run_bad_spec_is_a_usage_result_not_an_exception(tmp_path: Path) 
     assert result['ok'] is False
     assert result['outcome'] == 'usage'
     assert 'error' in result
+    assert result['error_kind'] == 'spec'
+
+
+def test_convoy_run_runtime_git_error_is_classified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A runtime GitError (pre-flight passed, then git failed) returns a structured usage
+    # result carrying error_kind='git', never a raised exception.
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    prompts = tmp_path / 'prompts'
+    prompts.mkdir()
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, tmp_path / 'outputs'))
+
+    def _boom(*_a: Any, **_k: Any) -> RunOutcome:
+        raise GitError('merge conflict on integration')
+
+    monkeypatch.setattr(srv, 'run_series_headless', _boom)
+    result = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws)))
+    assert result['ok'] is False
+    assert result['outcome'] == 'usage'
+    assert result['error_kind'] == 'git'
+    assert 'merge conflict' in result['error']
 
 
 # --- convoy_run: real run summarizes telemetry --------------------------------------------

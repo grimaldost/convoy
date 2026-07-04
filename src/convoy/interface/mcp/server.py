@@ -122,6 +122,21 @@ def summarize_run(
     }
 
 
+def _error_kind(exc: Exception) -> str:
+    """Classify a could-not-start failure so an agent can branch on it, not parse a string.
+
+    One of ``spec`` (invalid / malformed series), ``governance`` (unresolvable model/tier at
+    runtime), ``git`` (a git operation failed), or ``filesystem`` (any other ``OSError``).
+    """
+    if isinstance(exc, SpecError):
+        return 'spec'
+    if isinstance(exc, GovernanceError):
+        return 'governance'
+    if isinstance(exc, GitError):
+        return 'git'
+    return 'filesystem'
+
+
 def _run_impl(
     series_file: str, workspace: str, dry_run: bool, config_isolation: bool
 ) -> dict[str, Any]:
@@ -129,7 +144,7 @@ def _run_impl(
     try:
         series = load_series(Path(series_file).read_text(encoding='utf-8'))
     except (OSError, SpecError) as exc:
-        return {'ok': False, 'outcome': 'usage', 'error': str(exc)}
+        return {'ok': False, 'outcome': 'usage', 'error_kind': _error_kind(exc), 'error': str(exc)}
 
     ws = Path(workspace)
     if dry_run:
@@ -152,7 +167,13 @@ def _run_impl(
             'problems': [asdict(p) for p in exc.problems],
         }
     except (GovernanceError, GitError, OSError) as exc:
-        return {'ok': False, 'outcome': 'usage', 'series_id': series.id, 'error': str(exc)}
+        return {
+            'ok': False,
+            'outcome': 'usage',
+            'series_id': series.id,
+            'error_kind': _error_kind(exc),
+            'error': str(exc),
+        }
 
     return summarize_run(
         Path(series.paths.outputs) / 'spawns.jsonl',
