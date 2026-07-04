@@ -1,6 +1,6 @@
 [project]
 name = 'convoy-engine'
-version = '0.0.1'
+version = '0.1.0'
 description = 'Governed, measurable multi-PR execution engine.'
 readme = 'README.md'
 requires-python = '>=3.14'
@@ -8,6 +8,7 @@ dependencies = [
     'typer>=0.12',
     'structlog>=24.0',
     'tomli-w>=1.0',
+    'mcp>=1.28.1',
 ]
 
 [project.scripts]
