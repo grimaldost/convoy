@@ -19,6 +19,21 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+# Git-for-Windows can spawn background daemons (fsmonitor, auto-maintenance, auto-gc) that
+# outlive the git command and inherit its handles. Under a stdio MCP server that is fatal: a
+# lingering daemon holding an inherited pipe keeps ``subprocess`` from ever seeing EOF, so the
+# git call — and the tool response behind it — hangs forever. Every git convoy runs is passed
+# these flags to suppress those daemons; every child convoy spawns is also given
+# ``stdin=subprocess.DEVNULL`` so none inherits the server's JSON-RPC input pipe.
+GIT_HERMETIC_FLAGS: tuple[str, ...] = (
+    '-c',
+    'core.fsmonitor=false',
+    '-c',
+    'maintenance.auto=false',
+    '-c',
+    'gc.auto=0',
+)
+
 
 def kill_process_tree(pid: int) -> None:
     """Kill process ``pid`` and ALL its descendants.
@@ -30,6 +45,7 @@ def kill_process_tree(pid: int) -> None:
     if sys.platform == 'win32':
         subprocess.run(
             ['taskkill', '/F', '/T', '/PID', str(pid)],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             check=False,
         )
@@ -77,6 +93,7 @@ def run_with_timeout(
         command,
         cwd=cwd,
         shell=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

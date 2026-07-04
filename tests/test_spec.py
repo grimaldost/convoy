@@ -213,6 +213,19 @@ def test_check_asset_defaults_to_empty_when_omitted() -> None:
     assert all(check.asset == '' for check in series.checks)
 
 
+def test_review_blocking_defaults_to_false_when_omitted() -> None:
+    # `[review].blocking` is reserved for an optional blocking LLM self-review the v1 driver
+    # does not run, so it is optional (default False) — authors are not forced to set a no-op.
+    text = VALID_TOML.replace('blocking = true\nmax_fix_attempts = 2', 'max_fix_attempts = 2')
+    series = load_series(text)
+    assert series.review.blocking is False
+    assert series.review.max_fix_attempts == 2
+
+
+def test_review_blocking_is_honored_when_present() -> None:
+    assert load_series(VALID_TOML).review.blocking is True
+
+
 # --- malformed TOML is wrapped ----------------------------------------------
 
 
