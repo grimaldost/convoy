@@ -219,6 +219,18 @@ documented here. A consumer keys on `event` + `schema_version` and can ignore
 unknown fields. This is what lets convoy's telemetry stay a stable contract
 without convoy knowing who reads it.
 
+**Additive can still be consumer-affecting.** A new telemetry event, a new
+optional field, a new `outcome` value, a new `error_kind` value, or a new process
+exit code is additive — it bumps no `schema_version` and an older reader keeps
+working — but a consumer that *branches on* the taxonomy (an exit code → a retry
+policy, an `outcome` → a scoring rule) silently mis-handles the new value until it
+is taught about it. So every such addition is called out in `CHANGELOG.md` as
+**consumer-affecting**, and any engine-agnostic contract that mirrors this taxonomy
+is updated in lockstep — the addition is an explicit signal to sync downstream
+engines, not a silent superset they must notice on their own. The `outcome="budget"`
+/ exit `4` addition is the worked example: additive here, yet a driving consumer that
+only knew codes 0–3 had to learn code 4 before it could classify a spend-cap halt.
+
 ## Open decisions
 
 1. **`model` vs `tier`.** Accept a concrete `model` string, an abstract `tier`

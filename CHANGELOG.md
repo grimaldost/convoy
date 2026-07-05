@@ -4,6 +4,12 @@ All notable changes to convoy are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project is pre-1.0,
 so changes accumulate under **Unreleased** and are cut into tagged releases.
 
+An addition to a public protocol a consumer keys on — a new process exit code, a new
+telemetry `outcome` / `error_kind` value, event, or field — is marked
+**(consumer-affecting)** even though it is additive, so a tool driving convoy as an
+engine knows to sync rather than silently mis-handle the new value. See the versioning
+discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
+
 ## [Unreleased]
 
 ### Added
@@ -15,7 +21,8 @@ so changes accumulate under **Unreleased** and are cut into tagged releases.
   default: without it, a leftover branch still fails loud exactly as before (`interface/git.py`
   `Git.reset_to_base`, threaded through `interface/run_service.py`, `interface/cli.py`, and
   `interface/mcp/server.py`).
-- **A workspace lock so concurrent runs fail loud instead of corrupting the tree.** A run now
+- **A workspace lock so concurrent runs fail loud instead of corrupting the tree.**
+  *(consumer-affecting: adds a `busy` MCP `error_kind` value a caller may branch on.)* A run now
   holds an exclusive lock (`<workspace>/.git/convoy-run.lock`, out of the tracked tree) from
   after a clean pre-flight through the end of the run; a second `convoy run` against the same
   workspace raises `WorkspaceBusyError` (CLI: exit `usage`; MCP: `error_kind: "busy"`) rather
