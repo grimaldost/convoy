@@ -2,7 +2,8 @@
 
 The append-only JSON-lines telemetry is convoy's economy record and primary
 observability surface (see ``docs/design/02-formats.md``). This module defines the
-three v1 events and how each serializes to one line; the file writing itself lives in
+five v1 events (``run_start`` / ``spawn_complete`` / ``gate_complete`` / ``pr_skipped`` /
+``run_complete``) and how each serializes to one line; the file writing itself lives in
 ``interface/telemetry_writer.py``. Every line carries ``schema_version`` and an
 ``event`` tag, so a consumer keys on both and can ignore unknown fields — evolution is
 additive.

@@ -190,8 +190,10 @@ def _parse_stream(stdout: str) -> _Parsed:
             if isinstance(cost, (int, float)):
                 parsed.cost_usd = float(cost)
             turns = obj.get('num_turns')
-            if isinstance(turns, int):
-                parsed.num_turns = turns
+            # The terminal result carries the authoritative turn count; when it omits or
+            # mistypes num_turns, fall back to the assistant turns counted so far (the result
+            # is terminal, so that count is complete) rather than silently reporting 0.
+            parsed.num_turns = turns if isinstance(turns, int) else assistant_turns
             duration = obj.get('duration_ms')
             if isinstance(duration, (int, float)):
                 parsed.duration_s = float(duration) / 1000.0
@@ -345,19 +347,22 @@ class HeadlessSpawn:
         exit_code = child.returncode
         success = exit_code == 0 and not parsed.is_error
 
-        # Infrastructure iff a signature is on the CLI's own stderr, or the spawn did not
-        # cleanly succeed and carries one in its result text. A cleanly successful spawn that
-        # merely mentions "usage limit" (an error handler it wrote, a test name) is task
-        # content, not a spawn failure — so it stays 'ok'.
-        infrastructure = _is_infrastructure_signature(stderr) or (
-            not success and _is_infrastructure_signature(parsed.result_text)
-        )
-        # Infrastructure takes precedence (an auth/usage signature on a budget-capped run is
-        # still an infra halt); otherwise a budget-cap subtype is its own classification.
-        if infrastructure:
+        # Classification precedence, strongest signal first:
+        #   1. The CLI's OWN stderr carrying an infra signature — a trustworthy channel, and it
+        #      overrides even a budget cap (an auth/usage failure during a budget-capped run is
+        #      still a real infra halt).
+        #   2. A budget-cap result subtype — the authoritative "truncated by --max-budget-usd".
+        #   3. A non-success spawn whose AGENT-authored result text carries an infra signature —
+        #      the weakest signal, so it must not override a budget subtype: an agent that merely
+        #      wrote "limit reached" in its truncated output is task content, not an infra halt.
+        # A cleanly successful spawn that mentions "usage limit" (an error handler it wrote, a
+        # test name) fails the `not success` guard and stays 'ok'.
+        if _is_infrastructure_signature(stderr):
             classification = 'infrastructure'
         elif parsed.subtype == _BUDGET_RESULT_SUBTYPE:
             classification = 'budget'
+        elif not success and _is_infrastructure_signature(parsed.result_text):
+            classification = 'infrastructure'
         else:
             classification = 'ok'
 

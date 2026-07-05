@@ -21,6 +21,19 @@ so changes accumulate under **Unreleased** and are cut into tagged releases.
   workspace raises `WorkspaceBusyError` (CLI: exit `usage`; MCP: `error_kind: "busy"`) rather
   than interleaving git operations. Released on both normal and error exit
   (`interface/workspace_lock.py`, wired in `interface/run_service.py`).
+  
+### Fixed
+
+- **Spawn economy no longer under-reports turns to zero.** When the terminal
+  `result` stream event omits or mistypes `num_turns`, the per-spawn economy now
+  falls back to the assistant turns counted during the run rather than recording
+  `0` — the assistant-turn fallback previously ran only when no `result` event
+  arrived at all (`interface/headless_spawn.py`).
+- **A budget-capped spawn is classified `budget`, not `infrastructure`, when its
+  partial output mentions a usage phrase.** Classification is now explicitly
+  ordered so the authoritative `error_max_budget_usd` subtype beats a weaker
+  agent-authored result-text signal; the CLI's own stderr signature still takes
+  precedence and overrides a budget cap (`interface/headless_spawn.py`).
 
 ## [0.1.1] - 2026-07-04
 
