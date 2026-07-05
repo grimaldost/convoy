@@ -15,6 +15,12 @@ so changes accumulate under **Unreleased** and are cut into tagged releases.
   default: without it, a leftover branch still fails loud exactly as before (`interface/git.py`
   `Git.reset_to_base`, threaded through `interface/run_service.py`, `interface/cli.py`, and
   `interface/mcp/server.py`).
+- **A workspace lock so concurrent runs fail loud instead of corrupting the tree.** A run now
+  holds an exclusive lock (`<workspace>/.git/convoy-run.lock`, out of the tracked tree) from
+  after a clean pre-flight through the end of the run; a second `convoy run` against the same
+  workspace raises `WorkspaceBusyError` (CLI: exit `usage`; MCP: `error_kind: "busy"`) rather
+  than interleaving git operations. Released on both normal and error exit
+  (`interface/workspace_lock.py`, wired in `interface/run_service.py`).
 
 ## [0.1.1] - 2026-07-04
 
