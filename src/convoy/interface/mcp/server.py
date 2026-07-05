@@ -36,6 +36,7 @@ from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.run_service import PreflightError, run_series_headless
 from convoy.interface.scaffold import ScaffoldError, scaffold
+from convoy.interface.workspace_lock import WorkspaceBusyError
 
 _SERVER_NAME = 'convoy'
 
@@ -126,7 +127,8 @@ def _error_kind(exc: Exception) -> str:
     """Classify a could-not-start failure so an agent can branch on it, not parse a string.
 
     One of ``spec`` (invalid / malformed series), ``governance`` (unresolvable model/tier at
-    runtime), ``git`` (a git operation failed), or ``filesystem`` (any other ``OSError``).
+    runtime), ``git`` (a git operation failed), ``busy`` (another run holds the workspace
+    lock), or ``filesystem`` (any other ``OSError``).
     """
     if isinstance(exc, SpecError):
         return 'spec'
@@ -134,6 +136,8 @@ def _error_kind(exc: Exception) -> str:
         return 'governance'
     if isinstance(exc, GitError):
         return 'git'
+    if isinstance(exc, WorkspaceBusyError):
+        return 'busy'
     return 'filesystem'
 
 
@@ -168,7 +172,7 @@ def _run_impl(
             'series_id': series.id,
             'problems': [asdict(p) for p in exc.problems],
         }
-    except (GovernanceError, GitError, OSError) as exc:
+    except (GovernanceError, GitError, WorkspaceBusyError, OSError) as exc:
         return {
             'ok': False,
             'outcome': 'usage',

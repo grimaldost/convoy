@@ -15,6 +15,7 @@ from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
 from convoy.interface.run_service import PreflightError, run_series_headless
 from convoy.interface.scaffold import ScaffoldError, scaffold
+from convoy.interface.workspace_lock import WorkspaceBusyError
 
 app = typer.Typer(
     help='Governed, measurable multi-PR execution engine.',
@@ -122,6 +123,10 @@ def run(
     except PreflightError as exc:
         # A misconfigured series fails fast and whole, before any git mutation or spawn.
         typer.echo(format_problems(exc.problems), err=True)
+        raise typer.Exit(EXIT_USAGE) from exc
+    except WorkspaceBusyError as exc:
+        # Another run already holds the workspace lock — fail loud, not a traceback.
+        typer.echo(str(exc), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
     except (GovernanceError, GitError, OSError) as exc:
         # A resolvable-only-at-runtime misconfiguration, or a git / filesystem failure, must

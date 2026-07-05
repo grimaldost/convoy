@@ -22,6 +22,7 @@ from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter
 from convoy.interface.telemetry_writer import TelemetryWriter
+from convoy.interface.workspace_lock import workspace_lock
 
 
 class PreflightError(Exception):
@@ -58,37 +59,44 @@ def run_series_headless(
     is reset onto the series' base branch — so a completed or halted run can be re-run
     without a prior "branch already exists" failure. Off by default: with ``fresh`` false,
     a leftover branch still fails loud exactly as before this option existed.
+
+    Holds an exclusive lock on ``workspace`` (see :mod:`workspace_lock`) from right after a
+    clean pre-flight through the end of the run, so a second concurrent run against the same
+    workspace raises :class:`~convoy.interface.workspace_lock.WorkspaceBusyError` instead of
+    interleaving git operations. Released on both normal return and exception.
     """
     problems = preflight(series, workspace)
     if problems:
         raise PreflightError(problems)
 
-    if fresh:
-        branches = [series.branches.integration, *(pr.branch for pr in series.prs)]
-        Git(workspace).reset_to_base(series.branches.base, branches)
+    with workspace_lock(workspace):
+        if fresh:
+            branches = [series.branches.integration, *(pr.branch for pr in series.prs)]
+            Git(workspace).reset_to_base(series.branches.base, branches)
 
-    # Create the telemetry output dir before the run. A filesystem failure here (e.g. an
-    # ancestor path component is a regular file) surfaces as OSError to the caller, and
-    # still precedes every git mutation.
-    Path(series.paths.outputs).mkdir(parents=True, exist_ok=True)
-    reporter = reporter if reporter is not None else NullReporter()
+        # Create the telemetry output dir before the run. A filesystem failure here (e.g. an
+        # ancestor path component is a regular file) surfaces as OSError to the caller, and
+        # still precedes every git mutation.
+        Path(series.paths.outputs).mkdir(parents=True, exist_ok=True)
+        reporter = reporter if reporter is not None else NullReporter()
 
-    def _execute(spawn: HeadlessSpawn) -> RunOutcome:
-        return run_series(
-            series,
-            workspace,
-            spawn=spawn,
-            git=Git(workspace),
-            gate_runner=SubprocessGateRunner(series.governance.timeout_seconds),
-            telemetry=TelemetryWriter(Path(series.paths.outputs) / 'spawns.jsonl'),
-            run_id=run_id,
-            reporter=reporter,
-        )
+        def _execute(spawn: HeadlessSpawn) -> RunOutcome:
+            return run_series(
+                series,
+                workspace,
+                spawn=spawn,
+                git=Git(workspace),
+                gate_runner=SubprocessGateRunner(series.governance.timeout_seconds),
+                telemetry=TelemetryWriter(Path(series.paths.outputs) / 'spawns.jsonl'),
+                run_id=run_id,
+                reporter=reporter,
+            )
 
-    if not config_isolation:
-        # Opt-out: the scored spawn inherits the operator's config dir (pre-isolation behavior).
-        return _execute(HeadlessSpawn())
-    # Default: a credential-only CLAUDE_CONFIG_DIR so no operator settings, hooks, plugins,
-    # or memory leak into the scored spawn. Removed on exit (including on error).
-    with isolated_config() as cfg:
-        return _execute(HeadlessSpawn(config_dir=cfg.path))
+        if not config_isolation:
+            # Opt-out: the scored spawn inherits the operator's config dir (pre-isolation
+            # behavior).
+            return _execute(HeadlessSpawn())
+        # Default: a credential-only CLAUDE_CONFIG_DIR so no operator settings, hooks,
+        # plugins, or memory leak into the scored spawn. Removed on exit (including on error).
+        with isolated_config() as cfg:
+            return _execute(HeadlessSpawn(config_dir=cfg.path))

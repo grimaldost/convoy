@@ -20,6 +20,7 @@ from convoy.interface.drivers.headless import EXIT_OK, RunOutcome
 from convoy.interface.git import Git, GitError
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.run_service import PreflightError, run_series_headless
+from convoy.interface.workspace_lock import workspace_lock
 
 
 def _series(prompts: Path, outputs: Path) -> Series:
@@ -166,6 +167,22 @@ def test_fresh_false_leaves_existing_branches_alone(
         ['git', 'branch', '--list'], cwd=ws, capture_output=True, text=True, check=True
     )
     assert 'pr-1' in result.stdout
+
+
+def test_run_releases_the_workspace_lock_so_a_second_run_is_not_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws, series, _outputs = _clean(tmp_path)
+
+    monkeypatch.setattr(
+        run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
+    )
+
+    run_series_headless(series, ws, run_id='r1')
+    run_series_headless(series, ws, run_id='r2')  # would raise WorkspaceBusyError if r1 leaked
+
+    with workspace_lock(ws):
+        pass  # confirms the lock is free after both runs
 
 
 def test_rerun_without_fresh_fails_where_fresh_succeeds(

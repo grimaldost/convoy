@@ -20,6 +20,7 @@ from convoy.interface.mcp.server import (
     convoy_run,
     summarize_run,
 )
+from convoy.interface.workspace_lock import WorkspaceBusyError
 
 
 def _tools() -> dict[str, Any]:
@@ -178,6 +179,30 @@ def test_convoy_run_runtime_git_error_is_classified(
     assert result['outcome'] == 'usage'
     assert result['error_kind'] == 'git'
     assert 'merge conflict' in result['error']
+
+
+def test_convoy_run_workspace_busy_is_classified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A concurrent run holding the workspace lock returns a structured usage result carrying
+    # error_kind='busy', never a raised exception.
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    prompts = tmp_path / 'prompts'
+    prompts.mkdir()
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, tmp_path / 'outputs'))
+
+    def _boom(*_a: Any, **_k: Any) -> RunOutcome:
+        raise WorkspaceBusyError('workspace is locked by another run')
+
+    monkeypatch.setattr(srv, 'run_series_headless', _boom)
+    result = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws)))
+    assert result['ok'] is False
+    assert result['outcome'] == 'usage'
+    assert result['error_kind'] == 'busy'
+    assert 'locked' in result['error']
 
 
 # --- convoy_run: real run summarizes telemetry --------------------------------------------
