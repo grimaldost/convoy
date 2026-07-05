@@ -8,6 +8,7 @@ a nonzero exit becomes a :class:`GitError` carrying the command's stderr.
 """
 
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 from convoy.interface.proc import GIT_HERMETIC_FLAGS
@@ -73,6 +74,18 @@ class Git:
             return
         self._run_checked('add', '-A')
         self._run_checked('commit', '-m', message)
+
+    def reset_to_base(self, base: str, branches: Sequence[str]) -> None:
+        """Check out ``base``, then force-delete every name in ``branches``.
+
+        A branch that does not exist is not an error (already-clean state); any other git
+        failure (e.g. deleting the currently checked-out branch) raises :class:`GitError`.
+        """
+        self._run_checked('checkout', base)
+        for branch in branches:
+            result = self._run('branch', '-D', branch)
+            if result.returncode != 0 and 'not found' not in result.stderr:
+                raise GitError(result.stderr.strip())
 
     def merge(self, source: str, into: str) -> None:
         """Check out ``into``, then merge ``source`` into it with a merge commit.

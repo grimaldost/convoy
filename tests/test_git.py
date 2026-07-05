@@ -127,3 +127,33 @@ def test_checkout_nonexistent_ref_raises_git_error(tmp_path: Path) -> None:
 
     with pytest.raises(GitError):
         git.checkout('does-not-exist')
+
+
+def test_reset_to_base_deletes_existing_branches_and_checks_out_base(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    git = Git(repo)
+    git.checkout('feature', create=True)
+    git.checkout(_BASE)
+
+    git.reset_to_base(_BASE, ['feature'])
+
+    assert git.current_branch() == _BASE
+    branches = _git(repo, 'branch', '--list')
+    assert 'feature' not in branches
+
+
+def test_reset_to_base_is_a_no_op_for_a_missing_branch(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    git = Git(repo)
+
+    git.reset_to_base(_BASE, ['does-not-exist'])
+
+    assert git.current_branch() == _BASE
+
+
+def test_reset_to_base_raises_git_error_on_a_real_failure(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    git = Git(repo)
+
+    with pytest.raises(GitError):
+        git.reset_to_base('does-not-exist-base', [])
