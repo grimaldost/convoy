@@ -154,6 +154,33 @@ def test_partial_stream_recovers_economy_from_assistant(tmp_path: Path) -> None:
     assert got.economy.output_tokens == 20
 
 
+def test_num_turns_falls_back_to_assistant_count_when_result_omits_it(tmp_path: Path) -> None:
+    """A terminal ``result`` lacking a valid ``num_turns`` still reports the counted turns.
+
+    The stream completes (a ``result`` event arrives), so the no-result partial-stream
+    fallback never fires — but the result event carries ``num_turns: null`` (or a non-int).
+    The economy must reflect the assistant turns actually seen, not a silent ``0``.
+    """
+    assistants = [
+        json.dumps(
+            {
+                'type': 'assistant',
+                'message': {'model': 'm', 'usage': {'input_tokens': 10, 'output_tokens': 5}},
+            }
+        )
+        for _ in range(3)
+    ]
+    result = _result_line(num_turns=None)  # present result, but no usable turn count
+    prints = '\n'.join(f'print({line!r})' for line in [*assistants, result])
+    body = f'{prints}\nsys.exit(0)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'ok'
+    assert got.economy.num_turns == 3  # the three assistant turns, not 0
+
+
 def test_truncated_json_line_is_tolerated(tmp_path: Path) -> None:
     """A line cut off mid-write does not crash parsing; the valid result still lands."""
     result = _result_line()
@@ -405,6 +432,26 @@ def test_budget_subtype_with_auth_signature_is_infrastructure(tmp_path: Path) ->
     got = spawn.spawn(_request(), cwd=tmp_path)
 
     assert got.classification == 'infrastructure'
+
+
+def test_budget_subtype_with_usage_phrase_in_result_stays_budget(tmp_path: Path) -> None:
+    """A budget-capped run whose partial result text mentions a limit stays 'budget', not infra.
+
+    The agent's own truncated output ("limit reached") is task content, not a spawn
+    infrastructure failure — the authoritative signal is the ``error_max_budget_usd``
+    subtype. Only the CLI's own stderr channel may override it to infrastructure.
+    """
+    result = _result_line(
+        subtype='error_max_budget_usd',
+        is_error=True,
+        result='stopping early — limit reached in the retry loop',
+    )
+    body = f'print({result!r})\nsys.exit(1)\n'  # clean stderr; the phrase is only in result text
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'budget'
 
 
 def test_success_subtype_is_ok(tmp_path: Path) -> None:

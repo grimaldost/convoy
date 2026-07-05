@@ -39,7 +39,10 @@ runtime cannot disagree about which model runs a PR.
   there is no per-PR check. A PR either passes the one shared gate or is repaired
   against it.
 - **`[governance.budgets]` and `[governance.tools]` each require all three roles**
-  — `implementation`, `review`, and `fix`. A missing role is a load-time error.
+  — `implementation`, `review`, and `fix`. A missing role is a load-time error. The
+  **`review` role is reserved**: the v1 headless driver spawns only `implementation` and
+  `fix`, so a `review` budget and tool allow-list are required for forward-compatibility
+  but have no effect in v1 — the same reserved status as `[review].blocking`.
 - **Every budget must be `> 0`.** A `0` (or negative) budget is rejected at load;
   a `0` budget would otherwise silently disable the spawn's `--max-budget-usd` cap
   (unlimited spend), so it is a footgun convoy refuses.
@@ -114,8 +117,11 @@ depends_on = ["pr-1-lexer"]
 
 ### Validation (pure) vs. probing (shell)
 
-`spec.py` validates *structure* purely (required fields, types, DAG acyclicity,
-`depends_on` references resolve, no per-PR model field). Anything that touches
+`spec.py` validates *structure* purely (required fields, types, `depends_on`
+references resolve, no per-PR model field); DAG acyclicity and duplicate-id
+detection are the pure pre-flight's job (`core/preflight.check_dag` via `dag.order`),
+run by `convoy validate` and by `convoy run` before any mutation — not `load_series`'s.
+Anything that touches
 the filesystem — do `[paths]` exist, and does a blocking `independent` check's
 asset live **outside the scored workspace and exist** — is a **shell** concern
 (`fs_probe.py`), fed back into the pure verdict as data. convoy verifies workspace
