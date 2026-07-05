@@ -175,6 +175,11 @@ least one entry.
   that v1's headless driver does **not** run, so in v1 it has no effect on whether a PR
   merges (the scaffold leaves it `false`); the field that matters in `[review]` is
   `max_fix_attempts`.
+- **The `review` role is reserved.** `[governance.budgets].review` and
+  `[governance.tools].review` are required, but v1's headless driver spawns only
+  `implementation` and `fix` — so the `review` budget and tool allow-list have no effect in
+  v1 (reserved for the same optional blocking self-review lane as `[review].blocking`). Set
+  them to any valid values; the scaffold uses small placeholders.
 - **Two meanings of "phase".** The governance **role** (`implementation` / `review` /
   `fix`) that budgets and tools key on is unrelated to the free-form `[[prs]].phase`
   grouping tag. Execution order comes from `depends_on`, not from `phase`.
@@ -231,7 +236,8 @@ before the run; `dry_run` reports any that are missing.
 To re-run cleanly, reset the workspace to `base` and delete the `integration` branch and
 any PR branches the prior run created, then run again. `outputs/spawns.jsonl` is
 append-only **across** runs — each run's lines carry a unique `run_id` (a sortable
-`%Y%m%dT%H%M%SZ` stamp), so a reader selects the latest `run_id`; a `convoy_run` summary
+`%Y%m%dT%H%M%SZ` stamp plus a short random suffix, e.g. `20260705T140000Z-a1b2c3d4`, so
+two runs in the same second stay distinct), so a reader selects the latest `run_id`; a `convoy_run` summary
 already scopes to the run it just executed. Sharing one workspace between two concurrent
 runs is not supported.
 

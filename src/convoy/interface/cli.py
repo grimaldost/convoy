@@ -53,7 +53,12 @@ def _load_or_exit(series_file: Path) -> Series:
 
 @app.command()
 def validate(series_file: Path) -> None:
-    """Validate a series without running it: structure, model resolution, paths, gate isolation."""
+    """Validate a series without running it: structure, model resolution, paths, gate isolation.
+
+    The filesystem checks — ``[paths]`` existence, ``outputs`` out-of-tree, and
+    independent-check asset isolation — are evaluated against the CURRENT directory as the
+    workspace, so run ``validate`` from the same directory you will ``run`` from.
+    """
     series = _load_or_exit(series_file)
     problems = preflight(series, Path.cwd())
     if problems:
