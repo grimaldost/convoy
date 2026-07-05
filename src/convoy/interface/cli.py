@@ -94,6 +94,14 @@ def run(
         '--no-config-isolation',
         help='Run the agent under the operator config instead of an isolated credential-only one.',
     ),
+    fresh: bool = typer.Option(
+        False,
+        '--fresh',
+        help=(
+            'Reset the workspace to base and delete prior integration/PR branches before '
+            'running, so a completed or halted run can be re-run cleanly.'
+        ),
+    ),
 ) -> None:
     """Run a convoy series headless."""
     series = _load_or_exit(series_file)
@@ -104,6 +112,7 @@ def run(
             run_id=make_run_id(),
             config_isolation=not _isolation_disabled(os.environ, no_config_isolation),
             reporter=_select_reporter(quiet),
+            fresh=fresh,
         )
     except PreflightError as exc:
         # A misconfigured series fails fast and whole, before any git mutation or spawn.

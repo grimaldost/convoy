@@ -6,6 +6,16 @@ so changes accumulate under **Unreleased** and are cut into tagged releases.
 
 ## [Unreleased]
 
+### Added
+
+- **`convoy run --fresh` / `convoy_run(reset=true)` — opt-in workspace reset for a clean
+  re-run.** Before staging, it checks out the base branch, deletes the integration branch and
+  every PR branch the series names, and lets the run recreate them — so a completed or halted
+  run can be re-run without the manual git surgery a leftover branch otherwise forces. Off by
+  default: without it, a leftover branch still fails loud exactly as before (`interface/git.py`
+  `Git.reset_to_base`, threaded through `interface/run_service.py`, `interface/cli.py`, and
+  `interface/mcp/server.py`).
+
 ## [0.1.1] - 2026-07-04
 
 Fixes found by the 0.1.0 install verification (a blind-agent probe passed the docs, and

@@ -43,6 +43,7 @@ def run_series_headless(
     run_id: str,
     config_isolation: bool = True,
     reporter: Reporter | None = None,
+    fresh: bool = False,
 ) -> RunOutcome:
     """Pre-flight then run ``series`` end-to-end in ``workspace``; return its :class:`RunOutcome`.
 
@@ -51,10 +52,20 @@ def run_series_headless(
     unless ``config_isolation`` is off wraps the scored spawn in a credential-only
     ``CLAUDE_CONFIG_DIR`` (removed on exit, even on error). Propagates the engine's
     ``GovernanceError`` / ``GitError`` / ``OSError`` unchanged.
+
+    When ``fresh`` is true, after a clean pre-flight and before the engine runs, the
+    integration branch and every PR branch the series names are deleted and ``workspace``
+    is reset onto the series' base branch — so a completed or halted run can be re-run
+    without a prior "branch already exists" failure. Off by default: with ``fresh`` false,
+    a leftover branch still fails loud exactly as before this option existed.
     """
     problems = preflight(series, workspace)
     if problems:
         raise PreflightError(problems)
+
+    if fresh:
+        branches = [series.branches.integration, *(pr.branch for pr in series.prs)]
+        Git(workspace).reset_to_base(series.branches.base, branches)
 
     # Create the telemetry output dir before the run. A filesystem failure here (e.g. an
     # ancestor path component is a regular file) surfaces as OSError to the caller, and
