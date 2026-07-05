@@ -36,6 +36,7 @@ from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.run_service import PreflightError, run_series_headless
 from convoy.interface.scaffold import ScaffoldError, scaffold
+from convoy.interface.workspace_lock import WorkspaceBusyError
 
 _SERVER_NAME = 'convoy'
 
@@ -126,7 +127,8 @@ def _error_kind(exc: Exception) -> str:
     """Classify a could-not-start failure so an agent can branch on it, not parse a string.
 
     One of ``spec`` (invalid / malformed series), ``governance`` (unresolvable model/tier at
-    runtime), ``git`` (a git operation failed), or ``filesystem`` (any other ``OSError``).
+    runtime), ``git`` (a git operation failed), ``busy`` (another run holds the workspace
+    lock), or ``filesystem`` (any other ``OSError``).
     """
     if isinstance(exc, SpecError):
         return 'spec'
@@ -134,11 +136,13 @@ def _error_kind(exc: Exception) -> str:
         return 'governance'
     if isinstance(exc, GitError):
         return 'git'
+    if isinstance(exc, WorkspaceBusyError):
+        return 'busy'
     return 'filesystem'
 
 
 def _run_impl(
-    series_file: str, workspace: str, dry_run: bool, config_isolation: bool
+    series_file: str, workspace: str, dry_run: bool, config_isolation: bool, reset: bool
 ) -> dict[str, Any]:
     """Load, (dry-run) pre-flight or run the series, and shape a structured result (sync)."""
     try:
@@ -158,7 +162,9 @@ def _run_impl(
 
     run_id = make_run_id()
     try:
-        outcome = run_series_headless(series, ws, run_id=run_id, config_isolation=config_isolation)
+        outcome = run_series_headless(
+            series, ws, run_id=run_id, config_isolation=config_isolation, fresh=reset
+        )
     except PreflightError as exc:
         return {
             'ok': False,
@@ -166,7 +172,7 @@ def _run_impl(
             'series_id': series.id,
             'problems': [asdict(p) for p in exc.problems],
         }
-    except (GovernanceError, GitError, OSError) as exc:
+    except (GovernanceError, GitError, WorkspaceBusyError, OSError) as exc:
         return {
             'ok': False,
             'outcome': 'usage',
@@ -243,6 +249,16 @@ async def convoy_run(
             )
         ),
     ] = True,
+    reset: Annotated[
+        bool,
+        Field(
+            description=(
+                'Reset the workspace to base and delete prior integration/PR branches before '
+                'running, so a completed or halted run can be re-run cleanly. Off by default: '
+                'a leftover branch still fails loud exactly as without this flag.'
+            )
+        ),
+    ] = False,
 ) -> dict[str, Any]:
     """Run a governed multi-PR series to an integrated branch; return an economy + gate summary.
 
@@ -274,8 +290,12 @@ async def convoy_run(
       - ``dry_run`` — pre-flight only, no spend, no mutation. Do this first.
       - ``config_isolation`` — run the scored agent under an isolated credential-only config
         dir (default true).
+      - ``reset`` — reset the workspace to base and delete prior integration/PR branches
+        before running, so a completed or halted run can be re-run cleanly (default false).
     """
-    return await asyncio.to_thread(_run_impl, series_file, workspace, dry_run, config_isolation)
+    return await asyncio.to_thread(
+        _run_impl, series_file, workspace, dry_run, config_isolation, reset
+    )
 
 
 async def convoy_init(

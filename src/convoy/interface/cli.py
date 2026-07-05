@@ -15,6 +15,7 @@ from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
 from convoy.interface.run_service import PreflightError, run_series_headless
 from convoy.interface.scaffold import ScaffoldError, scaffold
+from convoy.interface.workspace_lock import WorkspaceBusyError
 
 app = typer.Typer(
     help='Governed, measurable multi-PR execution engine.',
@@ -53,7 +54,12 @@ def _load_or_exit(series_file: Path) -> Series:
 
 @app.command()
 def validate(series_file: Path) -> None:
-    """Validate a series without running it: structure, model resolution, paths, gate isolation."""
+    """Validate a series without running it: structure, model resolution, paths, gate isolation.
+
+    The filesystem checks — ``[paths]`` existence, ``outputs`` out-of-tree, and
+    independent-check asset isolation — are evaluated against the CURRENT directory as the
+    workspace, so run ``validate`` from the same directory you will ``run`` from.
+    """
     series = _load_or_exit(series_file)
     problems = preflight(series, Path.cwd())
     if problems:
@@ -94,6 +100,14 @@ def run(
         '--no-config-isolation',
         help='Run the agent under the operator config instead of an isolated credential-only one.',
     ),
+    fresh: bool = typer.Option(
+        False,
+        '--fresh',
+        help=(
+            'Reset the workspace to base and delete prior integration/PR branches before '
+            'running, so a completed or halted run can be re-run cleanly.'
+        ),
+    ),
 ) -> None:
     """Run a convoy series headless."""
     series = _load_or_exit(series_file)
@@ -104,10 +118,15 @@ def run(
             run_id=make_run_id(),
             config_isolation=not _isolation_disabled(os.environ, no_config_isolation),
             reporter=_select_reporter(quiet),
+            fresh=fresh,
         )
     except PreflightError as exc:
         # A misconfigured series fails fast and whole, before any git mutation or spawn.
         typer.echo(format_problems(exc.problems), err=True)
+        raise typer.Exit(EXIT_USAGE) from exc
+    except WorkspaceBusyError as exc:
+        # Another run already holds the workspace lock — fail loud, not a traceback.
+        typer.echo(str(exc), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
     except (GovernanceError, GitError, OSError) as exc:
         # A resolvable-only-at-runtime misconfiguration, or a git / filesystem failure, must

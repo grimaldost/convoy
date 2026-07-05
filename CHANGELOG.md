@@ -6,6 +6,35 @@ so changes accumulate under **Unreleased** and are cut into tagged releases.
 
 ## [Unreleased]
 
+### Added
+
+- **`convoy run --fresh` / `convoy_run(reset=true)` — opt-in workspace reset for a clean
+  re-run.** Before staging, it checks out the base branch, deletes the integration branch and
+  every PR branch the series names, and lets the run recreate them — so a completed or halted
+  run can be re-run without the manual git surgery a leftover branch otherwise forces. Off by
+  default: without it, a leftover branch still fails loud exactly as before (`interface/git.py`
+  `Git.reset_to_base`, threaded through `interface/run_service.py`, `interface/cli.py`, and
+  `interface/mcp/server.py`).
+- **A workspace lock so concurrent runs fail loud instead of corrupting the tree.** A run now
+  holds an exclusive lock (`<workspace>/.git/convoy-run.lock`, out of the tracked tree) from
+  after a clean pre-flight through the end of the run; a second `convoy run` against the same
+  workspace raises `WorkspaceBusyError` (CLI: exit `usage`; MCP: `error_kind: "busy"`) rather
+  than interleaving git operations. Released on both normal and error exit
+  (`interface/workspace_lock.py`, wired in `interface/run_service.py`).
+  
+### Fixed
+
+- **Spawn economy no longer under-reports turns to zero.** When the terminal
+  `result` stream event omits or mistypes `num_turns`, the per-spawn economy now
+  falls back to the assistant turns counted during the run rather than recording
+  `0` — the assistant-turn fallback previously ran only when no `result` event
+  arrived at all (`interface/headless_spawn.py`).
+- **A budget-capped spawn is classified `budget`, not `infrastructure`, when its
+  partial output mentions a usage phrase.** Classification is now explicitly
+  ordered so the authoritative `error_max_budget_usd` subtype beats a weaker
+  agent-authored result-text signal; the CLI's own stderr signature still takes
+  precedence and overrides a budget cap (`interface/headless_spawn.py`).
+
 ## [0.1.1] - 2026-07-04
 
 Fixes found by the 0.1.0 install verification (a blind-agent probe passed the docs, and

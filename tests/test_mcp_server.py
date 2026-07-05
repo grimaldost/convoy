@@ -20,6 +20,7 @@ from convoy.interface.mcp.server import (
     convoy_run,
     summarize_run,
 )
+from convoy.interface.workspace_lock import WorkspaceBusyError
 
 
 def _tools() -> dict[str, Any]:
@@ -100,7 +101,7 @@ def test_build_server_registers_both_tools() -> None:
 def test_every_tool_schema_documents_every_parameter() -> None:
     tools = _tools()
     expected = {
-        'convoy_run': {'series_file', 'workspace', 'dry_run', 'config_isolation'},
+        'convoy_run': {'series_file', 'workspace', 'dry_run', 'config_isolation', 'reset'},
         'convoy_init': {'directory'},
     }
     for name, params in expected.items():
@@ -180,6 +181,30 @@ def test_convoy_run_runtime_git_error_is_classified(
     assert 'merge conflict' in result['error']
 
 
+def test_convoy_run_workspace_busy_is_classified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A concurrent run holding the workspace lock returns a structured usage result carrying
+    # error_kind='busy', never a raised exception.
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    prompts = tmp_path / 'prompts'
+    prompts.mkdir()
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, tmp_path / 'outputs'))
+
+    def _boom(*_a: Any, **_k: Any) -> RunOutcome:
+        raise WorkspaceBusyError('workspace is locked by another run')
+
+    monkeypatch.setattr(srv, 'run_series_headless', _boom)
+    result = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws)))
+    assert result['ok'] is False
+    assert result['outcome'] == 'usage'
+    assert result['error_kind'] == 'busy'
+    assert 'locked' in result['error']
+
+
 # --- convoy_run: real run summarizes telemetry --------------------------------------------
 
 
@@ -207,6 +232,7 @@ def test_convoy_run_summarizes_telemetry_by_path(
         run_id: str,
         config_isolation: bool = True,
         reporter: Any = None,
+        fresh: bool = False,
     ) -> RunOutcome:
         _write_jsonl(
             telem,
@@ -260,6 +286,38 @@ def test_convoy_run_summarizes_telemetry_by_path(
     assert result['prs'][0]['gate']['failing_checks'] == []
     assert result['telemetry_path'] == str(telem)  # trace by path, not inlined
     assert result['truncated']['any'] is False
+
+
+def test_convoy_run_reset_threads_through_to_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    prompts = tmp_path / 'prompts'
+    prompts.mkdir()
+    (prompts / 'pr1.md').write_text('do it')
+    outputs = tmp_path / 'outputs'
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+
+    captured: dict[str, Any] = {}
+
+    def _fake_run(
+        series: Any,
+        workspace: Any,
+        *,
+        run_id: str,
+        config_isolation: bool = True,
+        reporter: Any = None,
+        fresh: bool = False,
+    ) -> RunOutcome:
+        captured['fresh'] = fresh
+        return RunOutcome('completed', True, EXIT_OK)
+
+    monkeypatch.setattr(srv, 'run_series_headless', _fake_run)
+
+    asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws), reset=True))
+    assert captured['fresh'] is True
 
 
 def test_summarize_run_aggregates_filters_by_run_id_and_truncates(tmp_path: Path) -> None:

@@ -87,18 +87,17 @@ def decide(results: Sequence[CheckResult]) -> GateVerdict:
 ```python
 # src/convoy/interface/gate_runner.py — shell
 class GateRunner(Protocol):
-    def run(self, workspace: Path, checks: Sequence[Check]) -> Sequence[CheckResult]: ...
+    def run(self, workspace: Path, checks: Sequence[Check]) -> tuple[CheckResult, ...]: ...
 
-# src/convoy/interface/fs_probe.py — shell
-class IsolationProbe(Protocol):
-    def check_isolation(self, workspace: Path, check: Check) -> CheckResult | None:
-        'For a blocking independent check, verify its asset is outside the scored '
-        'workspace and exists. convoy checks workspace containment and existence; '
-        'it does NOT verify write permissions. On violation (no asset, in-tree '
-        'asset, or missing asset), return a synthetic FAILING CheckResult so the '
-        'pure verdict fails closed; otherwise return None. I/O lives here, never '
-        'in gate.decide.'
-        ...
+# src/convoy/interface/fs_probe.py — shell (a free function, not a Protocol)
+def isolation_result(workspace: Path, check: Check) -> CheckResult | None:
+    'For a blocking independent check, verify its asset is outside the scored '
+    'workspace and exists. convoy checks workspace containment and existence; '
+    'it does NOT verify write permissions. On violation (no asset, in-tree '
+    'asset, or missing asset), return a synthetic FAILING CheckResult so the '
+    'pure verdict fails closed; otherwise return None. I/O lives here, never '
+    'in gate.decide.'
+    ...
 ```
 
 The pure `decide` receives independence and isolation status **as data**. All
@@ -154,7 +153,7 @@ true independence.
 ## Guarding isolation (fail-closed)
 
 For a **blocking** independent check, isolation must hold or the gate degrades
-silently to self-grading — the exact thing the marker was for. So `IsolationProbe`
+silently to self-grading — the exact thing the marker was for. So `isolation_result`
 runs before execution and, if a blocking independent check declares no asset, or
 its asset resolves inside the scored workspace, or its asset does not exist,
 injects a failing `CheckResult` — the gate **fails closed** rather than running a
