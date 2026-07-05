@@ -211,10 +211,12 @@ def run_series(
     telemetry.write(RunStart(run_id=run_id, series_id=series.id))
     reporter.run_start(series.id, run_id, len(series.prs))
 
-    # Stage on base, then create the integration branch from it. A run starts
-    # from a clean base with no integration branch yet; creating it here is the
-    # "ensure it exists" step, and every PR below branches off the accumulated
-    # integration state rather than off base.
+    # Stage on base, then create the integration branch from it. v1 requires a CLEAN
+    # base: this creates the integration branch (and each PR branch below) with
+    # ``git checkout -b``, which fails loud if the branch already exists — so a re-run
+    # must first reset the workspace to base and delete the prior integration / PR
+    # branches (see "Limits and re-runs" in the convoy skill). Every PR below branches
+    # off the accumulated integration state rather than off base.
     git.checkout(series.branches.base)
     git.checkout(series.branches.integration, create=True)
 
