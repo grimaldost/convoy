@@ -556,6 +556,32 @@ def test_zero_fix_attempts_halts_immediately(harness: Harness) -> None:
     assert run_completes[0]['outcome'] == 'blocked'
 
 
+def test_non_ascii_prompt_reaches_the_spawn_intact(harness: Harness) -> None:
+    """A UTF-8 prompt with non-ASCII text neither crashes the run nor arrives garbled.
+
+    'ѐ' encodes to D1 90 and byte 0x90 is undefined in cp1252, so reading the
+    prompt with the locale-default encoding crashed the run on Windows; the driver
+    must pin UTF-8 for the read.
+    """
+    prompt_text = 'Vérifier ✓ ѐ'
+    (harness.repo / 'prompts' / 'impl.md').write_text(prompt_text, encoding='utf-8')
+    series = _one_pr_series(harness.series)  # default check is _PASS_CMD (blocking)
+    spawn = FakeSpawn([ok_result()])
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=spawn,
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-utf8-prompt',
+    )
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert spawn.calls[0][0].brief == prompt_text
+
+
 def test_make_run_id_shape() -> None:
     """``make_run_id`` is a sortable ``YYYYMMDDTHHMMSSZ`` timestamp plus a short suffix."""
     run_id = make_run_id()

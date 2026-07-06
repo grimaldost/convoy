@@ -11,7 +11,7 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
-from convoy.interface.proc import GIT_HERMETIC_FLAGS
+from convoy.interface.proc import GIT_HERMETIC_FLAGS, TEXT_ENCODING, TEXT_ERRORS
 
 
 class GitError(RuntimeError):
@@ -35,6 +35,8 @@ class Git:
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding=TEXT_ENCODING,
+            errors=TEXT_ERRORS,
             check=False,
         )
 

@@ -31,6 +31,20 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Fixed
 
+- **A Windows locale default can no longer crash or garble a run — UTF-8 is pinned at
+  every text boundary.** Gate-check and git subprocess output, the driver's prompt read,
+  and the CLI's series-file read all decoded via the locale default (cp1252 on Windows),
+  so one agent-produced byte in `{0x81, 0x8D, 0x8F, 0x90, 0x9D}` raised
+  `UnicodeDecodeError` and killed the run after its green PRs. Subprocess decoding now
+  follows one policy — `TEXT_ENCODING`/`TEXT_ERRORS` (UTF-8, replace) in
+  `interface/proc.py`, applied in `run_with_timeout` and `Git._run`; the prompt read pins
+  UTF-8 with replacement (mid-series, degrade beats halt); the series read pins UTF-8
+  strict and a legacy-encoded file exits as a usage error, not a traceback. Both entry
+  points also reconfigure stdout/stderr to UTF-8-with-replacement
+  (`interface/streams.py`), so convoy's own narration cannot raise `UnicodeEncodeError`
+  on a cp1252 stream. The `PLW1514` (unspecified-encoding) lint rule is enabled to keep
+  every future file-read site explicit; operators no longer need a standing
+  `PYTHONUTF8=1`.
 - **Spawn economy no longer under-reports turns to zero.** When the terminal
   `result` stream event omits or mistypes `num_turns`, the per-spawn economy now
   falls back to the assistant turns counted during the run rather than recording
