@@ -155,10 +155,21 @@ def _skip_remaining(
             seen_halt = True
 
 
+# How much of a non-ok spawn's combined output to keep on its telemetry line — enough to
+# diagnose an auth/usage halt from telemetry alone, mirroring the gate's detail bound.
+_OUTPUT_TAIL_CHARS = 2000
+
+
 def _record_spawn(
     telemetry: TelemetryWriter, run_id: str, pr_id: str, role: str, result: SpawnResult
 ) -> None:
-    """Write a ``spawn_complete`` line for ``result`` under ``role`` (with cost fallback)."""
+    """Write a ``spawn_complete`` line for ``result`` under ``role`` (with cost fallback).
+
+    A non-``ok`` classification carries the tail of the spawn's output on the line
+    (``output_tail``), so an infrastructure or budget halt is diagnosable without
+    re-running the spawn by hand; an ok spawn's stream stays out of telemetry.
+    """
+    output_tail = '' if result.classification == 'ok' else result.output[-_OUTPUT_TAIL_CHARS:]
     telemetry.write(
         apply_cost_fallback(
             SpawnComplete(
@@ -172,6 +183,7 @@ def _record_spawn(
                 duration_s=result.economy.duration_s,
                 cost_usd=result.economy.cost_usd,
                 effective_model=result.economy.effective_model,
+                output_tail=output_tail,
             )
         )
     )

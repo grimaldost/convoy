@@ -67,6 +67,7 @@ def test_spawn_complete_json_line_has_schema_tag_and_all_fields() -> None:
         'cost_usd': 0.11,
         'effective_model': 'claude-sonnet-5',
         'cost_estimated': False,
+        'output_tail': '',
     }
 
 
@@ -188,6 +189,18 @@ def test_pr_skipped_json_line_has_schema_tag_and_all_fields() -> None:
         'pr_id': 'pr-b',
         'reason': 'upstream pr-a blocked',
     }
+
+
+def test_spawn_complete_output_tail_defaults_empty() -> None:
+    # Additive field: every line carries it; ok spawns leave it empty.
+    parsed = json.loads(to_json_line(_spawn()))
+    assert parsed['output_tail'] == ''
+
+
+def test_spawn_complete_carries_output_tail_when_set() -> None:
+    event = _spawn(output_tail='Not logged in - please run /login')
+    parsed = json.loads(to_json_line(event))
+    assert parsed['output_tail'] == 'Not logged in - please run /login'
 
 
 def test_new_events_do_not_bump_schema_version() -> None:

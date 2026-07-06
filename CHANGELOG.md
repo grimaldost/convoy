@@ -14,6 +14,22 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **Seat and infra halts are diagnosable and preflighted.** *(consumer-affecting: adds an
+  `output_tail` field to `spawn_complete` lines and a `seat` pre-flight problem `kind` a
+  caller may branch on.)* Two production runs halted on an expired seat with telemetry
+  showing only `exit_code: 1, $0` — the operator had to re-run the spawn by hand to see
+  `Not logged in`. Two changes close that:
+  - `spawn_complete` lines now carry **`output_tail`** — the last 2 KB of the spawn's
+    combined stdout+stderr, populated only on a non-`ok` classification (`''` on ok
+    lines) — so the halt reason is on the telemetry line itself (`core/telemetry.py`,
+    `interface/drivers/headless.py::_record_spawn`).
+  - A real run now starts with a **seat probe**: one minimal, tool-less, budget-capped
+    ($0.05, unmetered) spawn through the same credential-only config and resolved model
+    the scored run will use, before the `--fresh` reset or any branch is staged. An
+    `infrastructure` classification (expired seat, usage limit) or a CLI that cannot
+    start raises a located `kind: "seat"` pre-flight problem and the run stops with zero
+    side effects (`interface/seat_probe.py`, wired in `interface/run_service.py`;
+    `dry_run` never spawns, probe included).
 - **`convoy run --fresh` / `convoy_run(reset=true)` — opt-in workspace reset for a clean
   re-run.** Before staging, it checks out the base branch, deletes the integration branch and
   every PR branch the series names, and lets the run recreate them — so a completed or halted
