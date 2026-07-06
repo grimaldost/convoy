@@ -43,7 +43,12 @@ line-length = 100
 quote-style = 'single'
 
 [tool.ruff.lint]
-select = ['E', 'F', 'I', 'N', 'UP', 'B', 'SIM']
+select = ['E', 'F', 'I', 'N', 'UP', 'B', 'SIM', 'PLW1514']
+# PLW1514 (unspecified-encoding) guards the Windows locale-decode class: a bare
+# read_text()/open() defaults to cp1252 on win32 and crashes on agent-produced UTF-8.
+# It is preview-only, so preview is enabled restricted to explicitly named rules.
+preview = true
+explicit-preview-rules = true
 
 [tool.ruff.lint.flake8-quotes]
 inline-quotes = 'single'

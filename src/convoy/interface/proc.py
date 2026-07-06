@@ -34,6 +34,15 @@ GIT_HERMETIC_FLAGS: tuple[str, ...] = (
     'gc.auto=0',
 )
 
+# Every text-mode child convoy runs is decoded as UTF-8 with replacement, never via the
+# locale default: on Windows that default is cp1252, which cannot decode agent-produced
+# UTF-8 (bytes 0x81/0x8D/0x8F/0x90/0x9D raise UnicodeDecodeError inside ``communicate``
+# and kill the run mid-series). 'replace' degrades a genuinely undecodable byte to U+FFFD
+# — child output feeds telemetry details and fix briefs, never re-execution, so lossy
+# beats dead. Every new text-mode subprocess site must pass BOTH constants.
+TEXT_ENCODING = 'utf-8'
+TEXT_ERRORS = 'replace'
+
 
 def kill_process_tree(pid: int) -> None:
     """Kill process ``pid`` and ALL its descendants.
@@ -97,6 +106,8 @@ def run_with_timeout(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding=TEXT_ENCODING,
+        errors=TEXT_ERRORS,
         env=dict(env) if env is not None else None,
         creationflags=creationflags,
         start_new_session=new_session,

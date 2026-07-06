@@ -227,7 +227,11 @@ def run_series(
         git.checkout(series.branches.integration)
         git.checkout(pr.branch, create=True)
 
-        brief = (Path(series.paths.prompts) / pr.prompt).read_text()
+        # UTF-8 pinned, replacement over crash: by here money is already spent on the
+        # series, so a stray byte in a prompt degrades the brief instead of halting it.
+        brief = (Path(series.paths.prompts) / pr.prompt).read_text(
+            encoding='utf-8', errors='replace'
+        )
 
         governed = resolve_spawn(series.governance, 'implementation')
         request = SpawnRequest(

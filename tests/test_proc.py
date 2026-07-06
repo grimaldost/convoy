@@ -44,6 +44,41 @@ def test_result_is_frozen_dataclass() -> None:
     assert isinstance(result, ProcResult)
 
 
+def test_undecodable_bytes_decode_to_replacement_not_a_crash() -> None:
+    """Child output no text encoding accepts degrades to U+FFFD instead of raising.
+
+    Byte 0x90 is undefined in cp1252 (the Windows locale default) and invalid as UTF-8,
+    so an implicit locale-default decode raises ``UnicodeDecodeError`` inside
+    ``communicate`` and kills the whole run mid-series. The decode policy must pin
+    UTF-8 with replacement on both pipes.
+    """
+    result = run_with_timeout(
+        f'"{_PY}" -c "import sys; sys.stdout.buffer.write(b\'\\x90ok\'); '
+        f"sys.stderr.buffer.write(b'\\x81')\"",
+        cwd=Path.cwd(),
+        timeout_seconds=30.0,
+    )
+    assert result.exit_code == 0
+    assert result.stdout == '�ok'
+    assert result.stderr == '�'
+    assert result.timed_out is False
+
+
+def test_utf8_child_output_decodes_as_utf8_not_as_the_locale_default() -> None:
+    """Agent-produced UTF-8 (a check mark) decodes to the same text on every locale.
+
+    Under a cp1252 locale default the bytes E2 9C 93 decode to mojibake instead of
+    '✓', silently corrupting gate details and fix briefs even when nothing crashes.
+    """
+    result = run_with_timeout(
+        f'"{_PY}" -c "import sys; sys.stdout.buffer.write(\'\\u2713\'.encode())"',
+        cwd=Path.cwd(),
+        timeout_seconds=30.0,
+    )
+    assert result.exit_code == 0
+    assert result.stdout == '✓'
+
+
 def test_timeout_reaps_grandchild_no_orphan(tmp_path: Path) -> None:
     """A grandchild that outlives its timeout must be reaped by the whole-tree kill.
 
