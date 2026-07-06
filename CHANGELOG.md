@@ -14,6 +14,15 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **Optional per-check `repair_hint` in `[[checks]]` — the repo's own repair recipe,
+  briefed to the fix spawn.** *(consumer-affecting: a new optional series.toml key an
+  author may rely on — an older engine parses a series that sets it but silently ignores
+  the hint.)* A check may declare a command or one-line instruction (e.g. its generated-
+  artifact regeneration script); when THAT check goes red, the fix brief carries the hint
+  verbatim under the failing check's line, so whether the repair lands no longer depends
+  on the fix agent inferring the recipe from the failure text (`core/spec.py`,
+  `interface/drivers/headless.py::_fix_brief`, `docs/design/02-formats.md`,
+  `skills/convoy/SKILL.md`).
 - **`convoy run --fresh` / `convoy_run(reset=true)` — opt-in workspace reset for a clean
   re-run.** Before staging, it checks out the base branch, deletes the integration branch and
   every PR branch the series names, and lets the run recreate them — so a completed or halted

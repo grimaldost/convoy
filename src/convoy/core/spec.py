@@ -65,6 +65,11 @@ class Check:
     # Out-of-tree path to an independent check's oracle asset. Isolation is
     # enforced at gate time (fail-closed), not at spec-load; empty when unused.
     asset: str = ''
+    # Repo-declared repair recipe for THIS check — a command or one-line instruction
+    # appended verbatim to the fix brief when the check fails. The repo knows its
+    # regeneration recipes; without a declared one, whether a fix spawn infers the
+    # right command from the failure text is luck. Empty when unused.
+    repair_hint: str = ''
 
 
 @dataclass(frozen=True)
@@ -313,12 +318,14 @@ def _parse_check(data: Mapping[str, Any], index: int) -> Check:
     # A blocking independent check is allowed: its independence is enforced
     # fail-closed at gate time by asset isolation, not forbidden here.
     asset = _optional_str(data, 'asset', where)
+    repair_hint = _optional_str(data, 'repair_hint', where)
     return Check(
         name=_require_str(data, 'name', where),
         run=_require_str(data, 'run', where),
         blocking=blocking,
         independent=independent,
         asset='' if asset is None else asset,
+        repair_hint='' if repair_hint is None else repair_hint,
     )
 
 
@@ -389,8 +396,9 @@ def load_series(text: str) -> Series:
 def _check_table(check: Check) -> dict[str, Any]:
     """One ``[[checks]]`` table for ``dump_series``.
 
-    ``asset`` is omitted when empty (it re-parses as its ``''`` default), so a
-    check that never used it round-trips to the same minimal table.
+    ``asset`` and ``repair_hint`` are omitted when empty (each re-parses as its
+    ``''`` default), so a check that never used them round-trips to the same
+    minimal table.
     """
     table: dict[str, Any] = {
         'name': check.name,
@@ -400,6 +408,8 @@ def _check_table(check: Check) -> dict[str, Any]:
     }
     if check.asset:
         table['asset'] = check.asset
+    if check.repair_hint:
+        table['repair_hint'] = check.repair_hint
     return table
 
 

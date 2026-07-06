@@ -20,7 +20,7 @@ PR-sized tasks plus the governance and gate that apply to them.
 | `[governance.budgets]` | `implementation`, `review`, `fix` | USD ceiling per phase |
 | `[governance.tools]` | `implementation`, `review`, `fix` | Tool allow-list per phase |
 | `[review]` | `blocking` (optional), `max_fix_attempts` | `max_fix_attempts` bounds the fix loop; `blocking` is **reserved** for an optional blocking LLM self-review the v1 headless driver does not run — optional, default `false` (the deterministic `[[checks]]` gate is the sole merge arbiter) |
-| `[[checks]]` | `name`, `run`, `blocking`, `independent`, `asset` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)); `asset` is an optional absolute out-of-tree path to a blocking independent check's oracle |
+| `[[checks]]` | `name`, `run`, `blocking`, `independent`, `asset`, `repair_hint` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)); `asset` is an optional absolute out-of-tree path to a blocking independent check's oracle; `repair_hint` is an optional one-line repair recipe (a command or instruction) appended verbatim to the fix brief when THAT check fails |
 | `[[prs]]` | `id`, `branch`, `prompt`, `phase`, `depends_on` | The PR decomposition as a DAG |
 
 `permission_mode` ∈ {`default`, `acceptEdits`, `plan`, `bypassPermissions`};
@@ -92,6 +92,7 @@ name = "suite"
 run = "python -m pytest -q"
 blocking = true
 independent = false
+repair_hint = "regenerate fixtures with scripts/gen_fixtures.py before rerunning"  # optional
 
 [[checks]]
 name = "type-contract"

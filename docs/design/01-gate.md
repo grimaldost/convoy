@@ -110,8 +110,10 @@ shell. `gate.decide` can never accidentally reach the filesystem.
 - **`blocking_red`** → the merge is blocked, always. Then:
   - **`independent_red`** (a blocking independent check failed) → the signal is
     trustworthy (the implementer can't have gamed a check it can't reach) → run
-    the bounded fix loop: re-brief with the failing check's `detail`, re-run the
-    gate, up to `max_fix_attempts`.
+    the bounded fix loop: re-brief with the failing check's `detail` (plus its
+    declared `repair_hint`, when the series provides one — the repo's own repair
+    recipe beats inference from failure text), re-run the gate, up to
+    `max_fix_attempts`.
   - **red only on implementer checks** → still blocked (fail-loud), but
     auto-fixing against a self-authored red risks chasing the blind spot that
     produced it. convoy attempts the bounded fix if configured, and **surfaces**

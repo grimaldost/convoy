@@ -213,6 +213,25 @@ def test_check_asset_defaults_to_empty_when_omitted() -> None:
     assert all(check.asset == '' for check in series.checks)
 
 
+def test_check_repair_hint_parses_verbatim() -> None:
+    # An optional repo-declared repair recipe for THIS check, handed verbatim to the
+    # fix spawn when the check fails — without it, whether a fix spawn infers the
+    # regeneration command is luck.
+    text = VALID_TOML.replace(
+        'name = "suite"',
+        'name = "suite"\nrepair_hint = "run scripts/generate_references.py and commit the diff"',
+    )
+    series = load_series(text)
+    assert series.checks[0].repair_hint == (
+        'run scripts/generate_references.py and commit the diff'
+    )
+
+
+def test_check_repair_hint_defaults_to_empty_when_omitted() -> None:
+    series = load_series(VALID_TOML)
+    assert all(check.repair_hint == '' for check in series.checks)
+
+
 def test_review_blocking_defaults_to_false_when_omitted() -> None:
     # `[review].blocking` is reserved for an optional blocking LLM self-review the v1 driver
     # does not run, so it is optional (default False) — authors are not forced to set a no-op.
@@ -279,10 +298,11 @@ def _series(draw: st.DrawFn) -> Series:
             run=draw(_TEXT),
             blocking=draw(st.booleans()),
             independent=draw(st.booleans()),
-            # asset is optional; '' exercises the omit-on-dump path, a value the
-            # round-trip-through-TOML path. It is spec data only here — no
-            # filesystem is touched by load/dump.
+            # asset and repair_hint are optional; '' exercises the omit-on-dump
+            # path, a value the round-trip-through-TOML path. Spec data only here —
+            # no filesystem is touched by load/dump.
             asset=draw(st.just('') | _TEXT),
+            repair_hint=draw(st.just('') | _TEXT),
         )
         for _ in draw(st.lists(st.booleans(), max_size=4))
     )

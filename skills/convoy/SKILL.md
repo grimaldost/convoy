@@ -135,7 +135,7 @@ least one entry.
 | `[governance.budgets]` | `implementation`, `review`, `fix` (USD numbers) | all three required; each must be **> 0** (a `0` budget is rejected — it would disable the spend cap) |
 | `[governance.tools]` | `implementation`, `review`, `fix` (arrays of tool names) | all three required; the per-role tool allow-list |
 | `[review]` | `blocking` (bool, optional, default `false`), `max_fix_attempts` (int) | `max_fix_attempts` bounds the repair loop (`0` = a blocking red halts immediately); `blocking` is reserved and optional — see "What blocks a merge" below |
-| `[[checks]]` | `name`, `run` (shell command), `blocking` (bool), `independent` (bool, default `false`), `asset` (optional path) | the gate; the same checks run after **every** PR (series-global) |
+| `[[checks]]` | `name`, `run` (shell command), `blocking` (bool), `independent` (bool, default `false`), `asset` (optional path), `repair_hint` (optional string) | the gate; the same checks run after **every** PR (series-global) |
 | `[[prs]]` | `id`, `branch`, `prompt` (file under `[paths].prompts`), `phase` (tag), `depends_on` (array of PR ids, default `[]`) | the PR DAG |
 
 - **`model` vs `tier`.** Set an explicit `model` (e.g. `claude-haiku-4-5`) or a `tier`
@@ -148,9 +148,10 @@ least one entry.
   passes it through but never *forces* an auto-approve mode.
 - **`effort`** is required (no convoy-side default) and is passed through to the spawn
   (e.g. `low`, `medium`, `high`).
-- **Required vs optional.** Every field in the table is required except three, which
-  default: `[[checks]].independent` (`false`), `[[checks]].asset` (`''`, unused), and
-  `[[prs]].depends_on` (`[]`). `[[checks]].name`/`run`/`blocking` are all required.
+- **Required vs optional.** Every field in the table is required except four, which
+  default: `[[checks]].independent` (`false`), `[[checks]].asset` (`''`, unused),
+  `[[checks]].repair_hint` (`''`, no hint), and `[[prs]].depends_on` (`[]`).
+  `[[checks]].name`/`run`/`blocking` are all required.
   `[series].version` is any string (the example uses `"1"`); PR `id`s must be unique (they
   are what `depends_on` references). The exhaustive per-field types and the full telemetry
   line schema live in
@@ -161,7 +162,11 @@ least one entry.
 - **`timeout_seconds`** bounds each agent spawn and each gate check; a spawn that times
   out is classified as an `infrastructure` halt.
 - **Checks** run as shell commands with the **workspace as their working directory**; a
-  non-zero exit code is a red. The same `[[checks]]` run after every PR.
+  non-zero exit code is a red. The same `[[checks]]` run after every PR. A check may
+  declare `repair_hint = "..."` — a one-line repair recipe (e.g. the project's
+  regeneration command for a generated-artifact freshness check) appended verbatim to
+  the fix spawn's brief when that check fails, so the repair does not depend on the
+  agent inferring the recipe from the failure text.
 - **An `independent` check** is one the implementing agent did not author and cannot
   reach — its `asset` (the oracle it runs) must live **out-of-tree**. Isolation is
   enforced fail-closed at gate time: a blocking independent check with an in-tree or
