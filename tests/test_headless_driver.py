@@ -24,6 +24,7 @@ from typing import cast
 import pytest
 from test_reporter import RecordingReporter
 
+from convoy.core.gate import CheckResult, decide
 from convoy.core.spec import (
     Branches,
     Budgets,
@@ -40,6 +41,7 @@ from convoy.interface.drivers.headless import (
     EXIT_INFRASTRUCTURE,
     EXIT_OK,
     RunOutcome,
+    _fix_brief,
     make_run_id,
     run_series,
 )
@@ -554,6 +556,59 @@ def test_zero_fix_attempts_halts_immediately(harness: Harness) -> None:
     run_completes = _events_of(events, 'run_complete')
     assert len(run_completes) == 1
     assert run_completes[0]['outcome'] == 'blocked'
+
+
+def test_fix_brief_carries_a_declared_repair_hint() -> None:
+    """A failing check's ``repair_hint`` reaches the fix brief verbatim; no hint, no line."""
+    hinted = Check(
+        name='refs-fresh',
+        run='pytest -k refs',
+        blocking=True,
+        repair_hint='run scripts/generate_references.py and commit the diff',
+    )
+    bare = Check(name='suite', run='pytest', blocking=True)
+    verdict = decide(
+        [
+            CheckResult(check=hinted, passed=False, detail='exited 1: stale mirror'),
+            CheckResult(check=bare, passed=False, detail='exited 1: 3 failed'),
+        ]
+    )
+
+    brief = _fix_brief('Original brief.', verdict)
+
+    assert 'repair hint: run scripts/generate_references.py and commit the diff' in brief
+    assert brief.count('repair hint:') == 1  # the hintless check gained no line
+
+
+def test_repair_hint_reaches_the_fix_spawn_brief(harness: Harness) -> None:
+    """The recipe declared on the failing check is briefed to the fix spawn that repairs it."""
+    hint = 'create fixed.marker in the workspace root'
+    base = _make_series(
+        harness.repo,
+        Check(name='marker', run=_MARKER_CMD, blocking=True, repair_hint=hint),
+    )
+    base = replace(base, review=replace(base.review, max_fix_attempts=1))
+    series = _one_pr_series(base)
+    spawn = FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True)
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=spawn,
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-repair-hint',
+    )
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    fix_briefs = [
+        request.brief
+        for request, _cwd in spawn.calls
+        if '## Failing checks to repair' in request.brief
+    ]
+    assert len(fix_briefs) == 1
+    assert f'repair hint: {hint}' in fix_briefs[0]
 
 
 def test_make_run_id_shape() -> None:

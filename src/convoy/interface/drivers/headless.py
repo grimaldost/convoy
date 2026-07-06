@@ -89,10 +89,11 @@ def make_run_id() -> str:
 def _fix_brief(original_brief: str, verdict: GateVerdict) -> str:
     """The original brief plus an appended section naming each failing blocking check.
 
-    Lists every blocking check that is red, with its ``name`` and ``detail``, so a
-    fix agent knows exactly what to repair. Whether any of those reds is
-    *independent* is recorded as provenance only — it never changes that the red
-    blocks; the re-gate is the arbiter.
+    Lists every blocking check that is red, with its ``name`` and ``detail`` — and,
+    when the check declares a ``repair_hint``, the repo's own repair recipe verbatim,
+    so the fix agent is not left inferring a regeneration command from failure text.
+    Whether any of those reds is *independent* is recorded as provenance only — it
+    never changes that the red blocks; the re-gate is the arbiter.
     """
     failures = [r for r in verdict.results if not r.passed and r.check.blocking]
     lines = [original_brief, '', '## Failing checks to repair', '']
@@ -104,6 +105,8 @@ def _fix_brief(original_brief: str, verdict: GateVerdict) -> str:
         lines.append('')
     for result in failures:
         lines.append(f'- {result.check.name}: {result.detail}')
+        if result.check.repair_hint:
+            lines.append(f'  repair hint: {result.check.repair_hint}')
     return '\n'.join(lines)
 
 
