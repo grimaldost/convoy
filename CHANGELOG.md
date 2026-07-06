@@ -29,6 +29,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   than interleaving git operations. Released on both normal and error exit
   (`interface/workspace_lock.py`, wired in `interface/run_service.py`).
 
+### Changed
+
+- **`pr_skipped.reason` no longer implies a dependency edge.** Wording changed from
+  `upstream <id> halted (<cause>)` / `upstream <id> blocked` to
+  `series halted at <id> (<cause>) before this PR started` — "upstream" read as a DAG
+  edge, but the skip is sequence-positional: every PR after the halt is skipped,
+  dependent or not. The field is documented free-form (`02-formats.md`); a consumer that
+  grepped `upstream` should key on the parenthesised cause tag instead
+  (`interface/drivers/headless.py`).
+
 ### Fixed
 
 - **A Windows locale default can no longer crash or garble a run — UTF-8 is pinned at

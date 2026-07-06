@@ -330,7 +330,7 @@ def test_summarize_run_aggregates_filters_by_run_id_and_truncates(tmp_path: Path
             'event': 'pr_skipped',
             'run_id': run_id,
             'pr_id': 'pr-3',
-            'reason': 'upstream pr-0 blocked',
+            'reason': 'series halted at pr-0 (blocked) before this PR started',
         }
     )
     # A line from ANOTHER run (with an inflated, estimated cost) must be ignored entirely.

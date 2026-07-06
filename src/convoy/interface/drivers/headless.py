@@ -248,7 +248,7 @@ def run_series(
         reporter.spawn_done(pr.id, 'implementation', result)
 
         if result.classification == 'infrastructure':
-            reason = f'upstream {pr.id} halted (infrastructure)'
+            reason = f'series halted at {pr.id} (infrastructure) before this PR started'
             _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
             telemetry.write(RunComplete(run_id=run_id, outcome='infrastructure', integrated=False))
             reporter.run_done('infrastructure', False)
@@ -257,7 +257,7 @@ def run_series(
         if result.classification == 'budget':
             # A budget-truncated spawn is untrustworthy partial work: halt the PR before
             # committing, gating, or integrating it. Distinct outcome/exit for an observer.
-            reason = f'upstream {pr.id} halted (budget)'
+            reason = f'series halted at {pr.id} (budget) before this PR started'
             _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
             telemetry.write(RunComplete(run_id=run_id, outcome='budget', integrated=False))
             reporter.run_done('budget', False)
@@ -292,7 +292,7 @@ def run_series(
             reporter.spawn_done(pr.id, 'fix', fix_result)
 
             if fix_result.classification == 'infrastructure':
-                reason = f'upstream {pr.id} halted (infrastructure)'
+                reason = f'series halted at {pr.id} (infrastructure) before this PR started'
                 _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
                 telemetry.write(
                     RunComplete(run_id=run_id, outcome='infrastructure', integrated=False)
@@ -301,7 +301,7 @@ def run_series(
                 return RunOutcome('infrastructure', False, EXIT_INFRASTRUCTURE)
 
             if fix_result.classification == 'budget':
-                reason = f'upstream {pr.id} halted (budget)'
+                reason = f'series halted at {pr.id} (budget) before this PR started'
                 _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
                 telemetry.write(RunComplete(run_id=run_id, outcome='budget', integrated=False))
                 reporter.run_done('budget', False)
@@ -314,7 +314,12 @@ def run_series(
 
         if verdict.blocking_red:
             _skip_remaining(
-                telemetry, reporter, run_id, ordered, pr.id, f'upstream {pr.id} blocked'
+                telemetry,
+                reporter,
+                run_id,
+                ordered,
+                pr.id,
+                f'series halted at {pr.id} (blocked) before this PR started',
             )
             telemetry.write(RunComplete(run_id=run_id, outcome='blocked', integrated=False))
             reporter.run_done('blocked', False)
