@@ -15,6 +15,7 @@ from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
 from convoy.interface.run_service import PreflightError, run_series_headless
 from convoy.interface.scaffold import ScaffoldError, scaffold
+from convoy.interface.streams import harden_std_streams
 from convoy.interface.workspace_lock import WorkspaceBusyError
 
 app = typer.Typer(
@@ -46,8 +47,10 @@ def root(
 def _load_or_exit(series_file: Path) -> Series:
     """Read and structurally parse ``series_file``, or exit ``EXIT_USAGE`` with a message."""
     try:
-        return load_series(series_file.read_text())
-    except (OSError, SpecError) as exc:
+        return load_series(series_file.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, SpecError) as exc:
+        # UnicodeDecodeError: the read is pinned to UTF-8, so a legacy-encoded file is a
+        # usage error like malformed TOML — never an uncaught traceback.
         typer.echo(str(exc), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
 
@@ -156,6 +159,7 @@ def init(
 
 def main() -> None:
     """Console-script entry point."""
+    harden_std_streams()
     app()
 
 

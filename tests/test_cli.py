@@ -116,6 +116,39 @@ def test_validate_bad_toml_is_usage(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_USAGE
 
 
+def test_validate_ok_on_series_with_non_ascii_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A UTF-8 series file with non-ASCII text validates under any platform locale.
+
+    'ѐ' (bytes D1 90) is undecodable under cp1252, so the unpinned read raised
+    ``UnicodeDecodeError`` on Windows instead of parsing the series.
+    """
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    non_ascii = _series_toml(prompts, outputs).replace('id = "cli-test"', 'id = "cli-tëst ✓ ѐ"')
+    series_file.write_text(non_ascii, encoding='utf-8')
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert 'ok' in result.output
+
+
+def test_validate_non_utf8_series_file_is_usage_not_a_traceback(tmp_path: Path) -> None:
+    """A series file that is not valid UTF-8 exits ``EXIT_USAGE`` with a message.
+
+    With the read pinned to UTF-8, a legacy-encoded file must surface as a located
+    usage error like malformed TOML does — never as an uncaught ``UnicodeDecodeError``.
+    """
+    series_file = tmp_path / 'latin.toml'
+    series_file.write_bytes('id = "café"\n'.encode('cp1252'))
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_USAGE
+
+
 def test_validate_missing_file_is_usage(tmp_path: Path) -> None:
     result = runner.invoke(cli.app, ['validate', str(tmp_path / 'nope.toml')])
     assert result.exit_code == EXIT_USAGE
