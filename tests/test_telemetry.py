@@ -180,14 +180,15 @@ def test_gate_complete_with_no_checks_serializes_an_empty_list() -> None:
 
 
 def test_pr_skipped_json_line_has_schema_tag_and_all_fields() -> None:
-    event = PRSkipped(run_id='r', pr_id='pr-b', reason='upstream pr-a blocked')
+    reason = 'series halted at pr-a (blocked) before this PR started'
+    event = PRSkipped(run_id='r', pr_id='pr-b', reason=reason)
     parsed = json.loads(to_json_line(event))
     assert parsed == {
         'schema_version': 1,
         'event': 'pr_skipped',
         'run_id': 'r',
         'pr_id': 'pr-b',
-        'reason': 'upstream pr-a blocked',
+        'reason': reason,
     }
 
 

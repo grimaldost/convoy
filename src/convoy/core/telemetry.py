@@ -106,8 +106,9 @@ class GateComplete:
 class PRSkipped:
     """Emitted for each PR the run never processed because an earlier PR halted the series.
 
-    ``reason`` is free-form provenance (e.g. ``'upstream pr-a blocked'``): it states why
-    the series stopped, not a claim of a direct dependency edge.
+    ``reason`` is free-form provenance (e.g. ``'series halted at pr-a (blocked) before
+    this PR started'``): it states why the series stopped, not a claim of a direct
+    dependency edge.
     """
 
     run_id: str

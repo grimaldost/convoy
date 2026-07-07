@@ -30,6 +30,15 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
     start raises a located `kind: "seat"` pre-flight problem and the run stops with zero
     side effects (`interface/seat_probe.py`, wired in `interface/run_service.py`;
     `dry_run` never spawns, probe included).
+- **Optional per-check `repair_hint` in `[[checks]]` — the repo's own repair recipe,
+  briefed to the fix spawn.** *(consumer-affecting: a new optional series.toml key an
+  author may rely on — an older engine parses a series that sets it but silently ignores
+  the hint.)* A check may declare a command or one-line instruction (e.g. its generated-
+  artifact regeneration script); when THAT check goes red, the fix brief carries the hint
+  verbatim under the failing check's line, so whether the repair lands no longer depends
+  on the fix agent inferring the recipe from the failure text (`core/spec.py`,
+  `interface/drivers/headless.py::_fix_brief`, `docs/design/02-formats.md`,
+  `skills/convoy/SKILL.md`).
 - **`convoy run --fresh` / `convoy_run(reset=true)` — opt-in workspace reset for a clean
   re-run.** Before staging, it checks out the base branch, deletes the integration branch and
   every PR branch the series names, and lets the run recreate them — so a completed or halted
@@ -44,6 +53,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   workspace raises `WorkspaceBusyError` (CLI: exit `usage`; MCP: `error_kind: "busy"`) rather
   than interleaving git operations. Released on both normal and error exit
   (`interface/workspace_lock.py`, wired in `interface/run_service.py`).
+
+### Changed
+
+- **`pr_skipped.reason` no longer implies a dependency edge.** Wording changed from
+  `upstream <id> halted (<cause>)` / `upstream <id> blocked` to
+  `series halted at <id> (<cause>) before this PR started` — "upstream" read as a DAG
+  edge, but the skip is sequence-positional: every PR after the halt is skipped,
+  dependent or not. The field is documented free-form (`02-formats.md`); a consumer that
+  grepped `upstream` should key on the parenthesised cause tag instead
+  (`interface/drivers/headless.py`).
 
 ### Fixed
 

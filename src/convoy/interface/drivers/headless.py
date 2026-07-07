@@ -89,10 +89,11 @@ def make_run_id() -> str:
 def _fix_brief(original_brief: str, verdict: GateVerdict) -> str:
     """The original brief plus an appended section naming each failing blocking check.
 
-    Lists every blocking check that is red, with its ``name`` and ``detail``, so a
-    fix agent knows exactly what to repair. Whether any of those reds is
-    *independent* is recorded as provenance only — it never changes that the red
-    blocks; the re-gate is the arbiter.
+    Lists every blocking check that is red, with its ``name`` and ``detail`` — and,
+    when the check declares a ``repair_hint``, the repo's own repair recipe verbatim,
+    so the fix agent is not left inferring a regeneration command from failure text.
+    Whether any of those reds is *independent* is recorded as provenance only — it
+    never changes that the red blocks; the re-gate is the arbiter.
     """
     failures = [r for r in verdict.results if not r.passed and r.check.blocking]
     lines = [original_brief, '', '## Failing checks to repair', '']
@@ -104,6 +105,8 @@ def _fix_brief(original_brief: str, verdict: GateVerdict) -> str:
         lines.append('')
     for result in failures:
         lines.append(f'- {result.check.name}: {result.detail}')
+        if result.check.repair_hint:
+            lines.append(f'  repair hint: {result.check.repair_hint}')
     return '\n'.join(lines)
 
 
@@ -260,7 +263,7 @@ def run_series(
         reporter.spawn_done(pr.id, 'implementation', result)
 
         if result.classification == 'infrastructure':
-            reason = f'upstream {pr.id} halted (infrastructure)'
+            reason = f'series halted at {pr.id} (infrastructure) before this PR started'
             _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
             telemetry.write(RunComplete(run_id=run_id, outcome='infrastructure', integrated=False))
             reporter.run_done('infrastructure', False)
@@ -269,7 +272,7 @@ def run_series(
         if result.classification == 'budget':
             # A budget-truncated spawn is untrustworthy partial work: halt the PR before
             # committing, gating, or integrating it. Distinct outcome/exit for an observer.
-            reason = f'upstream {pr.id} halted (budget)'
+            reason = f'series halted at {pr.id} (budget) before this PR started'
             _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
             telemetry.write(RunComplete(run_id=run_id, outcome='budget', integrated=False))
             reporter.run_done('budget', False)
@@ -304,7 +307,7 @@ def run_series(
             reporter.spawn_done(pr.id, 'fix', fix_result)
 
             if fix_result.classification == 'infrastructure':
-                reason = f'upstream {pr.id} halted (infrastructure)'
+                reason = f'series halted at {pr.id} (infrastructure) before this PR started'
                 _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
                 telemetry.write(
                     RunComplete(run_id=run_id, outcome='infrastructure', integrated=False)
@@ -313,7 +316,7 @@ def run_series(
                 return RunOutcome('infrastructure', False, EXIT_INFRASTRUCTURE)
 
             if fix_result.classification == 'budget':
-                reason = f'upstream {pr.id} halted (budget)'
+                reason = f'series halted at {pr.id} (budget) before this PR started'
                 _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
                 telemetry.write(RunComplete(run_id=run_id, outcome='budget', integrated=False))
                 reporter.run_done('budget', False)
@@ -326,7 +329,12 @@ def run_series(
 
         if verdict.blocking_red:
             _skip_remaining(
-                telemetry, reporter, run_id, ordered, pr.id, f'upstream {pr.id} blocked'
+                telemetry,
+                reporter,
+                run_id,
+                ordered,
+                pr.id,
+                f'series halted at {pr.id} (blocked) before this PR started',
             )
             telemetry.write(RunComplete(run_id=run_id, outcome='blocked', integrated=False))
             reporter.run_done('blocked', False)
