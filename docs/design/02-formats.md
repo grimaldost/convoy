@@ -154,9 +154,9 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   fix re-gate. **`checks`** is a list of objects `{name, passed, blocking,
   independent, detail}` — one per check, in run order — so a blocked run is
   self-explaining: a consumer sees which check failed and why.
-- **`pr_skipped.reason`** is free-form (e.g. `upstream pr-1 blocked`): it states
-  *why the series stopped*, not a claim of a direct dependency edge to the halted
-  PR.
+- **`pr_skipped.reason`** is free-form (e.g. `series halted at pr-1 (blocked) before
+  this PR started`): it states *why the series stopped*, not a claim of a direct
+  dependency edge to the halted PR.
 - **`effective_model` is never blank.** On a killed or partial spawn it falls back
   to the requested model, so an economy consumer always has a model to attribute
   the row to.
@@ -194,7 +194,7 @@ is still `blocking_red`.)
 {"schema_version": 1, "event": "run_start", "run_id": "20260703T160102Z-b7", "series_id": "add-comparison-ops"}
 {"schema_version": 1, "event": "spawn_complete", "run_id": "20260703T160102Z-b7", "pr_id": "pr-1-lexer", "role": "implementation", "exit_code": 0, "input_tokens": 17330, "output_tokens": 2980, "num_turns": 8, "duration_s": 69.5, "cost_usd": 0.10, "effective_model": "claude-sonnet-5"}
 {"schema_version": 1, "event": "gate_complete", "run_id": "20260703T160102Z-b7", "pr_id": "pr-1-lexer", "attempt": 2, "blocking_red": true, "independent_red": true, "checks": [{"name": "suite", "passed": true, "blocking": true, "independent": false, "detail": "12 passed"}, {"name": "type-contract", "passed": false, "blocking": true, "independent": true, "detail": "type_probe: expected Ordering, got object"}]}
-{"schema_version": 1, "event": "pr_skipped", "run_id": "20260703T160102Z-b7", "pr_id": "pr-2-parser", "reason": "upstream pr-1-lexer blocked"}
+{"schema_version": 1, "event": "pr_skipped", "run_id": "20260703T160102Z-b7", "pr_id": "pr-2-parser", "reason": "series halted at pr-1-lexer (blocked) before this PR started"}
 {"schema_version": 1, "event": "run_complete", "run_id": "20260703T160102Z-b7", "outcome": "blocked", "integrated": false}
 ```
 

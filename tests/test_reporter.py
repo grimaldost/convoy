@@ -105,11 +105,12 @@ def test_fix_attempt_line() -> None:
 
 def test_pr_skipped_line() -> None:
     buf = io.StringIO()
-    StderrReporter(buf).pr_skipped('pr-b', 'upstream pr-a blocked')
+    reason = 'series halted at pr-a (blocked) before this PR started'
+    StderrReporter(buf).pr_skipped('pr-b', reason)
     out = buf.getvalue()
     assert 'pr-b' in out
     assert 'skipped' in out
-    assert 'upstream pr-a blocked' in out
+    assert reason in out
 
 
 def test_integrated_line() -> None:

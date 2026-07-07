@@ -714,7 +714,7 @@ def test_blocked_two_pr_skips_the_dependent(harness: Harness) -> None:
     skips = _events_of(events, 'pr_skipped')
     assert len(skips) == 1
     assert skips[0]['pr_id'] == 'pr-b'
-    assert skips[0]['reason'] == 'upstream pr-a blocked'
+    assert skips[0]['reason'] == 'series halted at pr-a (blocked) before this PR started'
     # Only pr-a was gated; pr-b was never spawned.
     assert [g['pr_id'] for g in _events_of(events, 'gate_complete')] == ['pr-a']
     assert len(spawn.calls) == 1
@@ -832,7 +832,11 @@ def test_reporter_narrates_a_blocked_run_with_a_skip(harness: Harness) -> None:
         reporter=rec,
     )
     assert rec.names() == ['run_start', 'spawn_done', 'gate_result', 'pr_skipped', 'run_done']
-    assert ('pr_skipped', 'pr-b', 'upstream pr-a blocked') in rec.calls
+    assert (
+        'pr_skipped',
+        'pr-b',
+        'series halted at pr-a (blocked) before this PR started',
+    ) in rec.calls
     assert rec.calls[-1] == ('run_done', 'blocked', False)
 
 
@@ -944,8 +948,12 @@ def test_budget_halt_skips_the_dependent(harness: Harness) -> None:
     skips = _events_of(events, 'pr_skipped')
     assert len(skips) == 1
     assert skips[0]['pr_id'] == 'pr-b'
-    assert skips[0]['reason'] == 'upstream pr-a halted (budget)'
+    assert skips[0]['reason'] == 'series halted at pr-a (budget) before this PR started'
     # pr-b was never spawned and no gate ran (budget halts before commit / gate).
     assert len(spawn.calls) == 1
     assert _events_of(events, 'gate_complete') == []
-    assert ('pr_skipped', 'pr-b', 'upstream pr-a halted (budget)') in rec.calls
+    assert (
+        'pr_skipped',
+        'pr-b',
+        'series halted at pr-a (budget) before this PR started',
+    ) in rec.calls
