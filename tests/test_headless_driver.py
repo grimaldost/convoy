@@ -957,3 +957,58 @@ def test_budget_halt_skips_the_dependent(harness: Harness) -> None:
         'pr-b',
         'series halted at pr-a (budget) before this PR started',
     ) in rec.calls
+
+
+# ---------------------------------------------------------------------------
+# output_tail — a non-ok spawn's output reaches telemetry (bounded) for diagnosis
+# ---------------------------------------------------------------------------
+
+
+def _infra_result(output: str) -> SpawnResult:
+    """An infrastructure-classified result carrying ``output`` (zeroed economy)."""
+    return SpawnResult(
+        exit_code=1,
+        output=output,
+        economy=SpawnEconomy(
+            input_tokens=0,
+            output_tokens=0,
+            num_turns=0,
+            duration_s=0.0,
+            cost_usd=0.0,
+            effective_model='test-model',
+        ),
+        classification='infrastructure',
+    )
+
+
+def test_non_ok_spawn_records_its_output_tail(harness: Harness) -> None:
+    """An infra halt is diagnosable from telemetry alone: the spawn output rides along.
+
+    Two production runs halted on an expired seat showing only ``exit_code: 1, $0`` —
+    the operator had to re-run the spawn by hand to see ``Not logged in``.
+    """
+    series = _one_pr_series(harness.series)
+    message = 'claude: Not logged in - please run /login'
+    _run(harness, series, FakeSpawn([_infra_result(message)]), 'run-tail-infra')
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawns[0]['output_tail'] == message
+
+
+def test_ok_spawn_records_an_empty_output_tail(harness: Harness) -> None:
+    """A healthy spawn's (potentially huge) stream output stays out of telemetry."""
+    series = _one_pr_series(harness.series)
+    _run(harness, series, FakeSpawn([ok_result(output='x' * 5000)]), 'run-tail-ok')
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawns[0]['output_tail'] == ''
+
+
+def test_output_tail_is_bounded_to_the_last_chars(harness: Harness) -> None:
+    """A long failure output is truncated to its tail — the end is where the error is."""
+    series = _one_pr_series(harness.series)
+    long_output = 'A' * 1000 + 'B' * 2500
+    _run(harness, series, FakeSpawn([_infra_result(long_output)]), 'run-tail-bound')
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawns[0]['output_tail'] == long_output[-2000:]

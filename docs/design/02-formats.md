@@ -160,6 +160,10 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 - **`effective_model` is never blank.** On a killed or partial spawn it falls back
   to the requested model, so an economy consumer always has a model to attribute
   the row to.
+- **`output_tail`** (additive) — the last 2 KB of the spawn's combined stdout+stderr,
+  populated only on a non-`ok` classification (`''` on ok lines), so an infrastructure
+  or budget halt is diagnosable from telemetry alone (an expired seat's
+  `Not logged in`, a usage-limit message) instead of demanding a manual re-run.
 - **These two events are additive.** `schema_version` stays `1`; a consumer keys on
   `event` + `schema_version` and ignores unknown events, so an older reader that
   only knows `run_start` / `spawn_complete` / `run_complete` skips `gate_complete`

@@ -36,7 +36,10 @@ class SpawnComplete:
 
     ``role`` is one of ``implementation``, ``review``, ``fix``. ``cost_estimated``
     marks a line whose ``cost_usd`` was substituted from a token estimate rather than
-    reported by the provider (see ``apply_cost_fallback``).
+    reported by the provider (see ``apply_cost_fallback``). ``output_tail`` carries the
+    bounded tail of the spawn's combined stdout+stderr on a non-``ok`` classification
+    (``''`` on ok lines), so an infrastructure or budget halt is diagnosable from
+    telemetry alone instead of demanding a manual re-run of the spawn.
     """
 
     run_id: str
@@ -50,6 +53,7 @@ class SpawnComplete:
     cost_usd: float
     effective_model: str
     cost_estimated: bool = False
+    output_tail: str = ''
 
 
 @dataclass(frozen=True)

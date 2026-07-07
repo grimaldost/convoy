@@ -261,6 +261,11 @@ count. The gate checks themselves are local commands (near-free).
   to a few minutes at low effort / small tasks, longer at higher effort or larger
   tasks. v1 runs PRs **sequentially** in dependency order (no parallelism), so
   wall-clock is roughly the sum of the spawns plus the gate commands.
+- **Seat probe (per real run):** before any git mutation, convoy runs one minimal,
+  tool-less, budget-capped ($0.05) probe spawn against the run's resolved model — a
+  few unmetered cents and seconds — so an expired seat, an exhausted usage limit, or
+  an inaccessible model fails the run clean (a `kind: "seat"` pre-flight problem)
+  instead of at PR1 after branches were staged. `dry_run` never spawns, probe included.
 
 Per-phase budgets are hard caps: a spawn cut off by its `--max-budget-usd` is treated
 as truncated, untrustworthy work — the run halts `budget` (exit 4) rather than gating

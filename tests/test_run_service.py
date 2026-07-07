@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from convoy.core.preflight import Problem
 from convoy.core.spec import (
     PR,
     Branches,
@@ -99,6 +100,7 @@ def test_clean_run_isolates_by_default_and_returns_the_outcome(
         return RunOutcome('completed', True, EXIT_OK)
 
     monkeypatch.setattr(run_service, 'run_series', _fake)
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
 
     outcome = run_series_headless(series, ws, run_id='r')
     assert outcome == RunOutcome('completed', True, EXIT_OK)
@@ -119,6 +121,7 @@ def test_config_isolation_off_inherits_the_operator_config(
         return RunOutcome('completed', True, EXIT_OK)
 
     monkeypatch.setattr(run_service, 'run_series', _fake)
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
 
     run_series_headless(series, ws, run_id='r', config_isolation=False)
     spawn = captured['spawn']
@@ -138,6 +141,7 @@ def test_fresh_true_resets_the_workspace_before_the_engine_runs(
     monkeypatch.setattr(
         run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
     )
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
 
     run_series_headless(series, ws, run_id='r', fresh=True)
 
@@ -160,6 +164,7 @@ def test_fresh_false_leaves_existing_branches_alone(
     monkeypatch.setattr(
         run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
     )
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
 
     run_series_headless(series, ws, run_id='r', fresh=False)
 
@@ -167,6 +172,64 @@ def test_fresh_false_leaves_existing_branches_alone(
         ['git', 'branch', '--list'], cwd=ws, capture_output=True, text=True, check=True
     )
     assert 'pr-1' in result.stdout
+
+
+def test_seat_probe_failure_raises_preflight_before_any_git_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dead seat halts the run with zero side effects: no reset, no output dir, no engine.
+
+    Production halted twice at PR1 on an expired seat — after branches were staged. The
+    probe must fail the run before ``fresh`` branch surgery or any staging.
+    """
+    ws, series, outputs = _clean(tmp_path)
+    _init_repo(ws)
+    _git(ws, 'checkout', '-b', 'pr-1')  # a leftover series branch fresh=True would delete
+    _git(ws, 'checkout', 'base')
+
+    called: list[int] = []
+    monkeypatch.setattr(run_service, 'run_series', lambda *_a, **_k: called.append(1))
+    monkeypatch.setattr(
+        run_service,
+        'seat_problem',
+        lambda *_a, **_k: Problem(
+            kind='seat', where='[governance]', message='seat probe failed: Not logged in'
+        ),
+    )
+
+    with pytest.raises(PreflightError) as excinfo:
+        run_series_headless(series, ws, run_id='r', fresh=True)
+
+    assert any(problem.kind == 'seat' for problem in excinfo.value.problems)
+    assert called == []  # the engine never ran
+    assert not outputs.exists()  # no output dir was created
+    branches = subprocess.run(
+        ['git', 'branch', '--list'], cwd=ws, capture_output=True, text=True, check=True
+    )
+    assert 'pr-1' in branches.stdout  # the fresh reset never ran either
+
+
+def test_seat_probe_receives_the_isolated_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe tests the SAME seat the scored run will use — the isolated credential dir."""
+    ws, series, _outputs = _clean(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _probe(spawn: object, *_a: object, **_k: object) -> None:
+        captured['spawn'] = spawn
+        return None
+
+    monkeypatch.setattr(run_service, 'seat_problem', _probe)
+    monkeypatch.setattr(
+        run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
+    )
+
+    run_series_headless(series, ws, run_id='r')
+
+    spawn = captured['spawn']
+    assert isinstance(spawn, HeadlessSpawn)
+    assert spawn._config_dir is not None  # probed under the credential-only config
 
 
 def test_run_releases_the_workspace_lock_so_a_second_run_is_not_blocked(
@@ -177,6 +240,7 @@ def test_run_releases_the_workspace_lock_so_a_second_run_is_not_blocked(
     monkeypatch.setattr(
         run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
     )
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
 
     run_series_headless(series, ws, run_id='r1')
     run_series_headless(series, ws, run_id='r2')  # would raise WorkspaceBusyError if r1 leaked
@@ -217,5 +281,6 @@ def test_rerun_without_fresh_fails_where_fresh_succeeds(
     monkeypatch.setattr(
         run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
     )
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
     run_series_headless(series, ws, run_id='r2', fresh=True)
     Git(ws).checkout('pr-1', create=True)  # would have raised GitError before the reset

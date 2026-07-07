@@ -21,6 +21,7 @@ from convoy.interface.git import Git
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter
+from convoy.interface.seat_probe import seat_problem
 from convoy.interface.telemetry_writer import TelemetryWriter
 from convoy.interface.workspace_lock import workspace_lock
 
@@ -28,8 +29,9 @@ from convoy.interface.workspace_lock import workspace_lock
 class PreflightError(Exception):
     """A series failed pre-flight: :attr:`problems` holds every located :class:`Problem`.
 
-    Raised before any side effect (no git mutation, no spawn), so a caller can surface the
-    problems and stop with nothing half-executed.
+    Raised before any side effect (no git mutation, no scored spawn — the seat probe's
+    unmetered micro-spawn is the one exception), so a caller can surface the problems and
+    stop with nothing half-executed.
     """
 
     def __init__(self, problems: list[Problem]) -> None:
@@ -49,8 +51,12 @@ def run_series_headless(
     """Pre-flight then run ``series`` end-to-end in ``workspace``; return its :class:`RunOutcome`.
 
     Raises :class:`PreflightError` (carrying the located problems) if pre-flight is not
-    clean — before any git mutation or spawn. Otherwise creates ``[paths].outputs``, and
-    unless ``config_isolation`` is off wraps the scored spawn in a credential-only
+    clean — before any git mutation or scored spawn. After the filesystem pre-flight, a
+    **seat probe** (see :mod:`~convoy.interface.seat_probe`) runs a minimal unmetered
+    spawn through the same credential/config the run will use; an expired or capped seat
+    raises :class:`PreflightError` with a ``kind='seat'`` problem before the fresh reset
+    or any branch is staged. Otherwise creates ``[paths].outputs``, and unless
+    ``config_isolation`` is off wraps the scored spawn in a credential-only
     ``CLAUDE_CONFIG_DIR`` (removed on exit, even on error). Propagates the engine's
     ``GovernanceError`` / ``GitError`` / ``OSError`` unchanged.
 
@@ -70,17 +76,25 @@ def run_series_headless(
         raise PreflightError(problems)
 
     with workspace_lock(workspace):
-        if fresh:
-            branches = [series.branches.integration, *(pr.branch for pr in series.prs)]
-            Git(workspace).reset_to_base(series.branches.base, branches)
-
-        # Create the telemetry output dir before the run. A filesystem failure here (e.g. an
-        # ancestor path component is a regular file) surfaces as OSError to the caller, and
-        # still precedes every git mutation.
-        Path(series.paths.outputs).mkdir(parents=True, exist_ok=True)
         reporter = reporter if reporter is not None else NullReporter()
 
         def _execute(spawn: HeadlessSpawn) -> RunOutcome:
+            # Probe the seat FIRST — through the same spawn (same credential dir, same
+            # resolved model) the scored run will use — so an expired or capped seat fails
+            # the run here, before the fresh reset or any branch is staged. The probe is
+            # a few unmetered cents of preflight, not a scored spawn (see seat_probe).
+            problem = seat_problem(spawn, series.governance, workspace)
+            if problem is not None:
+                raise PreflightError([problem])
+
+            if fresh:
+                branches = [series.branches.integration, *(pr.branch for pr in series.prs)]
+                Git(workspace).reset_to_base(series.branches.base, branches)
+
+            # Create the telemetry output dir before the run. A filesystem failure here
+            # (e.g. an ancestor path component is a regular file) surfaces as OSError to
+            # the caller.
+            Path(series.paths.outputs).mkdir(parents=True, exist_ok=True)
             return run_series(
                 series,
                 workspace,
