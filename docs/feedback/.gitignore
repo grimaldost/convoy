@@ -1,0 +1,4 @@
+# Feedback reports and triage passes are session artifacts: local-only, never
+# tracked. The durable output of triage lives in the tracked docs/backlog.md.
+*
+!.gitignore
