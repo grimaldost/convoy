@@ -66,6 +66,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Fixed
 
+- **Two decode-boundary gaps at the serving layer.** A legacy-encoded (non-UTF-8)
+  series file made `convoy_run` raise `UnicodeDecodeError` out of the tool call
+  instead of returning the structured usage envelope (now `error_kind: "spec"`,
+  matching the CLI path, which already handled it); and the scaffold's git
+  children still decoded via the locale default, bypassing the
+  `TEXT_ENCODING`/`TEXT_ERRORS` policy every other subprocess site follows
+  (`interface/mcp/server.py`, `interface/scaffold.py`).
+
 - **A Windows locale default can no longer crash or garble a run — UTF-8 is pinned at
   every text boundary.** Gate-check and git subprocess output, the driver's prompt read,
   and the CLI's series-file read all decoded via the locale default (cp1252 on Windows),

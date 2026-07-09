@@ -22,7 +22,7 @@ from convoy.core.spec import (
     Tools,
     dump_series,
 )
-from convoy.interface.proc import GIT_HERMETIC_FLAGS
+from convoy.interface.proc import GIT_HERMETIC_FLAGS, TEXT_ENCODING, TEXT_ERRORS
 
 
 class ScaffoldError(RuntimeError):
@@ -102,6 +102,8 @@ def _git(workspace: Path, *args: str) -> None:
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
+        encoding=TEXT_ENCODING,
+        errors=TEXT_ERRORS,
     )
     if result.returncode != 0:
         raise ScaffoldError(f'git {" ".join(args)} failed: {result.stderr.strip()}')

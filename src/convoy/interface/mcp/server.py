@@ -126,11 +126,11 @@ def summarize_run(
 def _error_kind(exc: Exception) -> str:
     """Classify a could-not-start failure so an agent can branch on it, not parse a string.
 
-    One of ``spec`` (invalid / malformed series), ``governance`` (unresolvable model/tier at
-    runtime), ``git`` (a git operation failed), ``busy`` (another run holds the workspace
-    lock), or ``filesystem`` (any other ``OSError``).
+    One of ``spec`` (invalid, malformed, or undecodable series), ``governance``
+    (unresolvable model/tier at runtime), ``git`` (a git operation failed), ``busy``
+    (another run holds the workspace lock), or ``filesystem`` (any other ``OSError``).
     """
-    if isinstance(exc, SpecError):
+    if isinstance(exc, SpecError | UnicodeDecodeError):
         return 'spec'
     if isinstance(exc, GovernanceError):
         return 'governance'
@@ -147,7 +147,7 @@ def _run_impl(
     """Load, (dry-run) pre-flight or run the series, and shape a structured result (sync)."""
     try:
         series = load_series(Path(series_file).read_text(encoding='utf-8'))
-    except (OSError, SpecError) as exc:
+    except (OSError, UnicodeDecodeError, SpecError) as exc:
         return {'ok': False, 'outcome': 'usage', 'error_kind': _error_kind(exc), 'error': str(exc)}
 
     ws = Path(workspace)
