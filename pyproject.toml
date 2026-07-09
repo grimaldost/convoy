@@ -16,7 +16,6 @@ classifiers = [
 ]
 dependencies = [
     'typer>=0.12',
-    'structlog>=24.0',
     'tomli-w>=1.0',
     'mcp>=1.28.1',
 ]
