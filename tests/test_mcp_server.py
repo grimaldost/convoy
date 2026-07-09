@@ -157,6 +157,23 @@ def test_convoy_run_bad_spec_is_a_usage_result_not_an_exception(tmp_path: Path) 
     assert result['error_kind'] == 'spec'
 
 
+def test_convoy_run_legacy_encoded_series_is_a_usage_result_not_an_exception(
+    tmp_path: Path,
+) -> None:
+    # A legacy-encoded series file raises UnicodeDecodeError (a ValueError, not an
+    # OSError) from the strict UTF-8 read; the tool must still return the usage
+    # envelope, never a raised exception — the CLI's _load_or_exit already does.
+    series_file = tmp_path / 'legacy.toml'
+    series_file.write_bytes('# une série\nnot valid'.encode('cp1252'))
+    result = asyncio.run(
+        convoy_run(series_file=str(series_file), workspace=str(tmp_path), dry_run=True)
+    )
+    assert result['ok'] is False
+    assert result['outcome'] == 'usage'
+    assert 'error' in result
+    assert result['error_kind'] == 'spec'
+
+
 def test_convoy_run_runtime_git_error_is_classified(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
