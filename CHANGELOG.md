@@ -64,6 +64,12 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   grepped `upstream` should key on the parenthesised cause tag instead
   (`interface/drivers/headless.py`).
 
+### Removed
+
+- **`structlog` dropped as a runtime dependency.** It was declared but imported
+  nowhere in `src/` — dead weight in every install. Removed from
+  `pyproject.toml`; `uv.lock` re-resolved.
+
 ### Fixed
 
 - **A Windows locale default can no longer crash or garble a run — UTF-8 is pinned at
