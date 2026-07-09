@@ -5,7 +5,8 @@ All notable changes to convoy are documented here. The format follows
 so changes accumulate under **Unreleased** and are cut into tagged releases.
 
 An addition to a public protocol a consumer keys on — a new process exit code, a new
-telemetry `outcome` / `error_kind` value, event, or field — is marked
+telemetry `outcome` / `error_kind` value, event, or field, or a new series.toml key — is
+marked
 **(consumer-affecting)** even though it is additive, so a tool driving convoy as an
 engine knows to sync rather than silently mis-handle the new value. See the versioning
 discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
@@ -13,6 +14,23 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 ## [Unreleased]
 
 ### Added
+
+- **Contributor and agent governance.** `AGENTS.md` is the canonical playbook for
+  working on the repo (`CLAUDE.md` now redirects to it); `docs/GUARDRAILS.md`
+  states the non-negotiable invariants, each naming its mechanical enforcer — with
+  a new architecture test (`tests/test_architecture.py`) enforcing the
+  core→interface import boundary; `CONTRIBUTING.md` adds setup, workflow, and the
+  release discipline (a change is done only when a tagged release serves it);
+  `docs/adr/` records the five founding decisions plus the feedback-tracking
+  decision (ADR-0006); `docs/README.md` maps the docs; a PR template carries the
+  checklist.
+- **`docs/design/03-serving.md`** — design doc for the serving layer (run service,
+  MCP stdio server and tools, result envelope, config isolation, plugin packaging,
+  subprocess hygiene, CLI↔MCP parity), which postdated the founding docs.
+- **`docs/backlog.md`** — the tracked improvement ledger fed by feedback triage.
+  Raw feedback reports and triage passes are now local-only
+  (`docs/feedback/.gitignore`); decisions and the buildable backlog are what
+  history carries (ADR-0006).
 
 - **Seat and infra halts are diagnosable and preflighted.** *(consumer-affecting: adds an
   `output_tail` field to `spawn_complete` lines and a `seat` pre-flight problem `kind` a
@@ -56,6 +74,27 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- **README rewritten** for first contact: how a run works, install (plugin + CLI),
+  a CLI quickstart, a trimmed real series exemplar, CLI reference, the MCP tool
+  signatures (including the previously undocumented `reset` argument), telemetry,
+  adoption notes, architecture, and development pointers.
+- **`skills/convoy/SKILL.md` brought current and extended**: documents
+  `convoy_run`'s `reset` argument and the `--fresh` re-run path (replacing the
+  manual-surgery instructions) with the honest reset scope (branches only — a
+  budget/infrastructure halt's uncommitted debris needs a hand clean), the `busy`
+  `error_kind`, budget-calibration guidance (a `fix` budget scales with repair
+  complexity, not the impl estimate), the supported long-run pattern (the MCP
+  call blocks; use the CLI in a background shell), and a new "Adopting convoy in
+  an existing project" section with the deliberate non-features.
+- **Design docs resynced with shipped code**: `00-overview.md` repo-layout map
+  regenerated (serving-layer modules were missing) and the spawn Protocol/impl
+  split corrected; the `oracles/` committable-asset convention recorded as the
+  resolution of the open independence-asset-home decision in `02-formats.md`
+  (worked example updated), `00-overview.md`, and `01-gate.md`; series.toml keys
+  added to the consumer-affecting enumeration in `02-formats.md` and this file's
+  header, matching shipped practice.
+- **`pyproject.toml` metadata**: license (Apache-2.0), authors, keywords,
+  classifiers, and project URLs.
 - **`pr_skipped.reason` no longer implies a dependency edge.** Wording changed from
   `upstream <id> halted (<cause>)` / `upstream <id> blocked` to
   `series halted at <id> (<cause>) before this PR started` — "upstream" read as a DAG

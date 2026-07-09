@@ -191,9 +191,10 @@ downstream escape signal it does not model today.
 
 ## Open decisions
 
-1. **Committable isolation** — enforce "implementer can't reach it" by permission
-   / read-only mount of a committable `oracles/` convention, rather than by
-   out-of-tree absolute paths that don't travel. (Overview open-decision 2.)
+1. **Committable isolation** — *resolved*: the committable `oracles/` convention
+   under the series root shipped (scaffold + skill); isolation remains
+   containment+existence fail-closed, not a permission/read-only mount.
+   Resolution note in [02-formats.md](02-formats.md). (Overview open-decision 2.)
 2. **On-ramp checks** — ship a small library of ready-made generic independent
    checks (by defect class) a user opts into by name, so first value needs no
    check authoring and there is a concrete exemplar. (Overview open-decision 4.)

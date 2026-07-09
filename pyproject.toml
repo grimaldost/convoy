@@ -4,12 +4,27 @@ version = '0.1.1'
 description = 'Governed, measurable multi-PR execution engine.'
 readme = 'README.md'
 requires-python = '>=3.14'
+license = 'Apache-2.0'
+license-files = ['LICENSE', 'NOTICE']
+authors = [{ name = 'Grimaldo Stanzani' }]
+keywords = ['coding-agents', 'automation', 'orchestration', 'quality-gates', 'telemetry']
+classifiers = [
+    'Development Status :: 4 - Beta',
+    'Intended Audience :: Developers',
+    'Programming Language :: Python :: 3.14',
+    'Topic :: Software Development :: Quality Assurance',
+]
 dependencies = [
     'typer>=0.12',
     'structlog>=24.0',
     'tomli-w>=1.0',
     'mcp>=1.28.1',
 ]
+
+[project.urls]
+Repository = 'https://github.com/grimaldost/convoy'
+Changelog = 'https://github.com/grimaldost/convoy/blob/main/CHANGELOG.md'
+Issues = 'https://github.com/grimaldost/convoy/issues'
 
 [project.scripts]
 convoy = 'convoy.interface.cli:main'
