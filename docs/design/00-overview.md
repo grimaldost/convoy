@@ -110,30 +110,50 @@ convoy/
   src/convoy/
     core/                   # pure — no I/O, fully unit-testable
       spec.py               # C1 series model + validation + TOML round-trip
-      dag.py                # C1 phase/depends_on ordering
+      dag.py                # C1 depends_on ordering (stable toposort, cycle detection)
       gate.py               # C2 verdict logic (pure) — receives check + independence
       governance.py         # C4 config resolution + parity enforcement
+      preflight.py          # pure structural pre-flight — located Problems, no filesystem
+      pricing.py            # model-family rates for the telemetry cost_usd estimate fallback
       telemetry.py          # C3 event schema + economy materialization (pure)
     interface/              # imperative shell — adapters behind ports
       cli.py                # typer app: run, validate, init
-      spawn.py              # C5 AgentSpawn Protocol + headless impl
+      run_service.py        # the request-level run operation the CLI and MCP tool share
+      spawn.py              # C5 AgentSpawn Protocol + value types + the fake for tests
+      headless_spawn.py     # C5 the real impl: subprocess `claude -p`, stream economy parse
+      config_isolation.py   # credential-only CLAUDE_CONFIG_DIR for scored spawns
+      seat_probe.py         # pre-run seat viability probe (a `seat` pre-flight problem)
       gate_runner.py        # C2 shell: executes check commands
       fs_probe.py           # C2 shell: independence/isolation checks (filesystem)
-      git.py                # stage / branch / integrate
+      preflight_probe.py    # filesystem pre-flight (prompts, paths, isolation) over the pure checks
+      git.py                # stage / branch / integrate (+ reset for --fresh re-runs)
+      workspace_lock.py     # exclusive per-workspace lock — concurrent runs fail loud
+      proc.py               # bounded-timeout subprocess runs: tree-kill, hermetic git flags, UTF-8
+      streams.py            # UTF-8 std-stream hardening for the process entry points
+      reporter.py           # stderr progress narration behind a Protocol (--quiet silences)
       telemetry_writer.py   # C3 append-only JSONL writer
+      scaffold.py           # `convoy init` starter series (series.toml, prompt, oracle, workspace)
+      mcp/                  # the MCP stdio server package (see 03-serving.md)
+        server.py           # the convoy_run + convoy_init tools and the result envelope
+        __main__.py         # `python -m convoy.interface.mcp` entry point
       drivers/
-        headless.py         # C6
+        headless.py         # C6 the run loop
   tests/                    # top-level only — never inside src/
 ```
 
 `core/` imports nothing from `interface/`. All I/O — including the independence
 / isolation check (a filesystem probe) — is shell; the pure `gate.decide`
 receives independence *as data*, never computes it. **Tooling:** Python 3.14 /
-uv / ruff / ty, single-quote code, `typer` CLI, `pydantic-settings`, `structlog`
-(right-sized), `pytest` + `hypothesis` + snapshot tests, PEP 735 groups. Dist
+uv / ruff / ty, single-quote code, `typer` CLI, `tomli-w`, the `mcp` SDK,
+`pytest` + `hypothesis`, PEP 735 groups. Dist
 `convoy-engine`; import and CLI `convoy` (+ `cvy` alias).
 
 ## 5. Component designs (summaries; C2 has its own doc)
+
+The **serving layer** — the request-level run service the CLI and the MCP tool
+share, the MCP stdio server, the plugin packaging, and the run-lifecycle
+safeguards — postdates this founding doc and has its own doc:
+[03-serving.md](03-serving.md).
 
 - **C1 spec + dag** — convoy's own series schema (general-purpose, self-documenting,
   versioned): `[series]`, `[branches]`, `[paths]` (absolute), `[governance]`
@@ -164,8 +184,10 @@ uv / ruff / ty, single-quote code, `typer` CLI, `pydantic-settings`, `structlog`
   per-phase model; it never re-introduces a per-PR or stronger model.
 - **C5 agent-spawn port** — one `Protocol`:
   `spawn(brief, model, effort, permission, budget, tools) -> SpawnResult`
-  returning the agent's result plus its economy. v1 ships the **headless** impl
-  (subprocess `claude -p` under an isolated `CLAUDE_CONFIG_DIR`). This impl is
+  returning the agent's result plus its economy. The `Protocol` and its value
+  types live in `interface/spawn.py`; v1's real **headless** impl — subprocess
+  `claude -p` under an isolated `CLAUDE_CONFIG_DIR` — is
+  `interface/headless_spawn.py`. That impl is
   **reimplemented from scratch** but to a set of named, non-optional invariants
   (see §6 note): credential-only config isolation, env-strip of billing/routing
   vars, **whole-process-tree kill** on timeout on both Windows (`taskkill /F /T`)
@@ -258,10 +280,12 @@ second surface, is v2.
    importing the implementer's module. Decide what convoy guarantees and name it
    honestly ("workspace isolation of oracle assets", best-effort), rather than
    implying enforced epistemic independence. Covered in [01-gate.md](01-gate.md).
-2. **Independence asset home** — an out-of-tree absolute path is unportable and
-   doesn't commit/travel. Prefer a committable convention (e.g. an `oracles/`
-   dir mounted read-only and excluded from the implementer's write allow-list),
-   enforcing "implementer can't reach it" by permission, not by absolute path.
+2. **Independence asset home** — *resolved*: a committable `oracles/` directory
+   under the series root, with the scored `workspace/` as a sibling
+   subdirectory (what the scaffold emits). Isolation stays
+   containment+existence fail-closed, not a read-only mount; absolute
+   out-of-tree paths remain accepted. Resolution note in
+   [02-formats.md](02-formats.md).
 3. **Low-independence merge semantics** — a series with only implementer checks
    must still fail loud on a blocking red (never a green exit over a red). The
    `independent` marker changes *auto-fix vs. surface*, never *may-we-merge*.

@@ -24,8 +24,9 @@ PR-sized tasks plus the governance and gate that apply to them.
 | `[[prs]]` | `id`, `branch`, `prompt`, `phase`, `depends_on` | The PR decomposition as a DAG |
 
 `permission_mode` ∈ {`default`, `acceptEdits`, `plan`, `bypassPermissions`};
-convoy never *forces* `bypassPermissions` (a caller may set it, but governance
-resolution defaults to a non-auto-approve mode). `model`/`effort` are
+convoy never *forces* `bypassPermissions` (a caller may set it; the field is
+required and passed through unchanged — convoy supplies no permission mode of
+its own). `model`/`effort` are
 **phase-level** only — there is no per-PR model field, so authoring-time and
 runtime cannot disagree about which model runs a PR.
 
@@ -64,8 +65,8 @@ base = "convoy/base"
 integration = "convoy/integration"
 
 [paths]
-prompts = "/abs/assets/prompts"        # outside the scored workspace
-outputs = "/abs/assets/outputs"
+prompts = "/abs/series/prompts"        # the series root holds prompts/, oracles/,
+outputs = "/abs/series/outputs"        # outputs/ — and the scored workspace/ as a subdir
 
 [governance]
 model = "claude-sonnet-5"
@@ -96,8 +97,8 @@ repair_hint = "regenerate fixtures with scripts/gen_fixtures.py before rerunning
 
 [[checks]]
 name = "type-contract"
-run = "python /abs/assets/oracles/type_probe.py"   # author-supplied, out-of-tree
-asset = "/abs/assets/oracles/type_probe.py"        # isolation verified fail-closed at gate time
+run = "python /abs/series/oracles/type_probe.py"   # author-supplied, in the series root's oracles/
+asset = "/abs/series/oracles/type_probe.py"        # committable, yet outside the scored workspace/
 blocking = true
 independent = true
 
@@ -225,8 +226,8 @@ unknown fields. This is what lets convoy's telemetry stay a stable contract
 without convoy knowing who reads it.
 
 **Additive can still be consumer-affecting.** A new telemetry event, a new
-optional field, a new `outcome` value, a new `error_kind` value, or a new process
-exit code is additive — it bumps no `schema_version` and an older reader keeps
+optional field, a new `outcome` value, a new `error_kind` value, a new process
+exit code, or a new series.toml key is additive — it bumps no `schema_version` and an older reader keeps
 working — but a consumer that *branches on* the taxonomy (an exit code → a retry
 policy, an `outcome` → a scoring rule) silently mis-handles the new value until it
 is taught about it. So every such addition is called out in `CHANGELOG.md` as
@@ -242,7 +243,14 @@ only knew codes 0–3 had to learn code 4 before it could classify a spend-cap h
    (weak/mid/strong), or both (tier resolved to a model at load)? *Recommend:*
    accept either; if `tier` is given, resolve it to a model during governance
    resolution and record the resolved `effective_model` in telemetry.
-2. **Independent-check asset home.** Absolute out-of-tree path (as shown) vs. a
-   committable read-only `oracles/` convention (Overview open-decision 2). The
-   example uses absolute paths; the committable convention is the likely v1
-   answer and would change the `[[checks]].run` examples.
+2. **Independent-check asset home — resolved: a committable `oracles/` directory.**
+   The scaffold (`convoy init`, `interface/scaffold.py`) and the reference skill
+   place oracle assets in an `oracles/` directory under the series root, a sibling
+   of the scored `workspace/` subdirectory — so the oracle commits and travels
+   with the series' own assets while still living outside the scored workspace,
+   and the fail-closed containment check holds unchanged. The worked example
+   above follows this layout. Isolation is still enforced by containment and
+   existence (see [01-gate.md](01-gate.md)), not by a read-only mount or a
+   permission exclusion, and absolute out-of-tree paths anywhere remain accepted
+   (the scaffold itself records the oracle's absolute path in the emitted
+   `series.toml`).

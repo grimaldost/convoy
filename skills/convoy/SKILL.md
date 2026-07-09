@@ -49,9 +49,17 @@ then drop it for the real run.
   **only** your Claude credential into it (so auth still works), and removes it when the
   run ends. Turn it off only to deliberately run under your full operator config dir
   unchanged.
+- `reset` (default `false`) — opt-in workspace reset before staging: check out `base` and
+  delete the `integration` branch and every PR branch the series names — so a completed or
+  halted run can be re-run without a "branch already exists" failure. The reset touches
+  branches only; it does **not** discard uncommitted changes or untracked files (see
+  "Limits and re-runs"). Off by default: a leftover branch still fails loud exactly as
+  without the flag. CLI equivalent: `convoy run --fresh`.
 
 Traps the pre-flight catches (so `dry_run` reports them instead of a half-run):
-`[paths]` that are not absolute or point at a missing prompts dir; an `outputs` dir
+`[paths]` that don't resolve to an existing prompts dir or that name missing prompt
+files (note: absoluteness itself is not checked — a relative path resolves against the
+engine's working directory, so use absolute paths); an `outputs` dir
 **inside** the workspace (telemetry writes would dirty the git tree and abort a
 checkout — keep it out-of-tree); a blocking independent check whose `asset` is
 in-tree (isolation fails closed); and a governance block that resolves to neither a
@@ -73,7 +81,9 @@ Every tool returns a single JSON object.
   check stayed red after the fix loop), `infrastructure` (an auth / quota / retry / timeout
   halt — re-runnable), or `budget` (a spawn hit its budget cap; its partial work is not
   integrated).
-- `integrated` (bool) — whether the work reached the integration branch.
+- `integrated` (bool) — whether the **whole series'** work reached the integration branch
+  (`true` only with outcome `completed`). After a mid-series halt this is `false` even
+  though the PRs already gated green remain merged on the integration branch.
 - `exit_code` — `0` completed · `1` blocked · `2` infrastructure · `3` usage · `4` budget.
 - `run_id`, `series_id` — run identity.
 - `economy` — `{ total_cost_usd, cost_estimated, input_tokens, output_tokens,
@@ -111,7 +121,8 @@ offending section or entry, e.g. `[[prs]] 'pr-2'`).
 (`ok: false`) shape if it cannot start, never a raised exception. It carries `problems` (a
 located `{ kind, where, message }` list, same as `dry_run`) for a structure or pre-flight
 failure, or `error` (a message string) with an `error_kind` (`spec` | `governance` | `git`
-| `filesystem`) for an unreadable / invalid spec or a runtime git / filesystem failure. So
+| `busy` | `filesystem`) for an unreadable / invalid spec, a runtime git / filesystem
+failure, or another run holding the workspace lock (`busy`). So
 `usage` is the one `outcome` a real-run call can return **besides** the four engine outcomes
 above.
 
@@ -148,14 +159,22 @@ least one entry.
   passes it through but never *forces* an auto-approve mode.
 - **`effort`** is required (no convoy-side default) and is passed through to the spawn
   (e.g. `low`, `medium`, `high`).
-- **Required vs optional.** Every field in the table is required except four, which
+- **Required vs optional.** Every field in the table is required except five, which
   default: `[[checks]].independent` (`false`), `[[checks]].asset` (`''`, unused),
-  `[[checks]].repair_hint` (`''`, no hint), and `[[prs]].depends_on` (`[]`).
+  `[[checks]].repair_hint` (`''`, no hint), `[[prs]].depends_on` (`[]`), and
+  `[review].blocking` (`false`, reserved).
   `[[checks]].name`/`run`/`blocking` are all required.
   `[series].version` is any string (the example uses `"1"`); PR `id`s must be unique (they
   are what `depends_on` references). The exhaustive per-field types and the full telemetry
   line schema live in
   [docs/design/02-formats.md](../../docs/design/02-formats.md), which ships with the plugin.
+- **Calibrating `[governance.budgets]`.** The `fix` budget scales with the complexity of
+  the repair, not with the implementation estimate — a legitimate fix (e.g. updating a
+  contract or fingerprint test the change invalidates) can cost more than the
+  implementation spawn did. An under-set `fix` cap halts the whole series (outcome
+  `budget`; the truncated work is not integrated); the recovery is to raise the cap,
+  restore a clean tree (a budget halt leaves the truncated spawn's work uncommitted —
+  see "Limits and re-runs"), and re-run (`reset` / `--fresh`).
 - **`[governance.tools]`** entries are host Claude Code tool names (e.g. `Read`, `Edit`,
   `Write`, `Bash`, `Grep`, `Glob`); convoy passes the per-role allow-list through to the
   spawn unchanged.
@@ -238,8 +257,16 @@ no resume — a halted run does not check-point-and-continue. Start each run fro
 can collide). The prompts named in `[[prs]].prompt` must exist under `[paths].prompts`
 before the run; `dry_run` reports any that are missing.
 
-To re-run cleanly, reset the workspace to `base` and delete the `integration` branch and
-any PR branches the prior run created, then run again. `outputs/spawns.jsonl` is
+To re-run cleanly, pass `reset: true` (CLI: `convoy run --fresh`): before staging, convoy
+checks out `base` and deletes the `integration` branch and every PR branch the series
+names — then runs as normal. The reset touches **branches only**: it does not discard
+uncommitted changes or remove untracked files, and a `budget` or `infrastructure` halt
+returns *before* the truncated spawn's work is committed, leaving exactly that kind of
+debris behind. After such a halt, restore a clean tree by hand (discard modifications,
+remove untracked leftovers) before re-running — a dirty tree can abort the reset's own
+checkout. A re-run
+starts the series from scratch and re-spends it in full (there is no partial credit for
+a prior attempt). `outputs/spawns.jsonl` is
 append-only **across** runs — each run's lines carry a unique `run_id` (a sortable
 `%Y%m%dT%H%M%SZ` stamp plus a short random suffix, e.g. `20260705T140000Z-a1b2c3d4`, so
 two runs in the same second stay distinct), so a reader selects the latest `run_id`; a `convoy_run` summary
@@ -261,6 +288,13 @@ count. The gate checks themselves are local commands (near-free).
   to a few minutes at low effort / small tasks, longer at higher effort or larger
   tasks. v1 runs PRs **sequentially** in dependency order (no parallelism), so
   wall-clock is roughly the sum of the spawns plus the gate commands.
+- **Long or autonomous runs:** `convoy_run` is synchronous — the tool call blocks for
+  the entire series (minutes to hours) and cannot be polled. For a long run, the
+  supported pattern is the CLI in a background shell: `convoy run <series.toml>` from
+  the workspace directory (the CLI uses the current directory as the workspace) with
+  output redirected, reading progress from the telemetry file — `outputs/spawns.jsonl`
+  is appended line by line as the run proceeds. The CLI and the MCP tool drive the same
+  engine, so the run and its telemetry are identical.
 - **Seat probe (per real run):** before any git mutation, convoy runs one minimal,
   tool-less, budget-capped ($0.05) probe spawn against the run's resolved model — a
   few unmetered cents and seconds — so an expired seat, an exhausted usage limit, or
@@ -286,9 +320,35 @@ a partial result. Set budgets with headroom.
   to hours.
 - **No co-located authenticated `claude` seat** — the per-PR `claude -p` spawns can't
   run without one.
-- **No git workspace or non-absolute paths** — `dry_run` will just fail; set up the
-  repo and absolute `[paths]` first.
+- **No git workspace or relative `[paths]`** — pre-flight does not verify either
+  (a missing repo fails at staging; a relative path resolves against the engine's
+  working directory). Set up the repo and absolute `[paths]` first.
 - **You need PRs to run in parallel** — v1 is strictly sequential by dependency order.
+
+## Adopting convoy in an existing project
+
+An adopting repo commits nothing: no fixture, no config file, no convoy section anywhere
+in the tree. A series.toml and its per-PR prompt files are authored on demand for the job
+at hand, and since `[paths]` are absolute they can live entirely out-of-tree alongside
+`outputs`. The scored agent inherits the workspace's own conventions — its AGENTS.md /
+CLAUDE.md — through the spawned `claude -p`, which runs with the workspace as its working
+directory; convoy injects nothing of its own (config isolation strips the *operator's*
+config dir, never the workspace's files).
+
+The boundaries are deliberate scope decisions, not gaps:
+
+- **No prompt-injection assembly.** A PR's brief is the authored prompt file, passed to
+  the spawn verbatim; convoy composes nothing around it (the fix brief's appended
+  failing-checks section, above, is the one exception).
+- **No consumer or stage hook mechanism.** There are no pre/post callbacks to register;
+  the deterministic `[[checks]]` gate is the only project code a run executes around the
+  spawns.
+- **Telemetry is economy plus gate outcomes** — tokens, turns, cost, duration, verdicts.
+  It is not a reflection journal; there is no qualitative self-report channel.
+
+One calibration datum for the small end: a three-small-PR series has shipped 3/3
+attempt-0 for ~$3.18 and ~8 minutes of agent time — the per-series overhead is small
+enough that a series pays off even for small jobs.
 
 ## Setup (first run)
 
