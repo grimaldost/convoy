@@ -1,3 +1,3 @@
 """convoy — governed, measurable multi-PR execution."""
 
-__version__ = '0.1.1'
+__version__ = '0.1.2'
