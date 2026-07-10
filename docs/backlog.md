@@ -12,24 +12,22 @@ them. Status vocabulary: `proposed` (cleared the promotion gate, ready to build)
 `shipped(<ref>)` / `declined`. Consumer-affecting rows must carry the CHANGELOG
 marker convention from [docs/design/02-formats.md](design/02-formats.md) when built.
 
-Last reconciled: 2026-07-09, at `main` `4643bc5` (triage pass over 4 reports,
-2026-07-06..09).
+Last reconciled: 2026-07-09, after cutting release **0.1.2** (which serves every
+row in the Shipped table). Prior triage pass covered 4 reports, 2026-07-06..09.
 
 ## Leverage order
 
-**T9a (cut the 0.1.2 release — everything shipped is invisible to the plugin until
-it) → T10a + T16a (one `cli.py` pass: clean verb + `--workspace`) → T11a (resume;
+**T10a + T16a (one `cli.py` pass: clean verb + `--workspace`) → T11a (resume;
 biggest per-halt $ recovery) → T13a (one-line env strip protecting the fix loop) →
 T12b → T14b → T15a → T5a (decide) → T4a.**
 
-The doc-only rows (T7a, T7b, T9b, T12a, T14a) shipped in the 2026-07-09
-governance/docs overhaul — see the Shipped table.
+Everything shipped under 0.1.2 is now served by the tagged plugin (T9a done), so
+production no longer re-diagnoses already-fixed defects.
 
 ## Open rows
 
 | # | promotion | home | status |
 |---|-----------|------|--------|
-| T9a | Cut **0.1.2** from `[Unreleased]` and re-tag the plugin marketplace so `claude plugin install` serves the fixed engine. Production runs on 2026-07-08/09 re-diagnosed defects already fixed on main (~15–20 min each) because the plugin pins 0.1.1. | release process (`CHANGELOG.md` cut + git tag + plugin/marketplace manifests) | proposed |
 | T10a | `convoy clean <series.toml>` verb (MCP mirror optional): reset to base, delete the series' integration+PR branches, `git clean -fd`, remove the run lock — without starting a run (no seat probe, no lock acquisition). Seams: `cli.py` 4th verb reusing `_load_or_exit`; `git.py` new `clean_untracked`; `workspace_lock.py` `remove_stale_lock` helper. Recovery today is fully manual and was needed ~5× in one campaign; `--fresh` can't help because it acquires the lock and runs the seat probe before resetting. | `interface/cli.py`, `interface/git.py`, `interface/workspace_lock.py` | proposed |
 | T10b | Stale-lock auto-reclaim: the lock file already records the owning PID (`workspace_lock.py:43`) but never reads it back — reclaim iff the recorded process is dead. | `interface/workspace_lock.py:34-43` | watch |
 | T11a | `--resume`: check out the existing integration branch (it provably retains every green merge after any halt — `headless.py:345`), skip PRs already merged into it (`git merge-base --is-ancestor`), record skipped-because-done PRs with a distinct `pr_skipped` reason, preflight consistency. Thread like `--fresh` (`cli.py:106` → `run_service.py:49` → `mcp/server.py:166`). **(consumer-affecting)** | `interface/drivers/headless.py:235-243`, `interface/git.py`, `interface/run_service.py`, `interface/preflight_probe.py` | proposed |
@@ -52,18 +50,21 @@ governance/docs overhaul — see the Shipped table.
 
 ## Shipped (recent)
 
+All rows below are served by the **0.1.2** tag (2026-07-09).
+
 | # | promotion | shipped by |
 |---|-----------|-----------|
-| T1a–c | UTF-8 pinned at every text boundary + regression tests + entry-point streams | PR #11 (unreleased) |
-| T2a | `output_tail` on non-ok `spawn_complete` lines | PR #14 (unreleased) |
-| T2b | Seat probe before staging | PR #14 (unreleased) |
-| T3b | Truthful skip reason | PR #13 (unreleased) |
-| T8a | Per-check `repair_hint` briefed to the fix spawn | PR #12 (unreleased) |
-| T7a | "Adopting convoy in an existing project" section | 2026-07-09 docs overhaul (README + SKILL.md) |
-| T7b | Deliberate non-features documented | 2026-07-09 docs overhaul (README + SKILL.md) |
-| T9b | Release discipline in contributor docs | 2026-07-09 docs overhaul (CONTRIBUTING.md) |
-| T12a | Budget-calibration guidance | 2026-07-09 docs overhaul (SKILL.md) |
-| T14a | Long-run pattern documented (CLI in background) | 2026-07-09 docs overhaul (SKILL.md + README) |
+| T9a | Cut 0.1.2 and re-tag the plugin so `claude plugin install` serves the fixed engine | release 0.1.2 |
+| T1a–c | UTF-8 pinned at every text boundary + regression tests + entry-point streams | PR #11 → 0.1.2 |
+| T2a | `output_tail` on non-ok `spawn_complete` lines | PR #14 → 0.1.2 |
+| T2b | Seat probe before staging | PR #14 → 0.1.2 |
+| T3b | Truthful skip reason | PR #13 → 0.1.2 |
+| T8a | Per-check `repair_hint` briefed to the fix spawn | PR #12 → 0.1.2 |
+| T7a | "Adopting convoy in an existing project" section | PR #16 → 0.1.2 |
+| T7b | Deliberate non-features documented | PR #16 → 0.1.2 |
+| T9b | Release discipline in contributor docs | PR #16 → 0.1.2 |
+| T12a | Budget-calibration guidance | PR #16 → 0.1.2 |
+| T14a | Long-run pattern documented (CLI in background) | PR #16 → 0.1.2 |
 
 ## Declined (recent)
 

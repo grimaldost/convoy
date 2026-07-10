@@ -13,6 +13,8 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-09
+
 ### Added
 
 - **Contributor and agent governance.** `AGENTS.md` is the canonical playbook for
