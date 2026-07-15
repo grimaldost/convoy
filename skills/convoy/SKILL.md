@@ -300,12 +300,11 @@ count. The gate checks themselves are local commands (near-free).
   is appended line by line as the run proceeds. The CLI and the MCP tool drive the same
   engine, so the run and its telemetry are identical.
 - **Seat probe (per real run):** before any git mutation, convoy runs one minimal,
-  tool-less, budget-capped ($0.05) probe spawn against the `[governance]`-resolved
-  model — a few unmetered cents and seconds — so an expired seat, an exhausted usage
-  limit, or an inaccessible model fails the run clean (a `kind: "seat"` pre-flight
-  problem) instead of at PR1 after branches were staged. A PR that overrides the model
-  is not covered by the probe and would fail at that PR. `dry_run` never spawns, probe
-  included.
+  tool-less, budget-capped ($0.05) probe spawn per distinct model the run can spawn on
+  — the `[governance]` model plus any per-PR override, usually 1-3 in total — so an
+  expired seat, an exhausted usage limit, or a model the seat cannot access fails the
+  run clean (a `kind: "seat"` pre-flight problem) instead of at that PR after branches
+  were staged. It stops at the first dead model. `dry_run` never spawns, probe included.
 
 Per-phase budgets are hard caps: a spawn cut off by its `--max-budget-usd` is treated
 as truncated, untrustworthy work — the run halts `budget` (exit 4) rather than gating

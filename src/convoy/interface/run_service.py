@@ -53,9 +53,11 @@ def run_series_headless(
     Raises :class:`PreflightError` (carrying the located problems) if pre-flight is not
     clean — before any git mutation or scored spawn. After the filesystem pre-flight, a
     **seat probe** (see :mod:`~convoy.interface.seat_probe`) runs a minimal unmetered
-    spawn through the same credential/config the run will use; an expired or capped seat
-    raises :class:`PreflightError` with a ``kind='seat'`` problem before the fresh reset
-    or any branch is staged. Otherwise creates ``[paths].outputs``, and unless
+    spawn through the same credential/config the run will use, once per distinct model the
+    run can spawn on (the ``[governance]`` model plus any per-PR override); an expired or
+    capped seat, or a model the seat cannot access, raises :class:`PreflightError` with a
+    ``kind='seat'`` problem before the fresh reset or any branch is staged. Otherwise
+    creates ``[paths].outputs``, and unless
     ``config_isolation`` is off wraps the scored spawn in a credential-only
     ``CLAUDE_CONFIG_DIR`` (removed on exit, even on error). Propagates the engine's
     ``GovernanceError`` / ``GitError`` / ``OSError`` unchanged.
@@ -79,11 +81,12 @@ def run_series_headless(
         reporter = reporter if reporter is not None else NullReporter()
 
         def _execute(spawn: HeadlessSpawn) -> RunOutcome:
-            # Probe the seat FIRST — through the same spawn (same credential dir, same
-            # resolved model) the scored run will use — so an expired or capped seat fails
-            # the run here, before the fresh reset or any branch is staged. The probe is
-            # a few unmetered cents of preflight, not a scored spawn (see seat_probe).
-            problem = seat_problem(spawn, series.governance, workspace)
+            # Probe the seat FIRST — through the same spawn (same credential dir) the scored
+            # run will use — against every distinct model the run can spawn on, so an expired
+            # or capped seat, or a model the seat cannot access, fails the run here, before
+            # the fresh reset or any branch is staged. A few unmetered cents of preflight per
+            # model, not a scored spawn (see seat_probe).
+            problem = seat_problem(spawn, series, workspace)
             if problem is not None:
                 raise PreflightError([problem])
 

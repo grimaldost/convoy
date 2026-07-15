@@ -20,10 +20,21 @@ from convoy.core.governance import (
     DEFAULT_TIER_MODELS,
     GovernanceError,
     effective_governance,
+    implementation_models,
     resolve_model,
     resolve_spawn,
 )
-from convoy.core.spec import PERMISSION_MODES, PR, Budgets, Governance, Tools
+from convoy.core.spec import (
+    PERMISSION_MODES,
+    PR,
+    Branches,
+    Budgets,
+    Governance,
+    Paths,
+    Review,
+    Series,
+    Tools,
+)
 
 _ROLES = ('implementation', 'review', 'fix')
 
@@ -194,6 +205,49 @@ def test_unknown_per_pr_tier_raises() -> None:
     effective = effective_governance(_governance(model='m'), _pr(tier='banana'))
     with pytest.raises(GovernanceError):
         resolve_model(effective)
+
+
+# --- implementation_models: every distinct model an impl spawn can run on -----
+
+
+def _series_over(governance: Governance, prs: tuple[PR, ...]) -> Series:
+    return Series(
+        id='s',
+        version='1',
+        branches=Branches(base='base', integration='integration'),
+        paths=Paths(prompts='/tmp/p', outputs='/tmp/o'),
+        governance=governance,
+        review=Review(blocking=False, max_fix_attempts=0),
+        checks=(),
+        prs=prs,
+    )
+
+
+def test_implementation_models_dedupes_and_preserves_first_seen_order() -> None:
+    """Distinct models only, in first-PR-seen order — a repeat adds nothing."""
+    prs = (
+        _pr(model='m-a'),
+        _pr(model='m-b'),
+        _pr(model='m-a'),  # a repeat of the first
+    )
+    got = implementation_models(_series_over(_governance(model='series'), prs))
+    assert got == ('m-a', 'm-b')
+
+
+def test_implementation_models_mixes_overriding_and_inheriting_prs() -> None:
+    """An inheriting PR contributes the series model; an overriding PR its own."""
+    prs = (
+        _pr(),  # inherits the series model
+        _pr(tier='weak'),  # overrides to a tier-resolved model
+    )
+    got = implementation_models(_series_over(_governance(model='series-model'), prs))
+    assert got == ('series-model', DEFAULT_TIER_MODELS['weak'])
+
+
+def test_implementation_models_falls_back_to_the_series_model_on_empty_prs() -> None:
+    """A series naming no PRs still yields the [governance] model as the one to cover."""
+    got = implementation_models(_series_over(_governance(tier='mid'), ()))
+    assert got == (DEFAULT_TIER_MODELS['mid'],)
 
 
 # --- parity properties -------------------------------------------------------
