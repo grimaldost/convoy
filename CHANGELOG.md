@@ -34,6 +34,21 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   `core/preflight.py`, `interface/drivers/headless.py`, `docs/design/02-formats.md`,
   `skills/convoy/SKILL.md`.)
 
+- **The per-PR model is in the run summary.** *(consumer-affecting: adds an
+  `effective_model` field to each `prs[]` entry in the `convoy_run` result.)* The model a PR
+  ran under was already on disk on every `spawn_complete` line, but the result envelope
+  dropped it, so answering "which model ran this PR" meant hand-reading the raw trace.
+  `prs[]` entries now carry **`effective_model`** — the model the PR's implementation spawn
+  actually ran under, `null` for a PR that never spawned (skipped) — joinable against the
+  per-PR `gate` already in the envelope, so "which model ran this PR, and did it gate green
+  at attempt 0" is answerable from the result itself (`interface/mcp/server.py`).
+  A PR's spawns normally share one model; where an implementation and a fix spawn diverge,
+  the field reports the implementation spawn's — the spawn the gate judged — and the
+  per-spawn breakdown stays in the trace at `telemetry_path`.
+
+  The signal is asymmetric, and worth stating plainly: it can show that a model failed to
+  clear the gate, never that a cheaper one would have sufficed.
+
 ### Changed
 
 - **The seat probe now covers every distinct model the run can spawn on**, not just the

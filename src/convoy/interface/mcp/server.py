@@ -56,9 +56,18 @@ def summarize_run(
 
     Reads ``telemetry_path`` (convoy's append-only ``spawns.jsonl``), keeps only the lines
     tagged with ``run_id``, and aggregates them into economy totals and a per-PR view
-    (spawn count, the latest gate verdict, any skip reason). The complete per-line trace
-    stays on disk at ``telemetry_path`` — referenced here, never inlined. The per-PR list
-    is capped at ``pr_cap`` with a ``truncated`` report.
+    (spawn count, the implementation spawn's effective model, the latest gate verdict, any
+    skip reason). The complete per-line trace stays on disk at ``telemetry_path`` —
+    referenced here, never inlined. The per-PR list is capped at ``pr_cap`` with a
+    ``truncated`` report.
+
+    A PR can have several spawns (one implementation, then a fix spawn per repair attempt).
+    ``effective_model`` is the implementation spawn's model — the spawn the tier decision
+    governed and the one whose output the gate judged; a fix spawn is repair, not the
+    measured attempt. It is selected by ``role``, not append order, so it does not depend
+    on the implementation line being written before any fix line. It is ``None`` for a PR
+    that never ran an implementation spawn (e.g. a skip). The per-spawn breakdown is in the
+    trace.
     """
     economy = {
         'total_cost_usd': 0.0,
@@ -73,7 +82,14 @@ def summarize_run(
     def _pr(pr_id: str) -> dict[str, Any]:
         return prs.setdefault(
             pr_id,
-            {'pr_id': pr_id, 'spawns': 0, 'gate': None, 'skipped': False, 'skip_reason': None},
+            {
+                'pr_id': pr_id,
+                'spawns': 0,
+                'effective_model': None,
+                'gate': None,
+                'skipped': False,
+                'skip_reason': None,
+            },
         )
 
     if telemetry_path.exists():
@@ -93,7 +109,13 @@ def summarize_run(
                 economy['cost_estimated'] = economy['cost_estimated'] or entry.get(
                     'cost_estimated', False
                 )
-                _pr(entry['pr_id'])['spawns'] += 1
+                pr = _pr(entry['pr_id'])
+                pr['spawns'] += 1
+                # effective_model is the implementation spawn's model: the spawn the tier
+                # decision governed and the one the gate judged. Keyed on role, not append
+                # order — a fix spawn's model never overwrites it, whatever the line order.
+                if entry['role'] == 'implementation' and pr['effective_model'] is None:
+                    pr['effective_model'] = entry['effective_model']
             elif event == 'gate_complete':
                 _pr(entry['pr_id'])['gate'] = {
                     'attempt': entry['attempt'],
@@ -270,10 +292,11 @@ async def convoy_run(
 
     Returns the run ``outcome`` (``completed`` | ``blocked`` | ``infrastructure`` |
     ``budget`` for an executed run; ``validated`` | ``usage`` for a ``dry_run`` or a spec /
-    pre-flight failure), the ``exit_code``, per-spawn ``economy`` totals, and a per-PR
-    ``gate`` view. The full append-only per-spawn trace stays on disk at the returned
-    ``telemetry_path`` — read it for per-line detail. See the convoy skill for the full
-    result envelope and the series.toml schema.
+    pre-flight failure), the ``exit_code``, per-spawn ``economy`` totals, and a per-PR view
+    carrying the ``effective_model`` the PR's implementation spawn ran under (``null`` if it
+    never spawned) alongside its ``gate`` verdict. The full append-only per-spawn trace stays
+    on disk at the returned ``telemetry_path`` — read it for per-line detail. See the convoy
+    skill for the full result envelope and the series.toml schema.
 
     COST & LATENCY: a real run SPENDS real model budget and takes minutes to hours — it
     spawns one or more nested agents per PR. Pass ``dry_run=True`` first for a free,
