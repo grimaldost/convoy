@@ -13,7 +13,7 @@ unresolvable model or an unknown role is a ``GovernanceError``.
 
 from dataclasses import dataclass, replace
 
-from convoy.core.spec import PR, Governance
+from convoy.core.spec import PR, Governance, Series
 
 DEFAULT_TIER_MODELS: dict[str, str] = {
     'weak': 'claude-haiku-4-5',
@@ -111,3 +111,41 @@ def resolve_spawn(
         tools=tools,
         timeout_seconds=governance.timeout_seconds,
     )
+
+
+def implementation_model_sources(series: Series) -> tuple[tuple[str, str], ...]:
+    """Every distinct implementation model, paired with the section that declares it.
+
+    Same set and order as :func:`implementation_models` — first-PR-seen, deduped — but
+    each model carries a ``where`` string locating it for a :class:`~convoy.core.preflight.Problem`:
+    ``'[governance]'`` when the first PR to introduce the model inherited it (set neither
+    ``model`` nor ``tier``), or ``"[[prs]] '<id>'"`` when that PR set its own. First source
+    wins per model, so a later duplicate never relabels it. A series naming no PRs yields the
+    one ``[governance]`` model located at ``'[governance]'``. Raises :class:`GovernanceError`
+    if any resolved governance names no model.
+    """
+    where_of: dict[str, str] = {}
+    order: list[str] = []
+    for pr in series.prs:
+        model = resolve_model(effective_governance(series.governance, pr))
+        if model in where_of:
+            continue
+        overrides = pr.model is not None or pr.tier is not None
+        where_of[model] = f'[[prs]] {pr.id!r}' if overrides else '[governance]'
+        order.append(model)
+    if not order:
+        return ((resolve_model(series.governance), '[governance]'),)
+    return tuple((model, where_of[model]) for model in order)
+
+
+def implementation_models(series: Series) -> tuple[str, ...]:
+    """Every distinct model an implementation spawn of ``series`` can run on.
+
+    In first-PR-seen order, deduped: each PR's implementation model is its effective
+    governance's (its own ``model``/``tier`` where set, else the series value). A series
+    that names no PRs falls back to ``(resolve_model(series.governance),)`` — today's
+    single probe still covers the series model in that case. The model column of
+    :func:`implementation_model_sources`. Raises :class:`GovernanceError` if any resolved
+    governance names no model.
+    """
+    return tuple(model for model, _where in implementation_model_sources(series))

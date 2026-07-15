@@ -49,6 +49,18 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   The signal is asymmetric, and worth stating plainly: it can show that a model failed to
   clear the gate, never that a cheaper one would have sufficed.
 
+### Changed
+
+- **The seat probe now covers every distinct model the run can spawn on**, not just the
+  `[governance]`-resolved one — one probe per distinct model (the series model plus any
+  per-PR override), in first-PR-seen order, stopping at the first dead model. Not
+  consumer-affecting: it adds no key, event, field, exit code, or `outcome`/`error_kind`
+  value, and the `kind='seat'` pre-flight problem already exists. The only visible change
+  is pre-flight cost and coverage — $0.05 per distinct model (usually 1-3) instead of a
+  flat $0.05 — so a per-PR model the seat cannot access fails in pre-flight rather than at
+  that PR after branches were staged (`core/governance.py`, `interface/seat_probe.py`,
+  `interface/run_service.py`, `skills/convoy/SKILL.md`).
+
 ## [0.1.2] - 2026-07-09
 
 ### Added

@@ -20,10 +20,22 @@ from convoy.core.governance import (
     DEFAULT_TIER_MODELS,
     GovernanceError,
     effective_governance,
+    implementation_model_sources,
+    implementation_models,
     resolve_model,
     resolve_spawn,
 )
-from convoy.core.spec import PERMISSION_MODES, PR, Budgets, Governance, Tools
+from convoy.core.spec import (
+    PERMISSION_MODES,
+    PR,
+    Branches,
+    Budgets,
+    Governance,
+    Paths,
+    Review,
+    Series,
+    Tools,
+)
 
 _ROLES = ('implementation', 'review', 'fix')
 
@@ -194,6 +206,94 @@ def test_unknown_per_pr_tier_raises() -> None:
     effective = effective_governance(_governance(model='m'), _pr(tier='banana'))
     with pytest.raises(GovernanceError):
         resolve_model(effective)
+
+
+# --- implementation_models: every distinct model an impl spawn can run on -----
+
+
+def _series_over(governance: Governance, prs: tuple[PR, ...]) -> Series:
+    return Series(
+        id='s',
+        version='1',
+        branches=Branches(base='base', integration='integration'),
+        paths=Paths(prompts='/tmp/p', outputs='/tmp/o'),
+        governance=governance,
+        review=Review(blocking=False, max_fix_attempts=0),
+        checks=(),
+        prs=prs,
+    )
+
+
+def test_implementation_models_dedupes_and_preserves_first_seen_order() -> None:
+    """Distinct models only, in first-PR-seen order — a repeat adds nothing."""
+    prs = (
+        _pr(model='m-a'),
+        _pr(model='m-b'),
+        _pr(model='m-a'),  # a repeat of the first
+    )
+    got = implementation_models(_series_over(_governance(model='series'), prs))
+    assert got == ('m-a', 'm-b')
+
+
+def test_implementation_models_mixes_overriding_and_inheriting_prs() -> None:
+    """An inheriting PR contributes the series model; an overriding PR its own."""
+    prs = (
+        _pr(),  # inherits the series model
+        _pr(tier='weak'),  # overrides to a tier-resolved model
+    )
+    got = implementation_models(_series_over(_governance(model='series-model'), prs))
+    assert got == ('series-model', DEFAULT_TIER_MODELS['weak'])
+
+
+def test_implementation_models_falls_back_to_the_series_model_on_empty_prs() -> None:
+    """A series naming no PRs still yields the [governance] model as the one to cover."""
+    got = implementation_models(_series_over(_governance(tier='mid'), ()))
+    assert got == (DEFAULT_TIER_MODELS['mid'],)
+
+
+# --- implementation_model_sources: each model located to its declaring section -
+
+
+def test_implementation_model_sources_locates_an_inheriting_pr_at_governance() -> None:
+    """A PR that inherits [governance] sources its model to [governance]."""
+    got = implementation_model_sources(_series_over(_governance(model='series-model'), (_pr(),)))
+    assert got == (('series-model', '[governance]'),)
+
+
+def test_implementation_model_sources_locates_an_override_at_its_own_pr_table() -> None:
+    """A PR that sets its own model sources that model to its own [[prs]] table, by id."""
+    prs = (PR(id='pr-x', branch='b', prompt='b.md', phase='p', model='m-x'),)
+    got = implementation_model_sources(_series_over(_governance(model='series-model'), prs))
+    assert got == (('m-x', "[[prs]] 'pr-x'"),)
+
+
+def test_implementation_model_sources_attributes_a_model_to_its_first_seen_pr() -> None:
+    """First-seen + dedupe: a model's source is the FIRST PR to introduce it; a dupe adds none."""
+    prs = (
+        PR(id='a', branch='a', prompt='a.md', phase='p'),  # inherits -> series model
+        PR(id='b', branch='b', prompt='b.md', phase='p', model='opus'),
+        PR(id='c', branch='c', prompt='c.md', phase='p', model='opus'),  # dupe of b
+    )
+    got = implementation_model_sources(_series_over(_governance(model='series-model'), prs))
+    assert got == (('series-model', '[governance]'), ('opus', "[[prs]] 'b'"))
+
+
+def test_implementation_model_sources_falls_back_to_governance_on_empty_prs() -> None:
+    """A series naming no PRs sources its one [governance] model to [governance]."""
+    got = implementation_model_sources(_series_over(_governance(tier='mid'), ()))
+    assert got == ((DEFAULT_TIER_MODELS['mid'], '[governance]'),)
+
+
+def test_implementation_models_agrees_with_the_sources_model_column() -> None:
+    """``implementation_models`` is exactly the model column of ``implementation_model_sources``."""
+    prs = (
+        _pr(),
+        PR(id='b', branch='b', prompt='b.md', phase='p', model='opus'),
+    )
+    series = _series_over(_governance(model='series-model'), prs)
+    assert implementation_models(series) == tuple(
+        m for m, _ in implementation_model_sources(series)
+    )
 
 
 # --- parity properties -------------------------------------------------------
