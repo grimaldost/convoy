@@ -14,7 +14,7 @@ telemetry line, and its cost is a few cents per model (bounded by
 
 from pathlib import Path
 
-from convoy.core.governance import implementation_models
+from convoy.core.governance import implementation_model_sources
 from convoy.core.preflight import Problem
 from convoy.core.spec import Series
 from convoy.interface.spawn import AgentSpawn, SpawnRequest
@@ -36,9 +36,11 @@ def seat_problem(spawn: AgentSpawn, series: Series, workspace: Path) -> Problem 
     dead model: once the seat is proven unable to serve a model there is nothing to gain by
     paying to probe the rest. Each probe costs ~$0.05 (usually 1-3 distinct models). Only an
     ``'infrastructure'`` classification (or a CLI that cannot start) blocks: ``'ok'`` and even
-    ``'budget'`` prove the seat answered.
+    ``'budget'`` prove the seat answered. A returned Problem's ``where`` names the section that
+    declared the failing model — ``[governance]`` or the overriding PR's ``[[prs]]`` table — so
+    the user is pointed at the config location that actually chose it.
     """
-    for model in implementation_models(series):
+    for model, where in implementation_model_sources(series):
         request = SpawnRequest(
             brief=_PROBE_BRIEF,
             model=model,
@@ -53,14 +55,14 @@ def seat_problem(spawn: AgentSpawn, series: Series, workspace: Path) -> Problem 
         except OSError as exc:
             return Problem(
                 kind='seat',
-                where='[governance]',
+                where=where,
                 message=f'agent CLI could not start for the seat probe: {exc}',
             )
         if result.classification == 'infrastructure':
             tail = result.output[-_PROBE_MESSAGE_TAIL_CHARS:].strip() or '(no output)'
             return Problem(
                 kind='seat',
-                where='[governance]',
+                where=where,
                 message=f'seat probe failed for model {model!r}: {tail}',
             )
     return None

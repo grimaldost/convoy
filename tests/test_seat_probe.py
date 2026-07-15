@@ -153,3 +153,32 @@ def test_series_with_no_prs_probes_the_series_model(tmp_path: Path) -> None:
     spawn = FakeSpawn([ok_result()])
     assert seat_problem(spawn, _series('claude-sonnet-5', prs=()), tmp_path) is None
     assert [request.model for request, _cwd in spawn.calls] == ['claude-sonnet-5']
+
+
+# --- the failing model is located at the section that declares it -------------
+
+
+def test_dead_series_model_locates_the_problem_at_governance(tmp_path: Path) -> None:
+    """A failing inherited/series model points the user at [governance], the section it lives in."""
+    spawn = FakeSpawn([_infra_result('claude: Not logged in - please run /login')])
+    problem = seat_problem(spawn, _series('claude-sonnet-5'), tmp_path)
+    assert problem is not None
+    assert problem.where == '[governance]'
+
+
+def test_dead_per_pr_override_model_locates_the_problem_at_its_pr(tmp_path: Path) -> None:
+    """A failing PER-PR override model points at that PR's [[prs]] table — not [governance].
+
+    The old probe hard-coded ``where='[governance]'`` for every seat failure, so a
+    per-PR override model that the seat could not serve sent the user to the wrong TOML
+    section. The location now follows the model to the table that declares it.
+    """
+    prs = (
+        PR(id='a', branch='a', prompt='a.md', phase='p'),  # series model — healthy
+        PR(id='b', branch='b', prompt='b.md', phase='p', model='claude-opus-4-8'),  # dies
+    )
+    spawn = FakeSpawn([ok_result(), _infra_result('claude: Not logged in')])
+    problem = seat_problem(spawn, _series('claude-haiku-4-5', prs=prs), tmp_path)
+    assert problem is not None
+    assert 'claude-opus-4-8' in problem.message  # still names the failing model
+    assert problem.where == "[[prs]] 'b'"
