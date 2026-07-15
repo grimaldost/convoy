@@ -47,8 +47,11 @@ A `[[prs]]` table may set its own `model`, `tier`, and `effort`. Resolution rule
   and unchanged by it.
 - Per-spawn `effective_model` already attributes a mixed-tier run with no schema
   change — each telemetry line names the model that spawn ran on.
-- The run-summary envelope still has no per-PR model dimension; folding
-  `effective_model` into the summary is a separate concern, not built here.
+- The run-summary envelope's per-PR model dimension is a separate concern from this
+  ADR's governance work, and landed alongside it via the sibling readback change:
+  each `prs[]` entry now carries `effective_model` (the implementation spawn's model,
+  `null` if it never spawned). See the CHANGELOG [Unreleased] "per-PR model is in the
+  run summary" entry and `interface/mcp/server.py`.
 - The pre-flight resolves every overriding PR's governance, so an unknown per-PR tier
   fails `convoy validate` and the run pre-flight rather than mid-run — after earlier
   PRs already spent money.
