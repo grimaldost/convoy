@@ -13,6 +13,8 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-15
+
 ### Added
 
 - **Optional per-PR `model` / `tier` / `effort` in `[[prs]]` — a PR's own governance,

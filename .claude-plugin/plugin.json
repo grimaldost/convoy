@@ -1,6 +1,6 @@
 {
   "name": "convoy",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Governed, measurable multi-PR execution served to agents: decompose work into a dependency-ordered series of PRs, drive a coding agent to implement each under a per-phase budget, gate each result against a quality check, integrate the green branches, and get back a structured per-spawn economy + gate summary. The `convoy_run` tool spawns a subprocess `claude -p` per PR, so run it co-located with an authenticated Claude Code seat.",
   "author": {
     "name": "Grimaldo Stanzani",

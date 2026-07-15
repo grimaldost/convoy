@@ -50,8 +50,11 @@ Cadence: cut a release after each backlog build round (a batch of
 
 1. Move `[Unreleased]` into a new `## [0.x.y] - <date>` section in
    `CHANGELOG.md`.
-2. Bump `version` in `pyproject.toml` and `.claude-plugin/plugin.json`
+2. Bump the version in all THREE locked locations — `pyproject.toml`,
+   `.claude-plugin/plugin.json`, and `__version__` in `src/convoy/__init__.py`
    (`.claude-plugin/marketplace.json` carries no version field).
+   `tests/test_manifest.py::test_versions_are_locked` asserts the three agree, so a
+   missed one fails the gate instead of shipping a split-brain version.
 3. Tag `v0.x.y` and push the tag.
 
 ## The feedback loop

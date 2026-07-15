@@ -1,6 +1,6 @@
 [project]
 name = 'convoy-engine'
-version = '0.1.2'
+version = '0.2.0'
 description = 'Governed, measurable multi-PR execution engine.'
 readme = 'README.md'
 requires-python = '>=3.14'
