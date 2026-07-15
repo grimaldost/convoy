@@ -19,7 +19,7 @@ row in the Shipped table). Prior triage pass covered 4 reports, 2026-07-06..09.
 
 **T10a + T16a (one `cli.py` pass: clean verb + `--workspace`) → T11a (resume;
 biggest per-halt $ recovery) → T13a (one-line env strip protecting the fix loop) →
-T12b → T14b → T15a → T5a (decide) → T4a.**
+T12b → T14b → T15a → T4a.**
 
 Everything shipped under 0.1.2 is now served by the tagged plugin (T9a done), so
 production no longer re-diagnoses already-fixed defects.
@@ -41,7 +41,7 @@ production no longer re-diagnoses already-fixed defects.
 | T16a | `--workspace <dir>` (default: cwd) on `run`/`validate`, mirroring the MCP tool's explicit argument; at minimum a `--help` line naming the cwd coupling. 4 reports across 4 arcs. | `interface/cli.py:59,96` | proposed |
 | T17 | MAX_PATH detection + "scaffold into a shorter directory" hint in `convoy_init`; wire `_error_kind` into `_init_impl` (classifier exists, only `_run_impl` uses it). | `interface/scaffold.py:107,134-136`, `interface/mcp/server.py:196` | watch |
 | T18 | Meter the seat probe (a `role: "preflight"` spawn line) if a consumer ever needs to-the-cent totals; probe cost currently precedes the telemetry file. **(consumer-affecting)** | `core/telemetry.py`, `interface/seat_probe.py` | watch |
-| T5a | Mixed-tier design decision: per-PR `model`/`tier` override vs a documented one-tier-per-series pattern. Three arcs of evidence; the third shows a sibling planning tool advertising per-PR tiers `core/spec.py:21` rejects. Decide this cycle; the resolution must be propagated to that tool either way. | `core/spec.py` + `docs/design/02-formats.md` (or docs-only) | proposed |
+| T5a | Mixed-tier design decision. Resolved: optional per-PR `model`/`tier`/`effort` falling back to `[governance]` (ADR-0007, supersedes ADR-0005); `budget`/`budgets` stay rejected as a per-role axis. Propagation to the sibling planning tool that emits per-PR tiers is still outstanding. | `core/spec.py` + `docs/design/02-formats.md` | accepted |
 | T4a | Real commit messages on the residual sweep: `commit_all(pr.id)` fires when an impl spawn ends with uncommitted work, so the bare `pr.id` becomes the message of record (7 occurrences, position-independent). Make the sweep produce a real message or ensure the agent commits. | `interface/drivers/headless.py:262`, `interface/git.py::commit_all` | proposed |
 | T4b | Commit-provenance telemetry (agent-authored vs engine-synthesized). **(consumer-affecting)** | `core/telemetry.py` | watch |
 | T3a | DAG-aware continuation past a halt (continue PRs whose dependency closure excludes the halted PR). Economics largely subsumed by T11a. | `interface/drivers/headless.py`, `core/dag.py` | watch |

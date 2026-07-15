@@ -26,6 +26,7 @@ from test_reporter import RecordingReporter
 
 from convoy.core.gate import CheckResult, decide
 from convoy.core.spec import (
+    PR,
     Branches,
     Budgets,
     Check,
@@ -393,6 +394,69 @@ def test_two_pr_series_integrates_both_in_dependency_order(harness: Harness) -> 
     assert len(run_completes) == 1
     assert run_completes[0]['outcome'] == 'completed'
     assert run_completes[0]['integrated'] is True
+
+
+def test_per_pr_model_reaches_the_implementation_spawn(harness: Harness) -> None:
+    """A PR that pins its own model spawns on it; a PR that does not inherits the series model.
+
+    Pins the driver's per-PR ``effective_governance`` layering at the implementation site.
+    """
+    series = replace(
+        _two_pr_series(harness.series),
+        prs=(
+            PR(id='pr-a', branch='pr-a', prompt='impl-a.md', phase='implementation'),
+            PR(
+                id='pr-b',
+                branch='pr-b',
+                prompt='impl-b.md',
+                phase='implementation',
+                depends_on=('pr-a',),
+                model='pr-b-model',
+            ),
+        ),
+    )
+    (harness.repo / 'prompts' / 'impl-a.md').write_text('Implement A.')
+    (harness.repo / 'prompts' / 'impl-b.md').write_text('Implement B.')
+    spawn = MarkerSpawn([ok_result(), ok_result()], markers_for=('marker-a', 'marker-b'))
+
+    outcome = _run(harness, series, spawn, 'run-per-pr-model')
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    # pr-a inherits the series model; pr-b runs on its own.
+    assert spawn.calls[0][0].model == 'test-model'
+    assert spawn.calls[1][0].model == 'pr-b-model'
+
+
+def test_fix_spawn_uses_the_prs_own_model(harness: Harness) -> None:
+    """A PR's fix spawn reuses that PR's own resolved model, not the series model.
+
+    Without this a repair silently runs on a different tier than the work it repairs.
+    """
+    base = _make_series(harness.repo, Check(name='marker', run=_MARKER_CMD, blocking=True))
+    base = replace(base, review=replace(base.review, max_fix_attempts=1))
+    series = replace(
+        base,
+        prs=(
+            PR(
+                id='pr-1',
+                branch='pr-1',
+                prompt='impl.md',
+                phase='implementation',
+                model='pr-1-model',
+            ),
+        ),
+    )
+    # impl leaves the marker check red; the fix spawn creates the marker and goes green.
+    spawn = FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True)
+
+    outcome = _run(harness, series, spawn, 'run-fix-model')
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    fix_calls = [
+        request for request, _cwd in spawn.calls if '## Failing checks to repair' in request.brief
+    ]
+    assert len(fix_calls) == 1
+    assert fix_calls[0].model == 'pr-1-model'  # not 'test-model'
 
 
 def test_dependency_failure_skips_the_dependent(harness: Harness) -> None:

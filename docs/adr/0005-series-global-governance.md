@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted for v1 (founding decision, recorded 2026-07-09). **Under review** — the
-mixed-tier decision is open as backlog row T5a with three arcs of production
-evidence against the restriction.
+Superseded by ADR-0007 (2026-07-14). ADR-0007 carries forward the `budget`/`budgets`
+rejection (budgets are a per-role axis); the rest of this record — series-global model
+governance — is superseded by optional per-PR overrides.
 
 ## Context
 

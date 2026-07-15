@@ -3,8 +3,10 @@
 Parses, validates, and serializes ``series.toml`` (see ``docs/design/02-formats.md``).
 ``load_series`` takes TOML *text*, never a path: reading a file is a shell concern.
 Validation is purely structural — field presence, types, ``depends_on`` resolution,
-and the phase-level-only governance parity guard. Anything touching the filesystem
-(do ``[paths]`` exist, is an independent check's asset out-of-tree) lives elsewhere.
+and the per-PR governance rule: ``model``/``tier``/``effort`` are optional on a
+``[[prs]]`` table and layer over ``[governance]``, while ``budget``/``budgets`` are
+rejected. Anything touching the filesystem (do ``[paths]`` exist, is an independent
+check's asset out-of-tree) lives elsewhere.
 """
 
 import tomllib
@@ -16,9 +18,11 @@ import tomli_w
 
 PERMISSION_MODES = frozenset({'default', 'acceptEdits', 'plan', 'bypassPermissions'})
 
-# Per-PR keys that would let authoring-time and runtime disagree about how a PR
-# runs; model/effort/budget are phase-level only (02-formats.md).
-_FORBIDDEN_PR_KEYS = ('model', 'tier', 'effort', 'budget', 'budgets')
+# Budgets are PER-ROLE (``Budgets(implementation, review, fix)``, read via
+# ``getattr(governance.budgets, role)``), so a per-PR scalar ``budget`` has no role to
+# bind to — a different axis, not a narrower version of the same thing. The series-wide
+# repair bound stays ``[review].max_fix_attempts`` (02-formats.md).
+_FORBIDDEN_PR_KEYS = ('budget', 'budgets')
 
 
 class SpecError(ValueError):
@@ -91,6 +95,11 @@ class PR:
     prompt: str
     phase: str
     depends_on: tuple[str, ...] = ()
+    # This PR's own governance, layered over [governance] by
+    # ``core.governance.effective_governance``; absent means inherit the series value.
+    model: str | None = None
+    tier: str | None = None
+    effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -194,7 +203,8 @@ def _optional_nonempty_str(data: Mapping[str, Any], key: str, where: str) -> str
     """An optional string that, when present, must be non-blank.
 
     An empty ``model`` would resolve to an empty ``effective_model`` (never-blank is a
-    telemetry contract); an empty ``tier`` is unresolvable. Reject both at load so the
+    telemetry contract); an empty ``tier`` is unresolvable; an empty per-PR ``effort``
+    would blank a value ``[governance]`` requires. Reject all of them at load so the
     mistake surfaces as a clear ``SpecError`` — caught by ``convoy validate`` and the run
     pre-flight — rather than as a blank field or a runtime error.
     """
@@ -331,12 +341,11 @@ def _parse_check(data: Mapping[str, Any], index: int) -> Check:
 
 def _parse_pr(data: Mapping[str, Any], index: int) -> PR:
     where = f'[[prs]][{index}]'
-    # Parity guard (rule 3): model/effort/budget are phase-level only.
     for forbidden in _FORBIDDEN_PR_KEYS:
         if forbidden in data:
             raise SpecError(
                 f'{where}: per-PR {forbidden!r} is not allowed; '
-                'model/effort/budget are phase-level only'
+                'budgets are per-role, set [governance.budgets]'
             )
     return PR(
         id=_require_str(data, 'id', where),
@@ -344,6 +353,9 @@ def _parse_pr(data: Mapping[str, Any], index: int) -> PR:
         prompt=_require_str(data, 'prompt', where),
         phase=_require_str(data, 'phase', where),
         depends_on=_optional_str_tuple(data, 'depends_on', where),
+        model=_optional_nonempty_str(data, 'model', where),
+        tier=_optional_nonempty_str(data, 'tier', where),
+        effort=_optional_nonempty_str(data, 'effort', where),
     )
 
 
@@ -413,12 +425,35 @@ def _check_table(check: Check) -> dict[str, Any]:
     return table
 
 
+def _pr_table(pr: PR) -> dict[str, Any]:
+    """One ``[[prs]]`` table for ``dump_series``.
+
+    ``model``, ``tier`` and ``effort`` are omitted when unset (each re-parses as its
+    ``None`` default), so a PR that inherits ``[governance]`` round-trips to the same
+    minimal table.
+    """
+    table: dict[str, Any] = {
+        'id': pr.id,
+        'branch': pr.branch,
+        'prompt': pr.prompt,
+        'phase': pr.phase,
+        'depends_on': list(pr.depends_on),
+    }
+    if pr.model is not None:
+        table['model'] = pr.model
+    if pr.tier is not None:
+        table['tier'] = pr.tier
+    if pr.effort is not None:
+        table['effort'] = pr.effort
+    return table
+
+
 def dump_series(series: Series) -> str:
     """Serialize a ``Series`` back to TOML text.
 
     Round-trips: ``load_series(dump_series(s)) == s`` for every valid ``s``.
-    Optional ``None`` governance fields are omitted (``tomli_w`` cannot encode
-    ``None``) and re-parse as their ``None`` default.
+    Optional ``None`` fields — on ``[governance]`` and on each ``[[prs]]`` table — are
+    omitted (``tomli_w`` cannot encode ``None``) and re-parse as their ``None`` default.
     """
     governance: dict[str, Any] = {
         'effort': series.governance.effort,
@@ -450,16 +485,7 @@ def dump_series(series: Series) -> str:
             'max_fix_attempts': series.review.max_fix_attempts,
         },
         'checks': [_check_table(check) for check in series.checks],
-        'prs': [
-            {
-                'id': pr.id,
-                'branch': pr.branch,
-                'prompt': pr.prompt,
-                'phase': pr.phase,
-                'depends_on': list(pr.depends_on),
-            }
-            for pr in series.prs
-        ],
+        'prs': [_pr_table(pr) for pr in series.prs],
     }
 
     return tomli_w.dumps(document)

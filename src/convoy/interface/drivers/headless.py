@@ -35,7 +35,7 @@ from secrets import token_hex
 
 from convoy.core.dag import order
 from convoy.core.gate import GateVerdict, decide
-from convoy.core.governance import resolve_spawn
+from convoy.core.governance import effective_governance, resolve_spawn
 from convoy.core.preflight import Problem
 from convoy.core.spec import PR, Series
 from convoy.core.telemetry import (
@@ -248,7 +248,11 @@ def run_series(
             encoding='utf-8', errors='replace'
         )
 
-        governed = resolve_spawn(series.governance, 'implementation')
+        # A PR's own model/tier/effort layer over [governance] here, once, and the same
+        # resolved governance drives both this PR's implementation spawn and its fix spawn
+        # below — so a repair never runs on a different model than the work it repairs.
+        pr_governance = effective_governance(series.governance, pr)
+        governed = resolve_spawn(pr_governance, 'implementation')
         request = SpawnRequest(
             brief=brief,
             model=governed.model,
@@ -292,7 +296,9 @@ def run_series(
         while verdict.blocking_red and attempts < series.review.max_fix_attempts:
             attempts += 1
             reporter.fix_attempt(pr.id, attempts, series.review.max_fix_attempts)
-            governed = resolve_spawn(series.governance, 'fix')
+            # Reuse this PR's own resolved governance so the fix runs on the same model as
+            # the implementation it repairs, not the series model.
+            governed = resolve_spawn(pr_governance, 'fix')
             fix_request = SpawnRequest(
                 brief=_fix_brief(brief, verdict),
                 model=governed.model,
