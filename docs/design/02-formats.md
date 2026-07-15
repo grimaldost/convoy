@@ -16,19 +16,28 @@ PR-sized tasks plus the governance and gate that apply to them.
 | `[series]` | `id`, `version` | Series identity |
 | `[branches]` | `base`, `integration` | Fixture staged on `base`; integrated result on `integration` |
 | `[paths]` | `prompts` (dir), `outputs` (dir) | Asset locations; **absolute paths accepted** so assets can live outside the scored workspace |
-| `[governance]` | `model` (or `tier`), `effort`, `permission_mode`, `timeout_seconds` | Per-spawn governance, pinned per phase |
+| `[governance]` | `model` (or `tier`), `effort`, `permission_mode`, `timeout_seconds` | The default per-spawn governance; a `[[prs]]` table may override `model`/`tier`/`effort` for itself |
 | `[governance.budgets]` | `implementation`, `review`, `fix` | USD ceiling per phase |
 | `[governance.tools]` | `implementation`, `review`, `fix` | Tool allow-list per phase |
 | `[review]` | `blocking` (optional), `max_fix_attempts` | `max_fix_attempts` bounds the fix loop; `blocking` is **reserved** for an optional blocking LLM self-review the v1 headless driver does not run — optional, default `false` (the deterministic `[[checks]]` gate is the sole merge arbiter) |
 | `[[checks]]` | `name`, `run`, `blocking`, `independent`, `asset`, `repair_hint` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)); `asset` is an optional absolute out-of-tree path to a blocking independent check's oracle; `repair_hint` is an optional one-line repair recipe (a command or instruction) appended verbatim to the fix brief when THAT check fails |
-| `[[prs]]` | `id`, `branch`, `prompt`, `phase`, `depends_on` | The PR decomposition as a DAG |
+| `[[prs]]` | `id`, `branch`, `prompt`, `phase`, `depends_on`, `model`, `tier`, `effort` | The PR decomposition as a DAG; `model`/`tier`/`effort` are optional per-PR overrides |
 
 `permission_mode` ∈ {`default`, `acceptEdits`, `plan`, `bypassPermissions`};
 convoy never *forces* `bypassPermissions` (a caller may set it; the field is
 required and passed through unchanged — convoy supplies no permission mode of
-its own). `model`/`effort` are
-**phase-level** only — there is no per-PR model field, so authoring-time and
-runtime cannot disagree about which model runs a PR.
+its own). Per-PR governance follows four rules:
+
+1. A `[[prs]]` `model`/`tier`/`effort` key wins for that PR; `[governance]` is the
+   fallback when the key is absent.
+2. A PR that sets `model` **or** `tier` supplies **both** — its `(model, tier)` pair
+   replaces the series pair, which is not consulted. So a series `model` never shadows
+   a per-PR `tier` (model resolution prefers model over tier, so an independent merge
+   would silently pick the wrong one).
+3. Both spawns of a PR — implementation and fix — resolve the same value, so a repair
+   never runs on a different model than the work it repairs.
+4. `[governance]` must still resolve a model even when every PR overrides it: it is the
+   fallback and the audit baseline, and the pre-flight resolves it too.
 
 - **`asset`** is the optional out-of-tree path to a blocking independent check's
   oracle. Its isolation is verified **fail-closed at gate time**, not at spec-load:
@@ -47,6 +56,10 @@ runtime cannot disagree about which model runs a PR.
 - **Every budget must be `> 0`.** A `0` (or negative) budget is rejected at load;
   a `0` budget would otherwise silently disable the spawn's `--max-budget-usd` cap
   (unlimited spend), so it is a footgun convoy refuses.
+- **`budget`/`budgets` are rejected per PR.** Budgets are per-role
+  (`implementation`/`review`/`fix`), so a per-PR scalar `budget` has no role to bind
+  to — a different axis, not a narrower version of the per-PR `model`/`tier`/`effort`
+  override. A `[[prs]]` table carrying either key is a load-time error.
 - **"Phase" has two unrelated meanings.** The governance **role**
   (`implementation` / `review` / `fix`) — what `[governance.budgets]`,
   `[governance.tools]`, and the spawn resolution key on — is distinct from the
@@ -108,19 +121,21 @@ branch = "convoy/pr-1"
 prompt = "01-lexer.md"
 phase = "core"
 depends_on = []
+tier = "weak"                          # this PR overrides the series tier for itself
 
 [[prs]]
 id = "pr-2-parser"
 branch = "convoy/pr-2"
 prompt = "02-parser.md"
 phase = "core"
-depends_on = ["pr-1-lexer"]
+depends_on = ["pr-1-lexer"]            # no per-PR governance: inherits [governance]
 ```
 
 ### Validation (pure) vs. probing (shell)
 
 `spec.py` validates *structure* purely (required fields, types, `depends_on`
-references resolve, no per-PR model field); DAG acyclicity and duplicate-id
+references resolve; per-PR governance keys are optional, `budget`/`budgets` are
+rejected); DAG acyclicity and duplicate-id
 detection are the pure pre-flight's job (`core/preflight.check_dag` via `dag.order`),
 run by `convoy validate` and by `convoy run` before any mutation — not `load_series`'s.
 Anything that touches
@@ -239,10 +254,12 @@ only knew codes 0–3 had to learn code 4 before it could classify a spend-cap h
 
 ## Open decisions
 
-1. **`model` vs `tier`.** Accept a concrete `model` string, an abstract `tier`
-   (weak/mid/strong), or both (tier resolved to a model at load)? *Recommend:*
-   accept either; if `tier` is given, resolve it to a model during governance
-   resolution and record the resolved `effective_model` in telemetry.
+1. **`model` vs `tier` — resolved: accept either, resolved during governance.**
+   `[governance]` (and now each `[[prs]]` table) accepts a concrete `model` string or
+   an abstract `tier` (weak/mid/strong/frontier); `model` wins if both are set, a `tier`
+   resolves to a model during governance resolution, and the resolved model is recorded
+   as `effective_model` in telemetry. The vocabulary is load-bearing per PR: a per-PR
+   `tier` routes that PR through the tier→model table independently of the series.
 2. **Independent-check asset home — resolved: a committable `oracles/` directory.**
    The scaffold (`convoy init`, `interface/scaffold.py`) and the reference skill
    place oracle assets in an `oracles/` directory under the series root, a sibling

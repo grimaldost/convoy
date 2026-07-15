@@ -16,5 +16,6 @@ were written retroactively (2026-07-09) for founding decisions already shipped;
 | [0002](0002-deterministic-gate-is-the-sole-merge-arbiter.md) | The deterministic gate is the sole merge arbiter | Accepted |
 | [0003](0003-append-only-versioned-telemetry.md) | Append-only, versioned telemetry with a consumer-affecting marker | Accepted |
 | [0004](0004-credential-only-config-isolation.md) | Credential-only config isolation for scored spawns | Accepted |
-| [0005](0005-series-global-governance.md) | Series-global governance (no per-PR overrides) in v1 | Accepted (under review — backlog T5a) |
+| [0005](0005-series-global-governance.md) | Series-global governance (no per-PR overrides) in v1 | Superseded by [ADR-0007](0007-per-pr-governance-overrides.md) |
 | [0006](0006-feedback-local-backlog-tracked.md) | Feedback reports are local; the backlog ledger is tracked | Accepted |
+| [0007](0007-per-pr-governance-overrides.md) | Per-PR governance overrides with a series fallback | Accepted |

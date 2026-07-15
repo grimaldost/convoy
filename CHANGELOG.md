@@ -15,6 +15,25 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **Optional per-PR `model` / `tier` / `effort` in `[[prs]]` — a PR's own governance,
+  falling back to `[governance]`.** *(consumer-affecting: three new optional series.toml
+  keys, and the spec parser no longer rejects them — a series may now vary the model per
+  PR, so a consumer that relied on the parser rejecting these keys to hold every PR on one
+  model must pin it itself; an older engine rejects a series that sets them outright.)* A
+  `[[prs]]` table may set its own `model`, `tier`, and `effort`. Absent means the PR
+  inherits `[governance]` — behaviour is bit-for-bit unchanged for a series that sets none
+  of them. A PR that sets `model` **or** `tier` supplies both (its `(model, tier)` pair
+  replaces the series pair, which is not consulted, so a series `model` never shadows a
+  per-PR `tier`); both spawns of a PR — implementation and fix — resolve the same value.
+  `[governance]` must still resolve a model even when every PR overrides it (it is the
+  fallback and the audit baseline). The pre-flight now resolves every overriding PR's
+  governance, so an unknown per-PR tier fails `convoy validate` instead of raising mid-run
+  after earlier PRs already spent money. `budget` / `budgets` stay rejected per PR —
+  budgets are per-role (`implementation`/`review`/`fix`), so a per-PR scalar has no role to
+  bind to. (ADR-0007, supersedes ADR-0005; `core/spec.py`, `core/governance.py`,
+  `core/preflight.py`, `interface/drivers/headless.py`, `docs/design/02-formats.md`,
+  `skills/convoy/SKILL.md`.)
+
 - **The per-PR model is in the run summary.** *(consumer-affecting: adds an
   `effective_model` field to each `prs[]` entry in the `convoy_run` result.)* The model a PR
   ran under was already on disk on every `spawn_complete` line, but the result envelope

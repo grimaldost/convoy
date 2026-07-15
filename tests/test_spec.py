@@ -166,17 +166,57 @@ def test_rule2_bad_permission_mode_raises() -> None:
         load_series(text)
 
 
-def test_rule3_per_pr_model_raises() -> None:
+def test_per_pr_model_parses_onto_the_pr() -> None:
+    # A [[prs]] table may carry its own model; it falls back to [governance] when absent.
     text = VALID_TOML.replace(
         'id = "pr-1-lexer"',
-        'id = "pr-1-lexer"\nmodel = "claude-opus-4"',
+        'id = "pr-1-lexer"\nmodel = "claude-opus-4-8"',
     )
-    with pytest.raises(SpecError):
+    assert load_series(text).prs[0].model == 'claude-opus-4-8'
+
+
+def test_per_pr_tier_parses_onto_the_pr() -> None:
+    text = VALID_TOML.replace(
+        'id = "pr-1-lexer"',
+        'id = "pr-1-lexer"\ntier = "weak"',
+    )
+    assert load_series(text).prs[0].tier == 'weak'
+
+
+def test_per_pr_effort_parses_onto_the_pr() -> None:
+    text = VALID_TOML.replace(
+        'id = "pr-1-lexer"',
+        'id = "pr-1-lexer"\neffort = "low"',
+    )
+    assert load_series(text).prs[0].effort == 'low'
+
+
+def test_absent_per_pr_governance_defaults_to_none() -> None:
+    # Absent per-PR governance is today's behaviour: the PR inherits [governance].
+    for pr in load_series(VALID_TOML).prs:
+        assert pr.model is None
+        assert pr.tier is None
+        assert pr.effort is None
+
+
+@pytest.mark.parametrize('key', ['model', 'tier', 'effort'])
+def test_empty_per_pr_governance_is_rejected(key: str) -> None:
+    # An empty model resolves to a blank effective_model (never-blank is a telemetry
+    # contract); an empty tier is unresolvable; an empty effort blanks a value
+    # [governance] requires. All three are rejected at load.
+    text = VALID_TOML.replace(
+        'id = "pr-1-lexer"',
+        f'id = "pr-1-lexer"\n{key} = ""',
+    )
+    with pytest.raises(SpecError, match='non-empty'):
         load_series(text)
 
 
-@pytest.mark.parametrize('key', ['model', 'tier', 'effort', 'budget', 'budgets'])
-def test_rule3_all_forbidden_per_pr_keys_raise(key: str) -> None:
+@pytest.mark.parametrize('key', ['budget', 'budgets'])
+def test_per_pr_budget_keys_are_rejected(key: str) -> None:
+    """Budgets are per-role (implementation/review/fix), so a per-PR scalar has no role
+    to bind to — a different axis, not a narrower version of the same thing.
+    """
     text = VALID_TOML.replace(
         'id = "pr-1-lexer"',
         f'id = "pr-1-lexer"\n{key} = "x"',
@@ -258,9 +298,11 @@ def test_malformed_toml_raises_spec_error() -> None:
 # The strategy generates only valid Series: permission_mode from the allowed set,
 # and depends_on referencing only earlier PR ids. A check may be blocking +
 # independent (B4 allows it) and may carry an out-of-tree ``asset`` or not, so the
-# round-trip exercises the optional-asset omit path. Text is drawn from a TOML-safe
-# printable alphabet and floats exclude NaN/inf so the property isolates structural
-# round-trip, not tomli_w's encoding edge cases.
+# round-trip exercises the optional-asset omit path. A PR draws its optional
+# ``model``/``tier``/``effort`` as a value or None: the None branch is what exercises
+# the omit-on-dump path (``tomli_w`` cannot encode ``None``). Text is drawn from a
+# TOML-safe printable alphabet and floats exclude NaN/inf so the property isolates
+# structural round-trip, not tomli_w's encoding edge cases.
 
 _TEXT = st.text(
     alphabet=st.characters(
@@ -326,6 +368,9 @@ def _series(draw: st.DrawFn) -> Series:
                 prompt=draw(_TEXT),
                 phase=draw(_TEXT),
                 depends_on=tuple(depends_on),
+                model=draw(st.none() | _TEXT),
+                tier=draw(st.none() | _TEXT),
+                effort=draw(st.none() | _TEXT),
             )
         )
 

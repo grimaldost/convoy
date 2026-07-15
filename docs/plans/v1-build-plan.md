@@ -40,7 +40,7 @@ de-risking milestone is **A8**.
 | PR | delivers | key files | acceptance test | depends_on |
 |----|----------|-----------|-----------------|------------|
 | **A0** | project scaffold | `pyproject.toml`, `src/convoy/`, CI, `CLAUDE.md` | `convoy --version` runs; gate green | — |
-| **A1** | series spec (pure) | `core/spec.py` | round-trip property (`dump∘load==id`); validation rejects a per-PR `model`, unresolved `depends_on`, **and `independent=true` on a blocking check** (guard until B4 lands — FM-11) | A0 |
+| **A1** | series spec (pure) | `core/spec.py` | round-trip property (`dump∘load==id`); validation rejects a per-PR `model` (a v1 decision — per-PR `model`/`tier`/`effort` overrides were added post-v1; ADR-0007), unresolved `depends_on`, **and `independent=true` on a blocking check** (guard until B4 lands — FM-11) | A0 |
 | **A2** | DAG ordering (pure) | `core/dag.py` | property: a valid order respects every `depends_on`; cycle detected; `order([one_pr])==[one_pr]` (the seam A8 calls even at length 1 — FM-5) | A1 |
 | **A3** | telemetry + writer + **pricing** | `core/telemetry.py`, `core/pricing.py`, `interface/telemetry_writer.py` | snapshot **all three** events (`run_start`/`spawn_complete`/`run_complete`) with required-field assertions (FM-9); pricing: family substring match, unknown model → named default rate (FM-3); `cost_usd==0` → estimate via pricing + `cost_estimated:true` | A0 |
 | **A4** | gate verdict + runner | `core/gate.py`, `interface/gate_runner.py` | `decide` properties (blocking⇒`blocking_red`; independent-blocking⇒`independent_red`; independence never suppresses `blocking_red`); runner runs a check **under a bounded timeout**; a hung/crashed check → `CheckResult(passed=False)` (FM-10) | A1 |
@@ -54,7 +54,7 @@ de-risking milestone is **A8**.
 | PR | delivers | key files | acceptance test | depends_on |
 |----|----------|-----------|-----------------|------------|
 | **B1** | multi-PR DAG execution | driver wiring | a 2-PR series runs in dependency order; a failed dependency **skips its dependents** (not silently integrated) | A8 |
-| **B2** | governance parity | `core/governance.py` + driver wiring | property: no resolution yields an auto-approve permission or a per-PR model/effort override; model is phase-level; replaces A8's literal governance | A8 |
+| **B2** | governance parity | `core/governance.py` + driver wiring | property: no resolution yields an auto-approve permission or a per-PR model/effort override; model is phase-level; replaces A8's literal governance (a v1 decision — per-PR `model`/`tier`/`effort` overrides were added post-v1; ADR-0007) | A8 |
 | **B3** | bounded fix loop | driver | scripted: fix-on-`independent_red` converges to green within `max_fix_attempts`; implementer-only red still blocks (fail-loud); never green over red | A8,B2 |
 | **B4** | optional independent lane | `interface/fs_probe.py` + gate wiring | fail-closed when a **blocking** independent check's asset is in-tree/writable; passes when out-of-tree; removes the A1 guard (independent-on-blocking now allowed) | A4,A8 |
 | ~~**B5**~~ | **deferred to v2 (FM-1)** — run-state + resume | — | not in v1; A8's checkpoint seam is the v2 hook | — |

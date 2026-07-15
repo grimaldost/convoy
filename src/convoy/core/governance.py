@@ -1,16 +1,19 @@
 """Governance resolution: series governance into a per-role spawn plan (pure; no I/O).
 
-``resolve_model`` fixes the model for the whole phase — an explicit ``governance.model``
-wins, else the ``governance.tier`` maps through a tier→model table. There is no per-PR
-model override anywhere in convoy, so the model a spawn runs on is always this phase model.
+``resolve_model`` fixes the model for a governance — an explicit ``governance.model`` wins,
+else the ``governance.tier`` maps through a tier→model table. ``effective_governance``
+layers a PR's own ``model``/``tier``/``effort`` over the series' ``[governance]``, which
+stays the fallback; a PR that sets none of them resolves exactly as the series does.
 ``resolve_spawn`` then layers the per-role budget and tools (implementation / review / fix)
 on top of that shared model, passing ``permission_mode`` through unchanged — convoy never
-forces an auto-approve mode. An unresolvable model or an unknown role is a ``GovernanceError``.
+forces an auto-approve mode. Every value here is authoring-time and static: it comes from
+the spec, is visible before the run, and nothing escalates a model during a run. An
+unresolvable model or an unknown role is a ``GovernanceError``.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from convoy.core.spec import Governance
+from convoy.core.spec import PR, Governance
 
 DEFAULT_TIER_MODELS: dict[str, str] = {
     'weak': 'claude-haiku-4-5',
@@ -28,7 +31,12 @@ class GovernanceError(ValueError):
 
 @dataclass(frozen=True)
 class ResolvedSpawn:
-    """A fully-resolved per-role spawn plan: the phase model plus this role's knobs."""
+    """A fully-resolved per-role spawn plan: the resolved model plus this role's knobs.
+
+    The model is whatever the governance handed to :func:`resolve_spawn` resolves to — a
+    PR's own value where it sets one, else the series ``[governance]`` value. It is a
+    static, authoring-time choice; nothing changes it during a run.
+    """
 
     model: str
     effort: str
@@ -38,13 +46,31 @@ class ResolvedSpawn:
     timeout_seconds: int
 
 
+def effective_governance(governance: Governance, pr: PR) -> Governance:
+    """Layer ``pr``'s own governance over the series ``governance``.
+
+    A PR that sets ``model`` OR ``tier`` supplies BOTH: its ``(model, tier)`` pair replaces
+    the series pair wholesale, and the series pair is not consulted. Merging the two keys
+    independently (``model=pr.model or governance.model``) would be silently wrong —
+    :func:`resolve_model` prefers model over tier, so a series ``model`` would shadow a
+    per-PR ``tier`` and the PR would run on the wrong model with plausible telemetry.
+    ``effort`` has no such interaction and layers independently. A PR that sets none of the
+    three returns ``governance`` unchanged.
+    """
+    if pr.model is not None or pr.tier is not None:
+        governance = replace(governance, model=pr.model, tier=pr.tier)
+    if pr.effort is not None:
+        governance = replace(governance, effort=pr.effort)
+    return governance
+
+
 def resolve_model(governance: Governance, tier_models: dict[str, str] | None = None) -> str:
-    """Return the phase-level model for ``governance``.
+    """Return the model for ``governance``.
 
     ``governance.model`` wins if set; otherwise ``governance.tier`` is mapped through
     ``tier_models`` (defaulting to :data:`DEFAULT_TIER_MODELS`); if neither yields a
-    model, raise :class:`GovernanceError`. The model is PHASE-LEVEL — there is no per-PR
-    override anywhere in convoy, so every role resolves to this same model.
+    model, raise :class:`GovernanceError`. Resolves whatever governance it is handed —
+    the series' own, or a PR's effective governance from :func:`effective_governance`.
     """
     if governance.model is not None:
         return governance.model
@@ -65,7 +91,9 @@ def resolve_spawn(
 
     ``role`` in ``{'implementation', 'review', 'fix'}`` selects the budget
     (``governance.budgets.<role>``) and tools (``governance.tools.<role>``). The model
-    comes from :func:`resolve_model` and is identical across roles (phase-level).
+    comes from :func:`resolve_model` and is identical across the roles of the governance
+    it is handed — layering a PR's own value is :func:`effective_governance`'s job, done
+    by the caller.
     ``permission_mode`` is passed through UNCHANGED — convoy never forces an auto-approve
     mode. Raise :class:`GovernanceError` on an unknown role.
     """

@@ -29,8 +29,10 @@ _PROBE_MESSAGE_TAIL_CHARS = 500
 def seat_problem(spawn: AgentSpawn, governance: Governance, workspace: Path) -> Problem | None:
     """A located Problem when the seat cannot serve the run; ``None`` when it can.
 
-    Probes with the run's own resolved implementation model, so a model the seat
-    cannot access fails here too — not at PR1. Only an ``'infrastructure'``
+    Probes the model ``[governance]`` resolves. A PR that overrides the model with its
+    own ``model``/``tier`` is NOT covered here — a seat that cannot access that model
+    fails at that PR, not in pre-flight. (Restoring full coverage — one probe per distinct
+    model the run can spawn on — is a separate change.) Only an ``'infrastructure'``
     classification (or a CLI that cannot start) blocks: ``'ok'`` and even ``'budget'``
     prove the seat answered.
     """

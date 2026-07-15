@@ -75,6 +75,38 @@ def test_explicit_model_has_no_governance_problem() -> None:
     assert check_governance(_series(governance=_gov(model='claude-opus-4-8'))) == []
 
 
+def test_unknown_per_pr_tier_is_a_governance_problem() -> None:
+    # Without this the typo survives `convoy validate` AND the run pre-flight, then raises
+    # mid-run — after earlier PRs already spent real money.
+    prs = (PR(id='a', branch='a', prompt='a.md', phase='p', tier='banana'),)
+    problems = check_governance(_series(prs=prs))
+    assert len(problems) == 1
+    assert problems[0].kind == 'governance'
+    assert "'a'" in problems[0].where
+    assert 'banana' in problems[0].message
+
+
+def test_valid_per_pr_override_has_no_governance_problem() -> None:
+    prs = (
+        PR(id='a', branch='a', prompt='a.md', phase='p', tier='weak'),
+        PR(id='b', branch='b', prompt='b.md', phase='p', model='claude-opus-4-8'),
+        PR(id='c', branch='c', prompt='c.md', phase='p'),
+    )
+    assert check_governance(_series(prs=prs)) == []
+
+
+def test_series_governance_must_resolve_even_when_every_pr_overrides() -> None:
+    # [governance] stays the required fallback and the audit baseline. A broken series
+    # value yields ONE problem, not 1+N: only PRs that actually override are checked.
+    prs = (
+        PR(id='a', branch='a', prompt='a.md', phase='p', tier='weak'),
+        PR(id='b', branch='b', prompt='b.md', phase='p', tier='strong'),
+    )
+    problems = check_governance(_series(governance=_gov(), prs=prs))
+    assert len(problems) == 1
+    assert problems[0].where == '[governance]'
+
+
 def test_cycle_is_a_dag_problem() -> None:
     problems = check_dag(_series(prs=_CYCLE))
     assert len(problems) == 1

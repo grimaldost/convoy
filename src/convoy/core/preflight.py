@@ -12,7 +12,7 @@ more Problems of the same shape.
 from dataclasses import dataclass
 
 from convoy.core.dag import DagError, order
-from convoy.core.governance import GovernanceError, resolve_model
+from convoy.core.governance import GovernanceError, effective_governance, resolve_model
 from convoy.core.spec import Series
 
 
@@ -30,12 +30,30 @@ class Problem:
 
 
 def check_governance(series: Series) -> list[Problem]:
-    """A Problem when the governance resolves to no model (unknown tier, or neither set)."""
+    """A Problem per governance that resolves to no model (unknown tier, or neither set).
+
+    ``[governance]`` is checked first: it must resolve even when every PR overrides it,
+    since it is the fallback and the audit baseline. Then each PR that sets its OWN
+    ``model`` or ``tier`` is resolved — only those, so a broken series value yields one
+    problem rather than 1+N. Without the per-PR pass an unknown per-PR tier would survive
+    ``convoy validate`` and the run pre-flight, then raise mid-run in the driver, after
+    earlier PRs already spent real money.
+    """
+    problems: list[Problem] = []
     try:
         resolve_model(series.governance)
     except GovernanceError as exc:
-        return [Problem(kind='governance', where='[governance]', message=str(exc))]
-    return []
+        problems.append(Problem(kind='governance', where='[governance]', message=str(exc)))
+    for pr in series.prs:
+        if pr.model is None and pr.tier is None:
+            continue
+        try:
+            resolve_model(effective_governance(series.governance, pr))
+        except GovernanceError as exc:
+            problems.append(
+                Problem(kind='governance', where=f'[[prs]] {pr.id!r}', message=str(exc))
+            )
+    return problems
 
 
 def check_dag(series: Series) -> list[Problem]:

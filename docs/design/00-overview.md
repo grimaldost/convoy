@@ -45,9 +45,10 @@ the spine.
   schema, append-only. Any run can be scored and compared blind. This is the
   asset that has the clearest justification and the most evidence behind it.
 - **Reproducible / comparable runs.** Governance pins model, effort, permission
-  mode, budgets, and tools; it never silently auto-approves and never lets a
-  per-PR override smuggle in a stronger model. These are general good practices
-  for any reproducible agent run, not tied to any particular consumer.
+  mode, budgets, and tools **statically, in the spec** — a PR may set its own
+  model/effort, but that value is authoring-time and visible before the run; nothing
+  changes it during a run, and convoy never silently auto-approves. These are general
+  good practices for any reproducible agent run, not tied to any particular consumer.
 - **Functional core, imperative shell.** The decisions (DAG order, gate verdict,
   config resolution) are pure and unit-tested; the effects (spawning agents,
   running gate commands, git, filesystem checks) live in thin adapters behind
@@ -174,14 +175,13 @@ safeguards — postdates this founding doc and has its own doc:
   `schema_version`. **Per-spawn granularity is a hard requirement** — a
   run-total-only file cannot be economy-joined by any observer. The schema is a
   versioned public contract: fields are added, never renamed or repurposed.
-- **C4 governance** — a pure function resolving raw config into pinned per-phase
-  governance, enforcing the reproducibility rules: overridable
-  model/effort/permission/budget/tools; **never** forces an auto-approve
-  permission mode; **per-PR model/effort overrides stripped** (measure the
-  strategy, not a silently stronger model). Model/effort is a **phase-level**
-  value — there is no per-PR runtime model field, so authoring-time and runtime
-  cannot disagree about which model runs a PR. The fix loop reuses the pinned
-  per-phase model; it never re-introduces a per-PR or stronger model.
+- **C4 governance** — a pure function resolving raw config into pinned per-spawn
+  governance, enforcing the reproducibility rules: **never** forces an auto-approve
+  permission mode; model/effort resolve per PR from a **static spec value** — the
+  PR's own `model`/`tier`/`effort` key where it sets one, else `[governance]` — so
+  authoring-time and runtime cannot disagree about which model runs a PR. A PR's
+  implementation and fix spawns resolve the same value: the fix loop reuses THAT PR's
+  resolved model. Nothing escalates a model mid-run.
 - **C5 agent-spawn port** — one `Protocol`:
   `spawn(brief, model, effort, permission, budget, tools) -> SpawnResult`
   returning the agent's result plus its economy. The `Protocol` and its value
@@ -247,7 +247,9 @@ second surface, is v2.
 
 - **Core** — pure unit tests; `hypothesis` property tests for spec round-trip,
   DAG ordering (a valid order respects every `depends_on`), and governance parity
-  (no resolution yields an auto-approve permission or a per-PR model override).
+  (no resolution yields an auto-approve permission; the roles of one governance never
+  diverge; a per-PR value wins over the series value; a PR with no override resolves
+  bit-for-bit to today's behaviour).
 - **Gate** — mutation testing as a **wiring / regression** check: seed known
   defect classes into a fixture and assert each check catches what it should,
   with an explicit per-check baseline (which seeded class it MUST catch and, for
@@ -269,9 +271,8 @@ second surface, is v2.
   signal to feed it. Behind a flag at most.
 - **Dynamic model escalation** — cut (it fired on the wrong signal).
 - **Blocking LLM self-review** — off by default; a governance knob.
-- **Parallelism, per-PR model routing, hung-spawn watchdog** — deferred (tree-kill
-  on timeout, which protects the scored tree, is **not** the watchdog and is in
-  v1).
+- **Parallelism, hung-spawn watchdog** — deferred (tree-kill on timeout, which
+  protects the scored tree, is **not** the watchdog and is in v1).
 
 ## 9. Open decisions (fresh eyes wanted; none blocks the MVE)
 

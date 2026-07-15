@@ -152,21 +152,25 @@ least one entry.
 | `[governance.tools]` | `implementation`, `review`, `fix` (arrays of tool names) | all three required; the per-role tool allow-list |
 | `[review]` | `blocking` (bool, optional, default `false`), `max_fix_attempts` (int) | `max_fix_attempts` bounds the repair loop (`0` = a blocking red halts immediately); `blocking` is reserved and optional — see "What blocks a merge" below |
 | `[[checks]]` | `name`, `run` (shell command), `blocking` (bool), `independent` (bool, default `false`), `asset` (optional path), `repair_hint` (optional string) | the gate; the same checks run after **every** PR (series-global) |
-| `[[prs]]` | `id`, `branch`, `prompt` (file under `[paths].prompts`), `phase` (tag), `depends_on` (array of PR ids, default `[]`) | the PR DAG |
+| `[[prs]]` | `id`, `branch`, `prompt` (file under `[paths].prompts`), `phase` (tag), `depends_on` (array of PR ids, default `[]`), `model` / `tier` / `effort` (optional, inherit `[governance]`) | the PR DAG |
 
 - **`model` vs `tier`.** Set an explicit `model` (e.g. `claude-haiku-4-5`) or a `tier`
   that resolves to one: `weak` → `claude-haiku-4-5`, `mid` → `claude-sonnet-5`, `strong`
-  → `claude-opus-4-8`, `frontier` → `claude-fable-5`. `model` wins if both are set. Model
-  and effort are **phase-level only** — a per-PR `model` / `tier` / `effort` / `budget`
-  key is rejected at load, so authoring-time and runtime cannot disagree about how a PR
-  runs.
+  → `claude-opus-4-8`, `frontier` → `claude-fable-5`. `model` wins if both are set. A
+  `[[prs]]` table may set its own `model` / `tier` / `effort`, falling back to
+  `[governance]` when absent; a PR that sets `model` or `tier` supplies both (the series
+  pair is not consulted), and both spawns of a PR — implementation and fix — resolve the
+  same value. A per-PR `budget` / `budgets` key is still rejected at load, because budgets
+  are **per-role** (`implementation` / `review` / `fix`) and a per-PR scalar has no role
+  to bind to.
 - **`permission_mode`** ∈ `default`, `acceptEdits`, `plan`, `bypassPermissions`. convoy
   passes it through but never *forces* an auto-approve mode.
 - **`effort`** is required (no convoy-side default) and is passed through to the spawn
   (e.g. `low`, `medium`, `high`).
-- **Required vs optional.** Every field in the table is required except five, which
+- **Required vs optional.** Every field in the table is required except eight, which
   default: `[[checks]].independent` (`false`), `[[checks]].asset` (`''`, unused),
-  `[[checks]].repair_hint` (`''`, no hint), `[[prs]].depends_on` (`[]`), and
+  `[[checks]].repair_hint` (`''`, no hint), `[[prs]].depends_on` (`[]`),
+  `[[prs]].model` / `.tier` / `.effort` (unset, inherit `[governance]`), and
   `[review].blocking` (`false`, reserved).
   `[[checks]].name`/`run`/`blocking` are all required.
   `[series].version` is any string (the example uses `"1"`); PR `id`s must be unique (they
@@ -301,10 +305,12 @@ count. The gate checks themselves are local commands (near-free).
   is appended line by line as the run proceeds. The CLI and the MCP tool drive the same
   engine, so the run and its telemetry are identical.
 - **Seat probe (per real run):** before any git mutation, convoy runs one minimal,
-  tool-less, budget-capped ($0.05) probe spawn against the run's resolved model — a
-  few unmetered cents and seconds — so an expired seat, an exhausted usage limit, or
-  an inaccessible model fails the run clean (a `kind: "seat"` pre-flight problem)
-  instead of at PR1 after branches were staged. `dry_run` never spawns, probe included.
+  tool-less, budget-capped ($0.05) probe spawn against the `[governance]`-resolved
+  model — a few unmetered cents and seconds — so an expired seat, an exhausted usage
+  limit, or an inaccessible model fails the run clean (a `kind: "seat"` pre-flight
+  problem) instead of at PR1 after branches were staged. A PR that overrides the model
+  is not covered by the probe and would fail at that PR. `dry_run` never spawns, probe
+  included.
 
 Per-phase budgets are hard caps: a spawn cut off by its `--max-budget-usd` is treated
 as truncated, untrustworthy work — the run halts `budget` (exit 4) rather than gating
