@@ -92,19 +92,24 @@ Every tool returns a single JSON object.
   any spawn's cost was substituted from a token estimate (the provider reported `0.0`),
   making `total_cost_usd` approximate. Per-spawn `duration` is not summarized here — it is
   in the telemetry trace.
-- `prs` — one entry per PR, in processing order: `{ pr_id, spawns, gate, skipped,
-  skip_reason }`. `gate` is `null` if the PR never gated, else `{ attempt,
+- `prs` — one entry per PR, in processing order: `{ pr_id, spawns, effective_model, gate,
+  skipped, skip_reason }`. `gate` is `null` if the PR never gated, else `{ attempt,
   blocking_red, independent_red, failing_checks }` for the **latest** attempt
   (`failing_checks` lists the names of the blocking checks that were red). `attempt` is
   `0` for the initial gate and `1..N` after each fix re-gate; `blocking_red` and
   `independent_red` are booleans. A PR halted-past has `skipped: true` and a `skip_reason`.
-  `spawns` is the **count** of agent spawns for that PR. The list is capped at 50 PRs;
+  `spawns` is the **count** of agent spawns for that PR. `effective_model` is the model the
+  PR's **implementation** spawn actually ran under, and is `null` if the PR never spawned
+  (skipped). A PR's spawns normally share one model; on the rare divergence — a fix spawn
+  served a different model than the implementation spawn — this reports the implementation
+  spawn's, with the per-spawn breakdown in `telemetry_path`. The list is capped at 50 PRs;
   overflow is reported in `truncated`.
 - `telemetry_path` — the append-only `spawns.jsonl` on disk. The **complete**
   per-line trace (every spawn, every gate attempt, every skip) lives here; read it
-  for detail the summary caps. Each line is a JSON object tagged with `schema_version` and
-  `event` (`run_start` / `spawn_complete` / `gate_complete` / `pr_skipped` /
-  `run_complete`). A `spawn_complete` line carries `run_id`, `pr_id`, `role`
+  for detail the summary caps or collapses — the per-spawn model and cost breakdown behind
+  a PR's folded `effective_model`, for one. Each line is a JSON object tagged with
+  `schema_version` and `event` (`run_start` / `spawn_complete` / `gate_complete` /
+  `pr_skipped` / `run_complete`). A `spawn_complete` line carries `run_id`, `pr_id`, `role`
   (`implementation` / `fix`), `exit_code`, `input_tokens`, `output_tokens`, `num_turns`,
   `duration_s`, `cost_usd`, `effective_model`, `cost_estimated`; the full telemetry contract
   is in `docs/design/02-formats.md`.

@@ -260,7 +260,7 @@ def test_convoy_run_summarizes_telemetry_by_path(
                     'run_id': run_id,
                     'series_id': 'mcp-test',
                 },
-                _spawn_line(run_id, 'pr-1', cost_usd=0.04, num_turns=3),
+                _spawn_line(run_id, 'pr-1', cost_usd=0.04, num_turns=3, effective_model='ran-as'),
                 {
                     'schema_version': 1,
                     'event': 'gate_complete',
@@ -299,6 +299,7 @@ def test_convoy_run_summarizes_telemetry_by_path(
     assert result['economy']['spawn_count'] == 1
     assert result['economy']['total_cost_usd'] == 0.04
     assert result['prs'][0]['pr_id'] == 'pr-1'
+    assert result['prs'][0]['effective_model'] == 'ran-as'
     assert result['prs'][0]['gate']['blocking_red'] is False
     assert result['prs'][0]['gate']['failing_checks'] == []
     assert result['telemetry_path'] == str(telem)  # trace by path, not inlined
@@ -340,7 +341,9 @@ def test_convoy_run_reset_threads_through_to_fresh(
 def test_summarize_run_aggregates_filters_by_run_id_and_truncates(tmp_path: Path) -> None:
     telem = tmp_path / 'spawns.jsonl'
     run_id = 'r'
-    lines: list[dict[str, Any]] = [_spawn_line(run_id, f'pr-{i}') for i in range(3)]
+    lines: list[dict[str, Any]] = [
+        _spawn_line(run_id, f'pr-{i}', effective_model=f'impl-model-{i}') for i in range(3)
+    ]
     lines.append(
         {
             'schema_version': 1,
@@ -350,8 +353,18 @@ def test_summarize_run_aggregates_filters_by_run_id_and_truncates(tmp_path: Path
             'reason': 'series halted at pr-0 (blocked) before this PR started',
         }
     )
-    # A line from ANOTHER run (with an inflated, estimated cost) must be ignored entirely.
-    lines.append(_spawn_line('other', 'x', cost_usd=9.9, input_tokens=999, cost_estimated=True))
+    # A line from ANOTHER run (with an inflated, estimated cost and its own model) must be
+    # ignored entirely.
+    lines.append(
+        _spawn_line(
+            'other',
+            'x',
+            cost_usd=9.9,
+            input_tokens=999,
+            cost_estimated=True,
+            effective_model='leaked',
+        )
+    )
     _write_jsonl(telem, lines)
 
     summary = summarize_run(
@@ -363,6 +376,87 @@ def test_summarize_run_aggregates_filters_by_run_id_and_truncates(tmp_path: Path
     assert len(summary['prs']) == 2  # capped
     assert summary['truncated'] == {'any': True, 'prs': 2}  # pr-0..pr-3 -> 4 total, 2 dropped
     assert summary['telemetry_path'] == str(telem)
+    # The cap keeps pr-0 and pr-1 only; each carries its OWN spawn's model...
+    assert summary['prs'][0]['effective_model'] == 'impl-model-0'
+    assert summary['prs'][1]['effective_model'] == 'impl-model-1'
+    # ...and the other run's model never leaks in.
+    assert all(pr['effective_model'] != 'leaked' for pr in summary['prs'])
+
+
+def test_summarize_run_reports_the_implementation_spawn_model_over_a_fix_spawn(
+    tmp_path: Path,
+) -> None:
+    # A PR gets one implementation spawn and up to max_fix_attempts fix spawns. The envelope
+    # reports the IMPLEMENTATION spawn's model: that is the spawn the tier decision governed
+    # and the one whose output the gate judged. Fix spawns are repair, not the measured
+    # attempt. Distinct models per line, so the fix spawn's model can't sneak in unseen.
+    telem = tmp_path / 'spawns.jsonl'
+    run_id = 'r'
+    _write_jsonl(
+        telem,
+        [
+            _spawn_line(run_id, 'pr-1', effective_model='impl-model'),
+            _spawn_line(run_id, 'pr-1', role='fix', effective_model='fix-model'),
+        ],
+    )
+
+    summary = summarize_run(
+        telem, run_id=run_id, series_id='s', outcome=RunOutcome('completed', True, EXIT_OK)
+    )
+    assert summary['prs'][0]['effective_model'] == 'impl-model'
+    assert summary['prs'][0]['spawns'] == 2
+
+
+def test_summarize_run_selects_the_implementation_model_by_role_not_line_order(
+    tmp_path: Path,
+) -> None:
+    # The implementation spawn is picked by its role, not by being the first spawn_complete
+    # line. Production telemetry always records the implementation before any fix, so this
+    # reversed order (fix line first) cannot occur on disk — it is here to pin the contract:
+    # a pure first-wins-by-file-order fold would report 'fix-model', role selection reports
+    # 'impl-model'. This is the assertion that fails if the fold ever regresses to line order.
+    telem = tmp_path / 'spawns.jsonl'
+    run_id = 'r'
+    _write_jsonl(
+        telem,
+        [
+            _spawn_line(run_id, 'pr-1', role='fix', effective_model='fix-model'),
+            _spawn_line(run_id, 'pr-1', role='implementation', effective_model='impl-model'),
+        ],
+    )
+
+    summary = summarize_run(
+        telem, run_id=run_id, series_id='s', outcome=RunOutcome('completed', True, EXIT_OK)
+    )
+    assert summary['prs'][0]['effective_model'] == 'impl-model'
+    assert summary['prs'][0]['spawns'] == 2
+
+
+def test_summarize_run_reports_no_model_for_a_skipped_pr(tmp_path: Path) -> None:
+    # A halted-past PR never spawned, so it has no model: null, not '' (which would falsely
+    # imply one) and not a missing key (which would make consumers guard every read).
+    telem = tmp_path / 'spawns.jsonl'
+    run_id = 'r'
+    _write_jsonl(
+        telem,
+        [
+            {
+                'schema_version': 1,
+                'event': 'pr_skipped',
+                'run_id': run_id,
+                'pr_id': 'pr-9',
+                'reason': 'series halted at pr-0 (blocked) before this PR started',
+            }
+        ],
+    )
+
+    summary = summarize_run(
+        telem, run_id=run_id, series_id='s', outcome=RunOutcome('blocked', False, 1)
+    )
+    entry = summary['prs'][0]
+    assert entry['pr_id'] == 'pr-9'
+    assert entry['skipped'] is True
+    assert entry['effective_model'] is None
 
 
 # --- convoy_init + stdout hygiene ---------------------------------------------------------
