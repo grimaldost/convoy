@@ -51,12 +51,20 @@ class SpawnResult:
     the task itself (the distinction a driver needs to halt cleanly on a bad matrix); or
     ``'budget'`` when the spawn was cut short by its ``--max-budget-usd`` cap (truncated,
     untrustworthy work — the driver halts the PR rather than gating a partial result).
+
+    ``diagnosis`` is the implementation's own one-line account of *why* it reached a
+    non-``ok`` classification — the text from the channel that decided it, whitespace
+    collapsed so it can be embedded in a one-line message. Empty for an ``ok`` spawn, which
+    has nothing to diagnose, and empty when an implementation cannot say: a caller falls
+    back to ``output``, never worse off than before this field existed. It is a *summary*,
+    not a replacement — ``output`` remains the whole stream.
     """
 
     exit_code: int
     output: str
     economy: SpawnEconomy
     classification: str
+    diagnosis: str = ''
 
 
 class AgentSpawn(Protocol):

@@ -1,5 +1,6 @@
 """Tests for the pre-run seat viability probe (interface/seat_probe.py)."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from convoy.core.spec import (
@@ -182,3 +183,58 @@ def test_dead_per_pr_override_model_locates_the_problem_at_its_pr(tmp_path: Path
     assert problem is not None
     assert 'claude-opus-4-8' in problem.message  # still names the failing model
     assert problem.where == "[[prs]] 'b'"
+
+
+# --- what the problem message says --------------------------------------------------------
+#
+# The message used to be a 500-char tail of the CLI's own newline-delimited JSON plus
+# stderr, so an expired seat read as a wall of noise with the actionable sentence buried
+# somewhere inside it. The adapter already knows which channel decided the classification.
+
+
+def _diagnosed_result(output: str, diagnosis: str) -> SpawnResult:
+    return replace(_infra_result(output), diagnosis=diagnosis)
+
+
+def test_the_message_leads_with_the_diagnosis_and_keeps_the_raw_tail(tmp_path: Path) -> None:
+    blob = '{"type":"result","subtype":"error","result":"Invalid API key · Please run /login"}'
+    spawn = FakeSpawn([_diagnosed_result(blob, 'Invalid API key · Please run /login')])
+
+    problem = seat_problem(spawn, _series(), tmp_path)
+
+    assert problem is not None
+    # The diagnosis first, before anything a reader has to skip.
+    assert problem.message.index('Invalid API key') < problem.message.index('raw tail')
+    # ...and the stream is still there, for the reader who needs more than the summary.
+    assert 'raw tail' in problem.message
+    assert '"type":"result"' in problem.message
+
+
+def test_no_diagnosis_falls_back_to_the_tail_alone(tmp_path: Path) -> None:
+    """Exactly the previous behaviour: this can inform, never take away."""
+    spawn = FakeSpawn([_infra_result('some unparseable blob')])
+
+    problem = seat_problem(spawn, _series(), tmp_path)
+
+    assert problem is not None
+    assert problem.message.endswith('some unparseable blob')
+    assert 'raw tail' not in problem.message
+
+
+def test_the_message_is_a_single_line(tmp_path: Path) -> None:
+    """``format_problems`` renders one problem per line; an embedded newline breaks that."""
+    spawn = FakeSpawn([_diagnosed_result('line one\nline two\n\nline three\n', 'Invalid API key')])
+
+    problem = seat_problem(spawn, _series(), tmp_path)
+
+    assert problem is not None
+    assert '\n' not in problem.message
+
+
+def test_an_empty_output_still_names_the_failure(tmp_path: Path) -> None:
+    spawn = FakeSpawn([_infra_result('')])
+
+    problem = seat_problem(spawn, _series(), tmp_path)
+
+    assert problem is not None
+    assert '(no output)' in problem.message

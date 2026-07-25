@@ -15,6 +15,37 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- **A dead seat now says what is wrong before it says everything else.** The seat probe's
+  pre-flight `Problem` carried a 500-character tail of the CLI's own output — newline-
+  delimited JSON plus stderr — so an expired login read as a wall of noise with the one
+  actionable sentence buried somewhere inside it, if it survived the cut at all. Messages
+  now lead with the diagnosis and keep the stream behind it:
+
+  ```
+  seat probe failed for model 'claude-haiku-4-5': Invalid API key · Please run /login
+  [raw tail: {"type":"result","subtype":"error",...]
+  ```
+
+  The text was never missing, only unextracted: the spawn adapter already decides the
+  classification by reading a specific channel — the CLI's stderr, the terminal `result`
+  event's text, or its `subtype` — and then threw that knowledge away into a concatenated
+  `output`. `SpawnResult` gains a **`diagnosis`** field carrying it, and the classification
+  and the diagnosis are now produced by one function, so the verdict and its evidence
+  cannot drift: whichever channel decided the verdict is the one quoted. A timeout states
+  itself (`no result within the 120s timeout`) rather than quoting whatever the CLI was
+  mid-sentence about when it was killed.
+
+  Two properties are load-bearing. The diagnosis is the **head** of the deciding text, not
+  the tail, because a diagnosis leads with the diagnosis. And its whitespace is collapsed:
+  the destination is a one-line message — `format_problems` renders one problem per line —
+  so an embedded newline would silently break that layout for every reader downstream.
+
+  Strictly additive for the reader: an empty diagnosis falls back to the tail alone, which
+  is exactly the previous behaviour, so this can inform but never take away. Not
+  consumer-affecting — `SpawnResult` is not serialized (`_record_spawn` writes named fields)
+  and a `Problem` message is prose, not a keyed protocol (`interface/spawn.py`,
+  `interface/headless_spawn.py`, `interface/seat_probe.py`). Serves backlog row T21a.
+
 - **The release checklist's two unmechanized steps now have mechanisms.** No behaviour
   change to convoy itself; this is repo discipline. `test_versions_are_locked` gated the
   three hand-edited version fields agreeing, and that half always held — the halves that

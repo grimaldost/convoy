@@ -17,7 +17,7 @@ from pathlib import Path
 from convoy.core.governance import implementation_model_sources
 from convoy.core.preflight import Problem
 from convoy.core.spec import Series
-from convoy.interface.spawn import AgentSpawn, SpawnRequest
+from convoy.interface.spawn import AgentSpawn, SpawnRequest, SpawnResult
 
 _PROBE_BRIEF = 'Reply with exactly: ok'
 _PROBE_BUDGET_USD = 0.05
@@ -59,10 +59,29 @@ def seat_problem(spawn: AgentSpawn, series: Series, workspace: Path) -> Problem 
                 message=f'agent CLI could not start for the seat probe: {exc}',
             )
         if result.classification == 'infrastructure':
-            tail = result.output[-_PROBE_MESSAGE_TAIL_CHARS:].strip() or '(no output)'
             return Problem(
                 kind='seat',
                 where=where,
-                message=f'seat probe failed for model {model!r}: {tail}',
+                message=f'seat probe failed for model {model!r}: {_detail(result)}',
             )
     return None
+
+
+def _detail(result: SpawnResult) -> str:
+    """The failure, diagnosis first and raw stream after.
+
+    The message used to be a 500-character tail of the CLI's own output — newline-delimited
+    JSON plus stderr — so an expired seat read as a wall of noise with the one actionable
+    sentence buried somewhere inside it, if it survived the cut at all. The adapter already
+    knows which channel decided the classification (see ``headless_spawn._classify``), so it
+    leads.
+
+    The tail is kept, not replaced: the diagnosis is a summary, and the reader who needs the
+    stream should not have to re-run a paid probe to see it. When there is no diagnosis to
+    lead with the tail stands alone, which is exactly the previous behaviour — this can
+    inform, never take away.
+    """
+    tail = ' '.join(result.output[-_PROBE_MESSAGE_TAIL_CHARS:].split()) or '(no output)'
+    if not result.diagnosis:
+        return tail
+    return f'{result.diagnosis} [raw tail: {tail}]'

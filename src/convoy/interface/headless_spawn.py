@@ -106,11 +106,32 @@ _RETRY_EXHAUSTED_RE = re.compile(
 _BUDGET_RESULT_SUBTYPE = 'error_max_budget_usd'
 
 
+# How much of the deciding text to carry as the spawn's ``diagnosis``. The HEAD, not the
+# tail: a diagnosis leads with the diagnosis, unlike a raw stream whose useful part is at
+# the end. Bounded because this is embedded in one-line messages, not stored.
+_DIAGNOSIS_CHARS = 300
+
+
 def _is_infrastructure_signature(text: str) -> bool:
     """True when ``text`` carries an auth / usage-limit / retry-exhausted signature."""
     return bool(
         _AUTH_RE.search(text) or _USAGE_LIMIT_RE.search(text) or _RETRY_EXHAUSTED_RE.search(text)
     )
+
+
+def _one_line(text: str, subtype: str) -> str:
+    """``text`` as a bounded single line, or the result subtype when it carries nothing.
+
+    Whitespace is collapsed rather than preserved because the destination is a one-line
+    message — a ``Problem`` rendered one per line, a reporter line — and an embedded newline
+    would silently break that layout for every reader downstream. The subtype fallback keeps
+    the field useful when the CLI failed without prose: ``error_during_execution`` is thin,
+    but it is a name, and the raw stream is still there for the reader who needs more.
+    """
+    head = ' '.join(text.split())[:_DIAGNOSIS_CHARS].strip()
+    if head:
+        return head
+    return f'result subtype {subtype!r}' if subtype else ''
 
 
 @dataclass
@@ -209,6 +230,36 @@ def _parse_stream(stdout: str) -> _Parsed:
         parsed.input_tokens, parsed.output_tokens = _tokens(last_assistant_usage)
         parsed.num_turns = assistant_turns
     return parsed
+
+
+def _classify(stderr: str, parsed: _Parsed, *, success: bool) -> tuple[str, str]:
+    """The spawn's classification and the text that decided it.
+
+    One function so the verdict and its evidence cannot drift: the ``diagnosis`` quotes
+    whichever channel chose the classification. That is what lets a caller say *why* a spawn
+    was called an infrastructure failure instead of dumping the whole stream and leaving the
+    reader to find the sentence that mattered.
+
+    Precedence, strongest signal first:
+
+    1. The CLI's OWN stderr carrying an infra signature — a trustworthy channel, and it
+       overrides even a budget cap (an auth/usage failure during a budget-capped run is
+       still a real infra halt).
+    2. A budget-cap result subtype — the authoritative "truncated by ``--max-budget-usd``".
+    3. A non-success spawn whose AGENT-authored result text carries an infra signature — the
+       weakest signal, so it must not override a budget subtype: an agent that merely wrote
+       "limit reached" in its truncated output is task content, not an infra halt.
+
+    A cleanly successful spawn that mentions "usage limit" (an error handler it wrote, a
+    test name) fails the ``success`` guard and stays ``'ok'`` with an empty diagnosis.
+    """
+    if _is_infrastructure_signature(stderr):
+        return 'infrastructure', _one_line(stderr, parsed.subtype)
+    if parsed.subtype == _BUDGET_RESULT_SUBTYPE:
+        return 'budget', _one_line(parsed.result_text, parsed.subtype)
+    if not success and _is_infrastructure_signature(parsed.result_text):
+        return 'infrastructure', _one_line(parsed.result_text, parsed.subtype)
+    return 'ok', ''
 
 
 class HeadlessSpawn:
@@ -339,6 +390,9 @@ class HeadlessSpawn:
                     parsed, request, fallback_duration_s=float(request.timeout_seconds)
                 ),
                 classification='infrastructure',
+                # Stated here rather than looked for in the stream: the timeout IS the
+                # diagnosis, and whatever the CLI was saying when it was killed is not.
+                diagnosis=f'no result within the {request.timeout_seconds}s timeout',
             )
 
         stdout = stdout or ''
@@ -347,28 +401,14 @@ class HeadlessSpawn:
         exit_code = child.returncode
         success = exit_code == 0 and not parsed.is_error
 
-        # Classification precedence, strongest signal first:
-        #   1. The CLI's OWN stderr carrying an infra signature — a trustworthy channel, and it
-        #      overrides even a budget cap (an auth/usage failure during a budget-capped run is
-        #      still a real infra halt).
-        #   2. A budget-cap result subtype — the authoritative "truncated by --max-budget-usd".
-        #   3. A non-success spawn whose AGENT-authored result text carries an infra signature —
-        #      the weakest signal, so it must not override a budget subtype: an agent that merely
-        #      wrote "limit reached" in its truncated output is task content, not an infra halt.
-        # A cleanly successful spawn that mentions "usage limit" (an error handler it wrote, a
-        # test name) fails the `not success` guard and stays 'ok'.
-        if _is_infrastructure_signature(stderr):
-            classification = 'infrastructure'
-        elif parsed.subtype == _BUDGET_RESULT_SUBTYPE:
-            classification = 'budget'
-        elif not success and _is_infrastructure_signature(parsed.result_text):
-            classification = 'infrastructure'
-        else:
-            classification = 'ok'
+        # The verdict and the text that decided it come from one place, so a caller can
+        # report why without re-deriving it (see _classify for the precedence).
+        classification, diagnosis = _classify(stderr, parsed, success=success)
 
         return SpawnResult(
             exit_code=exit_code,
             output=stdout + stderr,
             economy=self._economy(parsed, request, fallback_duration_s=0.0),
             classification=classification,
+            diagnosis=diagnosis,
         )

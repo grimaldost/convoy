@@ -485,3 +485,102 @@ def test_zero_budget_request_omits_the_flag(tmp_path: Path) -> None:
     argv = _read_capture(tmp_path)['argv']
     assert isinstance(argv, list)
     assert '--max-budget-usd' not in argv
+
+
+# ---------------------------------------------------------------------------
+# Diagnosis: why a non-ok spawn was classified that way
+#
+# The classification alone tells a caller to halt; it does not tell the operator what
+# broke. The whole stream does, buried. The diagnosis is the sentence from the channel
+# that decided the verdict, so the two cannot drift.
+# ---------------------------------------------------------------------------
+
+
+def test_diagnosis_quotes_the_stderr_that_decided_it(tmp_path: Path) -> None:
+    body = 'sys.stderr.write("Claude usage limit reached. Upgrade to Pro.\\n")\nsys.exit(1)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.diagnosis == 'Claude usage limit reached. Upgrade to Pro.'
+
+
+def test_diagnosis_quotes_the_result_text_when_that_decided_it(tmp_path: Path) -> None:
+    result = _result_line(
+        is_error=True, subtype='error', result='Authentication failed: not logged in'
+    )
+    body = f'print({result!r})\nsys.exit(1)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.diagnosis == 'Authentication failed: not logged in'
+
+
+def test_a_budget_truncation_carries_its_own_diagnosis(tmp_path: Path) -> None:
+    result = _result_line(is_error=True, subtype='error_max_budget_usd', result='ran out of budget')
+    body = f'print({result!r})\nsys.exit(1)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'budget'
+    assert got.diagnosis == 'ran out of budget'
+
+
+def test_an_ok_spawn_has_nothing_to_diagnose(tmp_path: Path) -> None:
+    body = f'print({_result_line()!r})\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'ok'
+    assert got.diagnosis == ''
+
+
+def test_diagnosis_is_one_line_however_the_cli_wrapped_it(tmp_path: Path) -> None:
+    """It is embedded in one-line messages; an embedded newline breaks every one of them."""
+    body = (
+        'sys.stderr.write("Invalid API key\\n  please run /login\\n\\n  again\\n")\nsys.exit(1)\n'
+    )
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert '\n' not in got.diagnosis
+    assert got.diagnosis == 'Invalid API key please run /login again'
+
+
+def test_diagnosis_is_bounded(tmp_path: Path) -> None:
+    """The head, not the tail: a diagnosis leads with the diagnosis."""
+    long_tail = 'x' * 1000
+    body = f'sys.stderr.write("Invalid API key " + {long_tail!r} + "\\n")\nsys.exit(1)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert len(got.diagnosis) <= 300
+    assert got.diagnosis.startswith('Invalid API key')
+
+
+def test_diagnosis_falls_back_to_the_subtype_when_the_cli_said_nothing(tmp_path: Path) -> None:
+    """Thin, but a name beats an empty field; the raw stream is still there for more."""
+    result = _result_line(is_error=True, subtype='error_max_budget_usd', result='')
+    body = f'print({result!r})\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'budget'
+    assert got.diagnosis == "result subtype 'error_max_budget_usd'"
+
+
+def test_a_timeout_diagnoses_itself(tmp_path: Path) -> None:
+    """The timeout IS the diagnosis; whatever the CLI was mid-sentence about is not."""
+    body = 'import time\ntime.sleep(30)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(timeout_seconds=1), cwd=tmp_path)
+
+    assert got.classification == 'infrastructure'
+    assert got.diagnosis == 'no result within the 1s timeout'
