@@ -13,6 +13,8 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-25
+
 ### Fixed
 
 - **A pre-flight advisory now reaches the run that provokes it.** *(consumer-affecting: a
