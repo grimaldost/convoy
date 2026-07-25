@@ -38,8 +38,16 @@ The unit suite must never launch a real coding-agent subprocess or spend money,
 on any machine.
 
 *Why:* a live seat silently turned five CLI tests into five real spawns per suite
-pass; on a seatless CI runner the same tests failed. Suite runtime is itself a
-regression signal (~28 s; a jump to ~70 s means a real spawn leaked).
+pass; on a seatless CI runner the same tests failed. Runtime is a regression
+signal, but read it through `--durations`, not a wall-clock ceiling: the total is
+too noisy to threshold — 359 tests took 54 s, 57 s, 70 s and 73 s across four
+runs of one clean commit (2026-07-25, warm developer machine). The "~28 s, a jump
+to ~70 s" this file carried was measured at 0.1.2 and the suite outgrew it, so
+the alarm value fell inside the normal band: the last of those clean runs would
+have tripped it. A leaked spawn is instead a **single** test taking seconds to
+minutes, obvious in `uv run pytest --durations=12` against a suite whose slowest
+cases are the deliberate subprocess-timeout tests at ~1–3 s. Re-measure the band
+when quoting it; a bare number here rots as the suite grows.
 
 *Enforced by:* the autouse guard in `tests/conftest.py` makes the real seat
 probe unreachable by default (wiring tests override it explicitly); the spawn
