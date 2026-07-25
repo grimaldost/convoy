@@ -202,6 +202,12 @@ least one entry.
   changes only the repair path, never whether a red blocks the merge. `asset` is
   meaningful **only** for a blocking independent check (it is the file whose isolation is
   verified); it is ignored for any other check.
+  **When it is worth setting.** An independent check adds correctness only when the
+  implementing agent cannot see the acceptance criteria it is judged against. If your
+  prompts hand the agent the tests, it runs them and self-corrects, and the independent
+  lane becomes a backstop against a spawn that skips them rather than a quality lever.
+  Measured strongest at weak model tiers and null at the default tier — see
+  `docs/design/01-gate.md`.
 - **What blocks a merge.** The deterministic `[[checks]]` gate is the sole arbiter: a
   check with `blocking = true` that goes red blocks the merge and drives the bounded fix
   loop. `[review].blocking` is a reserved switch for an optional blocking LLM self-review
