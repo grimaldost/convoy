@@ -13,6 +13,33 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **`convoy run --json` — the run summary on stdout, as one JSON object.**
+  *(consumer-affecting: new CLI flag, and stdout gains structured output on a verb that
+  previously wrote nothing there.)* The folded envelope — outcome, exit code, economy
+  totals, the per-PR view, and the `telemetry_path` holding the full trace — existed only
+  on the MCP surface, so every CLI-driven measurement harness re-implemented the
+  per-spawn fold over the raw `spawns.jsonl` itself. Off by default, so stdout stays
+  empty for a caller that only reads the exit code, and progress narration stays on
+  stderr either way. The exit code is unchanged: `--json` adds output, it does not
+  replace the contract.
+
+  Under `--json`, stdout carries exactly one JSON object **on every path** — including a
+  run that could not start, which returns the same `outcome: "usage"` shape (with
+  `problems`, or `error` plus `error_kind`) the MCP tool returns. A machine consumer needs
+  the failure case to be parseable most of all; prose on stderr would force it to
+  special-case exactly what it is trying to classify.
+
+  This required lifting `summarize_run` and the `error_kind` classifier out of
+  `interface/mcp/server.py` into a shared `interface/run_summary.py`. They were
+  surface-bound by accident, not by coupling — one implementation is what keeps the two
+  surfaces from reporting different totals for the same run, and there is a test asserting
+  the CLI envelope equals the module's for one ledger. No behaviour change to the MCP tool
+  (`interface/cli.py`, `interface/run_summary.py`, `interface/mcp/server.py`). Serves
+  backlog row T20a.
+
+
 ### Fixed
 
 - **A gate check's `detail` no longer opens with a warning convoy itself provoked.**
