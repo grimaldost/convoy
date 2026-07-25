@@ -15,6 +15,30 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- **The commit convoy sweeps after each spawn now names the work, not just the PR id.** The
+  driver commits whatever an implementation or fix spawn left uncommitted — a no-op when the
+  agent committed properly — so that message is the message of record in the integration
+  branch's history. It was the bare `pr.id`, which made `git log --oneline` a column of
+  opaque identifiers, and the id is also the branch name: the one thing a reader could
+  already get elsewhere. Subjects now read `pr-3: Wire the queue consumer` and
+  `pr-3-fix-1: Wire the queue consumer`.
+
+  A `[[prs]]` entry carries no `title`, so the summary is the prompt's own opening line —
+  the closest thing to a human title the series holds, and free, since the driver has the
+  brief in hand at that point. Leading `#` marks are stripped for a prompt written as
+  markdown. An opening line with no alphanumeric character (a `---` frontmatter fence, a
+  code fence) is punctuation rather than a title and falls back to the bare id, as does an
+  empty prompt — so this never invents a subject where the prompt offers none. A long line
+  is cut at a word boundary to keep the whole subject inside 72 columns rather than dropped:
+  convoy's own starter prompt opens with an 85-character sentence. A fix commit takes the
+  PR's brief, not the fix brief, so both name the same work and the `-fix-N` suffix says
+  which is which.
+
+  Not consumer-affecting: no new flag, field, exit code, telemetry value or `series.toml`
+  key. The PR id remains the subject's prefix, so anything matching on it by prefix is
+  unaffected — only an exact-equality match on the whole subject would see the change
+  (`interface/drivers/headless.py`). Serves backlog row T4a.
+
 - **A git failure now names the command that failed.** `GitError` carried git's stderr and
   nothing else, so a message like `fatal: pathspec did not match any file(s) known to git`
   arrived with no indication of which invocation asked — and convoy shells a dozen of them

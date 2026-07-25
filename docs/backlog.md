@@ -23,7 +23,7 @@ so far.
 ## Leverage order
 
 **T19a, T10a, T16a, T11a (shipped 0.4.0), T13a, T20a, T12b, T14b (shipped 0.5.0),
-T15a (done) → T4a → T14c.**
+T15a, T4a (done) → T14c.**
 
 T19a jumped the order: it was the only row unblocking a *capability* rather than
 recovering cost, and it is what makes an incremental multi-PR series runnable at all.
@@ -64,7 +64,7 @@ pushing the tag is not. Worth mechanizing (T24a).
 | T21a | Extract the agent CLI's `result` / `subtype` from the seat probe's JSON output into the `Problem` message, keeping the raw tail as trailing detail. `seat_probe.py:62` puts a 500-char tail of the raw CLI JSON blob in the message, so an expired auth session reads as noise with the actionable diagnosis buried mid-blob. Same family as the shipped `output_tail` work (T2a), which fixed the scored-spawn variant; this is the pre-flight variant, where the text is already present but unextracted. | `interface/seat_probe.py:61-67` | proposed |
 | T22a | Per-role `effort` under `[governance]` — the same shape as the existing per-role `budgets` / `tools` tables. `effort` is series-global today and applies to implementation and fix alike, but a fix spawn repairing a small gate red plausibly wants a different level than the implementation that produced it. Distinct axis from the per-PR `model`/`tier`/`effort` override shipped in 0.2.0 (that varies by PR; this varies by role) — and note `resolve_spawn` already keys on role, so the seam exists. **(consumer-affecting)** | `core/spec.py`, `core/governance.py` | watch |
 | T5a | Mixed-tier design decision. Resolved: optional per-PR `model`/`tier`/`effort` falling back to `[governance]` (ADR-0007, supersedes ADR-0005); `budget`/`budgets` stay rejected as a per-role axis. Propagation to the sibling planning tool that emits per-PR tiers is still outstanding. | `core/spec.py` + `docs/design/02-formats.md` | accepted |
-| T4a | Real commit messages on the residual sweep: `commit_all(pr.id)` fires when an impl spawn ends with uncommitted work, so the bare `pr.id` becomes the message of record (7 occurrences, position-independent). Make the sweep produce a real message or ensure the agent commits. | `interface/drivers/headless.py:262`, `interface/git.py::commit_all` | proposed |
+| T4a | Real commit messages on the residual sweep: `commit_all(pr.id)` fires when an impl spawn ends with uncommitted work, so the bare `pr.id` becomes the message of record (7 occurrences, position-independent). Make the sweep produce a real message or ensure the agent commits. Shipped the first branch: the subject is now `<pr.id>: <the prompt's opening line>`, since a `[[prs]]` entry has no `title` and the brief is already in hand at the commit site. "Ensure the agent commits" was declined as the primary fix — the sweep has to stay as a backstop either way, so it would have added a prompt-side instruction without removing the defect. | `interface/drivers/headless.py:262`, `interface/git.py::commit_all` | accepted |
 | T4b | Commit-provenance telemetry (agent-authored vs engine-synthesized). **(consumer-affecting)** | `core/telemetry.py` | watch |
 | T3a | DAG-aware continuation past a halt (continue PRs whose dependency closure excludes the halted PR). Economics largely subsumed by T11a. | `interface/drivers/headless.py`, `core/dag.py` | watch |
 | T6a | `files touched: N (+A/-B)` in per-PR impl narration. | `interface/reporter.py` | watch |
