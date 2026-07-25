@@ -94,8 +94,8 @@ def _write_jsonl(path: Path, lines: list[dict[str, Any]]) -> None:
 # --- schema (the dead-surface guard) ------------------------------------------------------
 
 
-def test_build_server_registers_both_tools() -> None:
-    assert set(_tools()) == {'convoy_run', 'convoy_init'}
+def test_build_server_registers_every_tool() -> None:
+    assert set(_tools()) == {'convoy_run', 'convoy_init', 'convoy_status'}
 
 
 def test_every_tool_schema_documents_every_parameter() -> None:
@@ -110,6 +110,7 @@ def test_every_tool_schema_documents_every_parameter() -> None:
             'resume',
         },
         'convoy_init': {'directory'},
+        'convoy_status': {'series_file', 'run_id'},
     }
     for name, params in expected.items():
         props = tools[name].inputSchema['properties']
@@ -117,6 +118,8 @@ def test_every_tool_schema_documents_every_parameter() -> None:
         for param in params:
             assert props[param].get('description', '').strip(), f'{name}.{param} has no description'
     assert set(tools['convoy_run'].inputSchema['required']) == {'series_file', 'workspace'}
+    # run_id defaults to the latest run, so only the series file is required.
+    assert set(tools['convoy_status'].inputSchema['required']) == {'series_file'}
     assert tools['convoy_init'].inputSchema['required'] == ['directory']
 
 

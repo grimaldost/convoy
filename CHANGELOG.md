@@ -15,6 +15,32 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **`convoy status` / `convoy_status` — ask a run how it is doing, including one still in
+  progress.** *(consumer-affecting: a new CLI verb, a new MCP tool, and a new `state` key
+  on the run envelope both surfaces return.)* `convoy_run` blocks for the whole series and
+  the documented pattern for a long run is the CLI in a background shell — but nothing
+  could then ask that run anything. Status reads only the append-only ledger, so it reports
+  on a run **this process never started**, spends nothing, holds no state between calls,
+  and never touches the workspace. Polling is cheap and safe.
+
+  The envelope gains **`state`**, the field to branch on first:
+  - `running` — no `run_complete` line yet, so `outcome` / `integrated` / `exit_code` are
+    `null` and `economy` is a partial running total (what it has spent so far).
+  - `finished` — the terminal fields are meaningful, exactly as from `convoy_run`,
+    `halt` included.
+  - `unknown` — nothing recorded under that id. Not an error: a run that has not written
+    its first line yet is a legitimate thing to observe.
+
+  A finished run's outcome is **rebuilt from the ledger**, not from a live `RunOutcome`:
+  `run_complete` carries `outcome` and `integrated`, and the exit code follows from
+  `outcome` by the published mapping in `docs/design/02-formats.md`. The absence of that
+  line is itself the "still running" signal, which is what lets this work with no
+  server-side state. `run_id` defaults to the most recent run in the ledger — run ids sort
+  lexicographically by start time by construction, which is what makes "the latest run"
+  answerable from a ledger that accumulates many (`interface/run_summary.py`,
+  `interface/cli.py`, `interface/mcp/server.py`). Serves the polling half of backlog row
+  T14b; the detached-launch half is now tracked separately as T14c.
+
 - **A halted run now says where and why it stopped.** *(consumer-affecting: a new
   `classification` field on every `spawn_complete` line, a new `halt` object on
   `run_complete`, and a new `halt` key in the run envelope both surfaces return.)* The

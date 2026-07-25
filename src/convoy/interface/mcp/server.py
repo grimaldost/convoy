@@ -34,7 +34,7 @@ from convoy.interface.drivers.headless import make_run_id
 from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.run_service import PreflightError, run_series_headless
-from convoy.interface.run_summary import error_kind, summarize_run
+from convoy.interface.run_summary import error_kind, status_of, summarize_run
 from convoy.interface.scaffold import ScaffoldError, scaffold
 from convoy.interface.workspace_lock import WorkspaceBusyError
 
@@ -262,9 +262,65 @@ async def convoy_init(
     return await asyncio.to_thread(_init_impl, directory)
 
 
+def _status_impl(series_file: str, run_id: str) -> dict[str, Any]:
+    """Load the series and read its ledger for the run's state (sync)."""
+    try:
+        series = load_series(Path(series_file).read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, SpecError) as exc:
+        return {'ok': False, 'outcome': 'usage', 'error_kind': error_kind(exc), 'error': str(exc)}
+    return status_of(series, run_id=run_id)
+
+
+async def convoy_status(
+    series_file: Annotated[
+        str,
+        Field(
+            description=(
+                'Absolute path to the series.toml whose run you want the state of. Its '
+                '[paths].outputs is where convoy wrote the ledger, which is the only thing '
+                'this reads.'
+            )
+        ),
+    ],
+    run_id: Annotated[
+        str,
+        Field(
+            description=(
+                'Which run to report. Defaults to the most recent run recorded in the '
+                'ledger, which is usually what a poller means; pass an explicit id to '
+                'follow one particular run in an outputs dir that accumulates several.'
+            )
+        ),
+    ] = '',
+) -> dict[str, Any]:
+    """Report a convoy run's state and economy so far — including one still in progress.
+
+    Reads only the append-only ledger, so it works for a run **this server never started**:
+    the supported long-run pattern is ``convoy run`` in a background shell, and this is how
+    you ask that run how it is doing. It spends nothing, holds no state between calls, and
+    never touches the workspace, so polling is cheap and safe.
+
+    Returns the same envelope ``convoy_run`` does, plus a **``state``** to branch on first:
+
+      - ``running`` — no ``run_complete`` line yet. ``outcome`` / ``integrated`` /
+        ``exit_code`` are ``null`` and the ``economy`` is a partial running total (what it
+        has spent so far), which is the useful thing to watch.
+      - ``finished`` — the terminal fields are meaningful, exactly as from ``convoy_run``,
+        including ``halt`` on a non-completed run.
+      - ``unknown`` — nothing recorded under that id (or an empty/absent ledger). Not an
+        error: a run that has not written its first line yet is a legitimate state.
+
+    Parameters:
+      - ``series_file`` — absolute path to the series.toml whose outputs hold the ledger.
+      - ``run_id`` — the run to report; defaults to the most recent one recorded.
+    """
+    return await asyncio.to_thread(_status_impl, series_file, run_id)
+
+
 def build_server() -> FastMCP:
-    """Construct the MCP server with the ``convoy_run`` and ``convoy_init`` tools registered."""
+    """Construct the MCP server with convoy's ``run`` / ``init`` / ``status`` tools registered."""
     server = FastMCP(_SERVER_NAME)
     server.tool()(convoy_run)
     server.tool()(convoy_init)
+    server.tool()(convoy_status)
     return server
