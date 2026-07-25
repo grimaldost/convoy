@@ -13,6 +13,23 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A gate check's `detail` no longer opens with a warning convoy itself provoked.**
+  Checks run in the scored workspace, which is not the environment convoy was launched
+  from, so an inherited `VIRTUAL_ENV` pointing elsewhere makes a Python launcher announce
+  an environment mismatch on stderr before the check has done anything. That mattered more
+  than it looks: `_red_detail` prefers stderr, so the warning became the *first* thing in
+  `detail` — and `detail` is exactly what the bounded fix loop re-briefs the repair spawn
+  with, so a repair could be aimed at a non-problem while the real failure sat further
+  down. Checks now run under a sanitized environment (`gate_env`) with `VIRTUAL_ENV`,
+  `VIRTUAL_ENV_PROMPT` and `UV_PROJECT` removed; everything else is inherited unchanged,
+  since a check legitimately needs `PATH` and the repo's own tooling variables. Stripping
+  at the source beats filtering the text downstream, which would rot with every launcher
+  release. Same posture as `_ENV_STRIP` in `headless_spawn` — that one keeps billing and
+  routing overrides out of a scored spawn; this is its check-environment counterpart
+  (`interface/gate_runner.py`). Serves backlog row T13a.
+
 ## [0.4.0] - 2026-07-25
 
 ### Added

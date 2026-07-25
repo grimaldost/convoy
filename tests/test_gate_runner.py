@@ -10,9 +10,11 @@ interpreter as the test.
 import sys
 from pathlib import Path
 
+import pytest
+
 from convoy.core.gate import CheckResult
 from convoy.core.spec import Check
-from convoy.interface.gate_runner import SubprocessGateRunner
+from convoy.interface.gate_runner import SubprocessGateRunner, gate_env
 
 _PY = sys.executable
 
@@ -143,3 +145,73 @@ def test_blocking_independent_valid_out_of_tree_asset_runs(tmp_path: Path) -> No
 
     assert result.passed is True
     assert sentinel.exists(), 'an isolated check must actually run its command'
+
+
+# --- environment sanitation --------------------------------------------------
+#
+# A check runs in the scored workspace, not in the environment convoy was launched from,
+# so an inherited VIRTUAL_ENV pointing elsewhere makes a Python launcher announce a
+# mismatch on stderr. _red_detail prefers stderr, so that warning becomes the first thing
+# in `detail` -- and `detail` is what the fix spawn is re-briefed with, so the repair agent
+# gets pointed at a non-problem convoy itself provoked.
+
+
+def test_gate_env_strips_the_mismatch_variables() -> None:
+    env = gate_env(
+        {
+            'VIRTUAL_ENV': '/somewhere/else/.venv',
+            'VIRTUAL_ENV_PROMPT': '(else)',
+            'UV_PROJECT': '/somewhere/else',
+            'PATH': '/usr/bin',
+            'HOME': '/home/x',
+        }
+    )
+    assert 'VIRTUAL_ENV' not in env
+    assert 'VIRTUAL_ENV_PROMPT' not in env
+    assert 'UV_PROJECT' not in env
+
+
+def test_gate_env_inherits_everything_else_unchanged() -> None:
+    """A check legitimately needs PATH and the repo's own tooling variables."""
+    source = {'PATH': '/usr/bin', 'HOME': '/home/x', 'MY_REPO_FLAG': '1', 'VIRTUAL_ENV': '/v'}
+    env = gate_env(source)
+    assert env == {'PATH': '/usr/bin', 'HOME': '/home/x', 'MY_REPO_FLAG': '1'}
+
+
+def test_gate_env_defaults_to_the_process_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('VIRTUAL_ENV', '/somewhere/else/.venv')
+    monkeypatch.setenv('CONVOY_GATE_ENV_PROBE', 'kept')
+    env = gate_env()
+    assert 'VIRTUAL_ENV' not in env
+    assert env['CONVOY_GATE_ENV_PROBE'] == 'kept'
+
+
+def test_the_check_process_does_not_see_a_stale_virtual_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: the variable is absent in the child, which is what kills the warning.
+
+    Asserting on the child's own view rather than on warning text keeps the test tied to
+    the mechanism instead of to one launcher release's wording.
+    """
+    monkeypatch.setenv('VIRTUAL_ENV', str(tmp_path / 'not-the-workspace' / '.venv'))
+    runner = SubprocessGateRunner()
+    command = f'"{_PY}" -c "import os,sys; sys.exit(1 if os.environ.get(\'VIRTUAL_ENV\') else 0)"'
+    (result,) = runner.run(tmp_path, [_check('env', command)])
+    assert result.passed is True, result.detail
+
+
+def test_an_inherited_variable_the_check_needs_still_arrives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The strip is surgical: sanitizing must not amount to running checks env-less."""
+    monkeypatch.setenv('CONVOY_GATE_NEEDED', 'yes')
+    runner = SubprocessGateRunner()
+    command = (
+        f'"{_PY}" -c "import os,sys; '
+        f"sys.exit(0 if os.environ.get('CONVOY_GATE_NEEDED') == 'yes' else 1)\""
+    )
+    (result,) = runner.run(tmp_path, [_check('env', command)])
+    assert result.passed is True, result.detail
