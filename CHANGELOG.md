@@ -13,6 +13,28 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **An `asset` nothing will ever read is now said out loud.** `[[checks]].asset` is consumed
+  in exactly one place — the fail-closed isolation guard, which returns early unless the
+  check is **both** blocking and independent. Anywhere else the field is accepted by the
+  parser, written back by `dump_series`, and read by nothing: an author who declares an
+  out-of-tree oracle on a non-blocking or non-independent check has written down an
+  intention convoy silently does not act on, and the isolation they believe they bought is
+  not being verified.
+
+  Pre-flight now emits an advisory naming **which flag is missing** — `not independent`,
+  `not blocking`, or `neither blocking nor independent` — since which one to set is the
+  whole actionable content. It is advice, not a problem: the field changes no behaviour, the
+  check still runs and still reports, so refusing the run over it would be the paternalism
+  the ungated-PR advisory deliberately avoids.
+
+  Second producer on the advisory channel, and the first one added since that channel
+  started reaching the run path — so unlike the first, this one is visible on the run
+  itself, not only on `convoy validate`. It is appended after the ungated-PR remark, so a
+  consumer that has been reading `advisories[0]` since 0.3.0 still finds that one there
+  (`core/preflight.py`, `interface/preflight_probe.py`). Serves backlog row T26a.
+
 ### Changed
 
 - **The release-tag workflow now gates the release page too.** No behaviour change to

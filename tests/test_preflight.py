@@ -1,9 +1,12 @@
 """Tests for the pure structural pre-flight (core/preflight.py)."""
 
+import pytest
+
 from convoy.core.preflight import (
     check_dag,
     check_governance,
     check_phases,
+    inert_assets,
     structural_problems,
     ungated_prs,
 )
@@ -209,3 +212,60 @@ def test_a_non_blocking_check_does_not_count_as_a_gate() -> None:
 def test_a_series_with_no_checks_advises_every_pr() -> None:
     series = _series(prs=(_phased('pr-1', 'core'), _phased('pr-2', 'core')))
     assert len(ungated_prs(series)) == 2
+
+
+# --- inert assets --------------------------------------------------------------------------
+#
+# `asset` is read in exactly one place: the fail-closed isolation guard, which runs only for
+# a check that is BOTH blocking and independent. Anywhere else the parser accepts it,
+# `dump_series` writes it back, and nothing reads it -- so the isolation the author thinks
+# they bought is not being verified.
+
+
+def _asset_check(
+    name: str, *, blocking: bool, independent: bool, asset: str = '/tmp/o.py'
+) -> Check:
+    return Check(name=name, run='true', blocking=blocking, independent=independent, asset=asset)
+
+
+def test_a_blocking_independent_asset_is_not_flagged() -> None:
+    """The one shape that IS read. Flagging it would make the advisory noise."""
+    series = _series(checks=(_asset_check('oracle', blocking=True, independent=True),))
+
+    assert inert_assets(series) == []
+
+
+def test_no_asset_is_not_flagged() -> None:
+    series = _series(checks=(_asset_check('plain', blocking=False, independent=False, asset=''),))
+
+    assert inert_assets(series) == []
+
+
+@pytest.mark.parametrize(
+    ('blocking', 'independent', 'expected'),
+    [
+        (True, False, 'not independent'),
+        (False, True, 'not blocking'),
+        (False, False, 'neither blocking nor independent'),
+    ],
+)
+def test_an_inert_asset_names_which_flag_is_missing(
+    blocking: bool, independent: bool, expected: str
+) -> None:
+    """Which flag to set is the whole actionable content; 'not independent' when it is
+    also not blocking would send the author to fix half of it."""
+    series = _series(checks=(_asset_check('oracle', blocking=blocking, independent=independent),))
+
+    advisories = inert_assets(series)
+
+    assert len(advisories) == 1
+    assert advisories[0].kind == 'gate'
+    assert advisories[0].where == "[[checks]] 'oracle'"
+    assert expected in advisories[0].message
+
+
+def test_an_inert_asset_never_becomes_a_problem() -> None:
+    """The series is unusual, not invalid: the check still runs and still reports."""
+    series = _series(checks=(_asset_check('oracle', blocking=False, independent=False),))
+
+    assert structural_problems(series) == []

@@ -162,6 +162,44 @@ def ungated_prs(series: Series) -> list[Advisory]:
     return advisories
 
 
+def inert_assets(series: Series) -> list[Advisory]:
+    """An Advisory per check that declares an ``asset`` nothing will ever look at.
+
+    ``asset`` is read in exactly one place: the fail-closed isolation guard, which runs only
+    for a check that is **both** blocking and independent. On any other check the field is
+    accepted by the parser, written back by ``dump_series``, and then read by nothing — so an
+    author who declares an out-of-tree oracle on a non-blocking or non-independent check has
+    written down an intention convoy silently does not act on, and the isolation they think
+    they bought is not being verified.
+
+    Advice, not a problem: the series is unusual, not invalid. The check still runs and still
+    reports, so refusing the run over a field that changes no behaviour would be the same
+    paternalism the ungated-PR advisory deliberately avoids. The fix is the author's choice —
+    set both flags, or drop the field.
+    """
+    advisories: list[Advisory] = []
+    for check in series.checks:
+        if not check.asset or (check.blocking and check.independent):
+            continue
+        if check.blocking:
+            missing = 'not independent'
+        elif check.independent:
+            missing = 'not blocking'
+        else:
+            missing = 'neither blocking nor independent'
+        advisories.append(
+            Advisory(
+                kind='gate',
+                where=f'[[checks]] {check.name!r}',
+                message=(
+                    f'declares an asset but is {missing}, so its isolation is never verified '
+                    'and the asset is never read; set both flags, or drop the asset'
+                ),
+            )
+        )
+    return advisories
+
+
 def structural_problems(series: Series) -> list[Problem]:
     """All pure structural Problems (governance, DAG, then phase resolution), in a stable order."""
     return [*check_governance(series), *check_dag(series), *check_phases(series)]

@@ -177,7 +177,10 @@ is one of `governance`, `dag`, `paths`, `prompt`, `isolation`, `phases`, `resume
 `run_id`, `seat`, and `where`
 locates the offending section or entry, e.g. `[[prs]] 'pr-2'`). `advisories` is a list of
 the same shape, always present and often empty; it is **non-blocking** and never affects
-`ok` or `outcome` (`kind` is `gate` today).
+`ok` or `outcome` (`kind` is `gate` today). Two producers: a PR that phase scoping leaves
+with no blocking check, and a check declaring an `asset` while not being both `blocking`
+and `independent` — the isolation guard is that field's only consumer, so anywhere else it
+is accepted and read by nothing.
 
 **`convoy_run`, could-not-start** — a real run returns this same `outcome: "usage"`
 (`ok: false`) shape if it cannot start, never a raised exception. It carries `problems` (a

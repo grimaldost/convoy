@@ -13,7 +13,13 @@ decide runnability, plus the non-blocking advisories that do not.
 
 from pathlib import Path
 
-from convoy.core.preflight import PreflightReport, Problem, structural_problems, ungated_prs
+from convoy.core.preflight import (
+    PreflightReport,
+    Problem,
+    inert_assets,
+    structural_problems,
+    ungated_prs,
+)
 from convoy.core.spec import Series
 from convoy.interface.fs_probe import isolation_result
 
@@ -99,5 +105,7 @@ def preflight(series: Series, workspace: Path) -> PreflightReport:
             *check_outputs(series, workspace),
             *check_isolation(series, workspace),
         ),
-        advisories=tuple(ungated_prs(series)),
+        # Appended after the existing producer, so a consumer that has been reading
+        # advisories[0] since 0.3.0 still finds the ungated-PR remark there.
+        advisories=(*ungated_prs(series), *inert_assets(series)),
     )
