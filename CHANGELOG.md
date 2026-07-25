@@ -13,6 +13,18 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **`convoy run` / `convoy validate` take `--workspace DIR` (`-w`), defaulting to the
+  current directory.** The workspace was implicitly the process working directory, which
+  is not discoverable from `--help` and does not survive being run from anywhere else —
+  four separate reports across four campaigns hit it. The default is unchanged, so every
+  existing invocation behaves identically; the flag makes the coupling explicit and lets
+  either verb target a tree the shell is not sitting in, mirroring the `workspace`
+  argument the MCP tool always took explicitly. A path that is not an existing directory
+  is now a located usage error instead of a confusing git or filesystem failure later
+  (`interface/cli.py`). Serves backlog row T16a.
+
 ## [0.3.0] - 2026-07-25
 
 ### Added

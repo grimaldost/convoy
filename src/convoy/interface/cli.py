@@ -3,6 +3,7 @@
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -60,20 +61,46 @@ def _load_or_exit(series_file: Path) -> Series:
         raise typer.Exit(EXIT_USAGE) from exc
 
 
+_WORKSPACE_HELP = (
+    'The git repository to operate on (the scored tree). Defaults to the current '
+    'directory, which is what the workspace was implicitly before this option existed.'
+)
+
+
+def _workspace_or_exit(workspace: Path | None) -> Path:
+    """Resolve the workspace — ``--workspace`` when given, else the cwd — or exit ``EXIT_USAGE``.
+
+    Resolved at call time, never at import: a module-level ``Path.cwd()`` default would
+    freeze whatever directory the process started in. A path that is not an existing
+    directory fails here with one located message, rather than surfacing later as a
+    confusing git or filesystem error against a tree that was never there.
+    """
+    resolved = Path.cwd() if workspace is None else workspace
+    if not resolved.is_dir():
+        typer.echo(f'workspace is not an existing directory: {resolved}', err=True)
+        raise typer.Exit(EXIT_USAGE)
+    return resolved
+
+
 @app.command()
-def validate(series_file: Path) -> None:
+def validate(
+    series_file: Path,
+    workspace: Annotated[
+        Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
+    ] = None,
+) -> None:
     """Validate a series without running it: structure, model resolution, paths, gate isolation.
 
     The filesystem checks — ``[paths]`` existence, ``outputs`` out-of-tree, and
-    independent-check asset isolation — are evaluated against the CURRENT directory as the
-    workspace, so run ``validate`` from the same directory you will ``run`` from.
+    independent-check asset isolation — are evaluated against ``--workspace`` (default:
+    the current directory), so validate against the same tree you will run against.
 
     Advisories (a PR that phase-scoped checks leave ungated) print to stderr and do NOT
     change the exit code: stdout stays ``ok`` and the exit stays 0, because an advisory
     describes an unusual series, not an invalid one.
     """
     series = _load_or_exit(series_file)
-    report = preflight(series, Path.cwd())
+    report = preflight(series, _workspace_or_exit(workspace))
     if report.advisories:
         typer.echo(format_advisories(report.advisories), err=True)
     if not report.clean:
@@ -122,13 +149,17 @@ def run(
             'running, so a completed or halted run can be re-run cleanly.'
         ),
     ),
+    workspace: Annotated[
+        Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
+    ] = None,
 ) -> None:
     """Run a convoy series headless."""
     series = _load_or_exit(series_file)
+    target = _workspace_or_exit(workspace)
     try:
         outcome = run_series_headless(
             series,
-            Path.cwd(),
+            target,
             run_id=make_run_id(),
             config_isolation=not _isolation_disabled(os.environ, no_config_isolation),
             reporter=_select_reporter(quiet),

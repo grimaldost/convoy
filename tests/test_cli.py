@@ -437,3 +437,134 @@ def test_isolated_config_is_cleaned_up_even_when_run_raises(
     config_dir = captured['config_dir']
     assert isinstance(config_dir, Path)
     assert not config_dir.exists()  # the temp isolated dir was removed on exit
+
+
+# --- --workspace --------------------------------------------------------------------------
+#
+# Before this option the workspace was implicitly the process cwd, which is not discoverable
+# from `--help` and bit four separate campaigns. The default is unchanged; the flag makes the
+# coupling explicit and lets validate/run target a tree the shell is not sitting in.
+
+
+def test_validate_defaults_the_workspace_to_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No --workspace behaves exactly as before the option existed."""
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+
+
+def test_validate_accepts_an_explicit_workspace_from_elsewhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check that keys on the workspace (outputs out-of-tree) follows --workspace, not cwd."""
+    workspace, prompts, _ = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    # outputs lives INSIDE the explicit workspace, which is the one thing preflight rejects.
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, workspace / 'out'))
+    # Sit somewhere else entirely, so a cwd-based workspace would NOT see the violation.
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    # Without the flag the cwd is the workspace and outputs is out-of-tree => clean.
+    assert runner.invoke(cli.app, ['validate', str(series_file)]).exit_code == EXIT_OK
+    # With it, the real workspace is probed and the violation surfaces.
+    result = runner.invoke(cli.app, ['validate', str(series_file), '--workspace', str(workspace)])
+    assert result.exit_code == EXIT_USAGE
+    assert 'inside the scored workspace' in result.output
+
+
+def test_workspace_short_flag_is_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file), '-w', str(workspace)])
+    assert result.exit_code == EXIT_OK
+
+
+def test_a_missing_workspace_is_a_usage_error_not_a_confusing_later_failure(
+    tmp_path: Path,
+) -> None:
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+
+    result = runner.invoke(
+        cli.app, ['validate', str(series_file), '--workspace', str(tmp_path / 'nope')]
+    )
+    assert result.exit_code == EXIT_USAGE
+    assert 'not an existing directory' in result.output
+
+
+def test_a_file_as_workspace_is_rejected(tmp_path: Path) -> None:
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+
+    result = runner.invoke(cli.app, ['validate', str(series_file), '--workspace', str(series_file)])
+    assert result.exit_code == EXIT_USAGE
+    assert 'not an existing directory' in result.output
+
+
+def test_run_passes_the_explicit_workspace_through_to_the_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run --workspace` must reach run_series, not just pass pre-flight.
+
+    The engine takes the workspace as its second positional argument; asserting on the
+    recorded call is what proves the flag is threaded rather than merely accepted.
+    """
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    seen: list[Path] = []
+
+    def _fake_run_series(_series: object, ws: Path, **_k: object) -> RunOutcome:
+        seen.append(ws)
+        return RunOutcome('completed', True, EXIT_OK)
+
+    monkeypatch.setattr('convoy.interface.run_service.run_series', _fake_run_series)
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '--workspace', str(workspace)])
+    assert result.exit_code == EXIT_OK
+    assert seen == [workspace]
+    assert seen != [elsewhere]  # the cwd, which is what it would have been before
+
+
+def test_run_without_the_flag_still_uses_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+
+    seen: list[Path] = []
+
+    def _fake_run_series(_series: object, ws: Path, **_k: object) -> RunOutcome:
+        seen.append(ws)
+        return RunOutcome('completed', True, EXIT_OK)
+
+    monkeypatch.setattr('convoy.interface.run_service.run_series', _fake_run_series)
+
+    assert runner.invoke(cli.app, ['run', str(series_file)]).exit_code == EXIT_OK
+    assert seen == [Path.cwd()]

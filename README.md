@@ -77,8 +77,10 @@ blocking check, so the first run costs cents. Afterwards, look at:
 - `demo/outputs/spawns.jsonl` — the telemetry ledger (economy + gate events);
 - the workspace's `integration` branch — the merged result.
 
-`convoy run` uses the current directory as the scored workspace — run it from
-the workspace, pointing at the series file.
+`convoy run` and `convoy validate` use the current directory as the scored
+workspace — run them from the workspace, pointing at the series file — or name
+it explicitly with `--workspace <dir>` (`-w`) to drive a tree your shell is not
+sitting in.
 
 ## The series file
 
@@ -160,8 +162,8 @@ and latency, and when *not* to use convoy:
 
 | Verb | What | Notable flags |
 |------|------|---------------|
-| `convoy validate <series.toml>` | Free preflight (no git mutation, no spawn) | |
-| `convoy run <series.toml>` | Run the series from the current workspace | `--fresh` (reset to base, delete prior series branches first), `--quiet`, `--no-config-isolation` |
+| `convoy validate <series.toml>` | Free preflight (no git mutation, no spawn) | `--workspace <dir>` / `-w` (default: cwd) |
+| `convoy run <series.toml>` | Run the series against the workspace | `--workspace <dir>` / `-w` (default: cwd), `--fresh` (reset to base, delete prior series branches first), `--quiet`, `--no-config-isolation` |
 | `convoy init <dir>` | Scaffold the starter series | |
 
 Scored spawns run under **credential-only config isolation** by default: the
