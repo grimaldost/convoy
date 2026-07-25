@@ -164,6 +164,7 @@ and latency, and when *not* to use convoy:
 |------|------|---------------|
 | `convoy validate <series.toml>` | Free preflight (no git mutation, no spawn) | `--workspace <dir>` / `-w` (default: cwd) |
 | `convoy run <series.toml>` | Run the series against the workspace | `--workspace <dir>` / `-w` (default: cwd), `--fresh` (reset to base, delete prior series branches first), `--quiet`, `--no-config-isolation` |
+| `convoy clean <series.toml>` | **Destructive** recovery after a halted or killed run: discard uncommitted changes, delete untracked files, return to base, delete the series' branches, remove a stale run lock | `--dry-run` / `-n` (print the plan, change nothing), `--workspace <dir>` / `-w` |
 | `convoy init <dir>` | Scaffold the starter series | |
 
 Scored spawns run under **credential-only config isolation** by default: the
