@@ -35,6 +35,44 @@ This is worth **offering**, but convoy is deliberately honest about its weight:
   labels for reporting, they are free-form telemetry tags, not types the verdict
   branches on.
 
+### What convoy's own measurement shows
+
+The claim above was inherited from an external study. convoy has since measured
+it in-house, and the result agrees on every count. The setup: a blind-implementer
+trial on one multi-module task — the implementing agent sees only the spec, and a
+held-out acceptance suite it cannot reach is the gate — run at two model tiers
+and against a no-gate control, three trials per cell.
+
+| condition | gate red | `fix` spawns | no-gate control |
+|---|---|---|---|
+| weak tier, blind implementer | 3/3 | 3 | 0/3 green — shipped failing trees as done |
+| strong tier, blind implementer | 0/3 | 0 | 2/3 green |
+| acceptance tests visible in the workspace | 0/3 | 0 | 3/3 green |
+
+convoy reached green in all three cells. Three things follow, and the third is
+the one this doc did not previously state:
+
+1. **At the weak tier the mechanism is real and observable.** The ledger shows
+   exactly three `fix`-role spawns, all in that cell, so the repair is visible as
+   spend rather than inferred from an outcome difference. It cost about $0.04 per
+   trial.
+2. **At the strong tier the gate never fired.** No red, no fix spawn. The
+   arm-level difference against the control in that row has **no gate mechanism
+   behind it** and must not be cited as evidence for the lane. "Null at the
+   strong/default tier" stands.
+3. **With the tests visible, the gate is *redundant* — not vacuous.** The
+   implementer runs the suite itself and self-corrects, and so does the control.
+   The gate is still correct and still blocking; it is simply not adding
+   correctness anyone else was going to miss.
+
+So the usage condition, plainly: **an independent check earns its correctness
+value when the implementer cannot see the acceptance criteria it is judged
+against.** Give the implementer the tests and the lane degrades to a backstop
+against a spawn that skips running them — worth keeping, not a quality lever.
+
+Three trials per cell is enough to watch a mechanism fire or stay silent, and not
+enough to size an effect. Read the table as mechanism evidence, not effect size.
+
 The `independent` marker changes exactly two things — **which failures are safe
 to auto-repair against**, and **telemetry legibility**. It never changes whether
 a red blocks the merge.

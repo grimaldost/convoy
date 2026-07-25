@@ -26,6 +26,20 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   failing model and probing stopping at the first dead one; and the result envelope's
   per-PR view carries **`effective_model`**.
 
+### Changed
+
+- **The `independent` gate lane now cites convoy's own measurement**
+  (`docs/design/01-gate.md`, `skills/convoy/SKILL.md`). The doc previously rested on an
+  external study. An in-house blind-implementer trial (the implementer sees only the spec;
+  a held-out acceptance suite it cannot reach is the gate) corroborates every existing
+  claim — the lane is bounded, opt-in, and **null at the strong/default tier** — and adds
+  the weak-tier magnitude (gate red 3/3, bounded fix loop recovered 3/3, three `fix`-role
+  spawns in the ledger, against a no-gate control that shipped failing trees 3/3). It also
+  makes explicit a usage condition the doc previously only implied: when the acceptance
+  tests are visible in the workspace the gate is **redundant, not vacuous** — the
+  implementer runs them and self-corrects — so the lane's correctness value requires a
+  blind implementer. Three trials per cell: mechanism evidence, not an effect size.
+
 ## [0.2.0] - 2026-07-15
 
 ### Added
