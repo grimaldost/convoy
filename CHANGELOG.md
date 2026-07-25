@@ -13,6 +13,19 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`docs/design/03-serving.md` is now actually in the repository.** Six references across
+  five tracked files point at it — the 0.1.2 notes below list it as added, `AGENTS.md`
+  puts it in the canonical read order, `docs/README.md` maps it, `docs/adr/0001` cites it,
+  and `00-overview.md` links it twice — but the file was never committed on any branch and
+  is not ignored, so every clone at 0.1.2 and 0.2.0 carries six dangling references to a
+  design doc it does not have. Committed, and resynced with 0.2.0
+  in the same pass: the seat probe covers **every distinct model** the run can spawn on
+  (not one), with the `kind='seat'` problem located at the section that declared the
+  failing model and probing stopping at the first dead one; and the result envelope's
+  per-PR view carries **`effective_model`**.
+
 ## [0.2.0] - 2026-07-15
 
 ### Added
