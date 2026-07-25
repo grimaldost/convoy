@@ -56,6 +56,7 @@ def summarize_run(
         'spawn_count': 0,
     }
     prs: dict[str, dict[str, Any]] = {}
+    halt: dict[str, Any] | None = None
 
     def _pr(pr_id: str) -> dict[str, Any]:
         return prs.setdefault(
@@ -107,6 +108,12 @@ def summarize_run(
                 pr = _pr(entry['pr_id'])
                 pr['skipped'] = True
                 pr['skip_reason'] = entry['reason']
+            elif event == 'run_complete':
+                # Read from the ledger rather than threaded through ``RunOutcome``: the
+                # outcome is a control-flow value the driver returns, while this is
+                # descriptive detail the run already wrote down. Reading it here also keeps
+                # the envelope reconstructible from disk alone.
+                halt = entry.get('halt')
 
     pr_list = list(prs.values())
     return {
@@ -118,6 +125,10 @@ def summarize_run(
         'series_id': series_id,
         'economy': economy,
         'prs': pr_list[:pr_cap],
+        # ``None`` on a clean run; on a halt, the located reason: which PR, in which phase,
+        # what hit it (a spawn role, or ``gate`` when the bounded fix loop was exhausted),
+        # and for a budget halt the spend against the ceiling it hit.
+        'halt': halt,
         'telemetry_path': str(telemetry_path),
         'truncated': {'any': len(pr_list) > pr_cap, 'prs': max(0, len(pr_list) - pr_cap)},
     }

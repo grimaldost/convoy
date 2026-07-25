@@ -140,6 +140,66 @@ def test_convoy_run_dry_run_validates_a_clean_series(tmp_path: Path) -> None:
     assert result['advisories'] == []
 
 
+def test_the_envelope_surfaces_the_halt_from_the_ledger(tmp_path: Path) -> None:
+    """A halted run's envelope answers which PR, which phase, and spend against the cap.
+
+    Read from the ``run_complete`` line rather than threaded through ``RunOutcome``, so
+    the envelope stays reconstructible from the ledger alone.
+    """
+    telem = tmp_path / 'spawns.jsonl'
+    _write_jsonl(
+        telem,
+        [
+            {'schema_version': 1, 'event': 'run_start', 'run_id': 'r', 'series_id': 's'},
+            {
+                'schema_version': 1,
+                'event': 'run_complete',
+                'run_id': 'r',
+                'outcome': 'budget',
+                'integrated': False,
+                'halt': {
+                    'pr_id': 'pr-2',
+                    'phase': 'core',
+                    'role': 'fix',
+                    'spend_usd': 1.03,
+                    'cap_usd': 1.0,
+                },
+            },
+        ],
+    )
+    envelope = summarize_run(
+        telem, run_id='r', series_id='s', outcome=RunOutcome('budget', False, 4)
+    )
+    assert envelope['halt'] == {
+        'pr_id': 'pr-2',
+        'phase': 'core',
+        'role': 'fix',
+        'spend_usd': 1.03,
+        'cap_usd': 1.0,
+    }
+
+
+def test_the_envelope_halt_is_none_on_a_clean_run(tmp_path: Path) -> None:
+    telem = tmp_path / 'spawns.jsonl'
+    _write_jsonl(
+        telem,
+        [
+            {
+                'schema_version': 1,
+                'event': 'run_complete',
+                'run_id': 'r',
+                'outcome': 'completed',
+                'integrated': True,
+                'halt': None,
+            }
+        ],
+    )
+    envelope = summarize_run(
+        telem, run_id='r', series_id='s', outcome=RunOutcome('completed', True, 0)
+    )
+    assert envelope['halt'] is None
+
+
 def test_convoy_run_dry_run_carries_advisories_without_failing(tmp_path: Path) -> None:
     """An ungated PR is reported as advice: the key fills, ok/outcome are untouched."""
     ws = tmp_path / 'ws'

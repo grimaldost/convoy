@@ -54,6 +54,33 @@ class SpawnComplete:
     effective_model: str
     cost_estimated: bool = False
     output_tail: str = ''
+    # The adapter's verdict on WHY the spawn ended: ``ok`` | ``infrastructure`` | ``budget``.
+    # It drove the run's control flow all along but was never recorded, so a consumer had to
+    # infer it from ``exit_code`` plus the shape of ``output_tail`` — an inference that is
+    # wrong exactly when it matters, since a budget cut and an auth failure can both exit 1.
+    classification: str = 'ok'
+
+
+@dataclass(frozen=True)
+class HaltDetail:
+    """Why and where a run stopped — a nested record inside :class:`RunComplete`.
+
+    Present only on a non-``completed`` outcome. A plain nested record like
+    :class:`GateCheckLine`: no ``schema_version`` / ``event`` tag of its own.
+
+    ``pr_id`` and ``phase`` locate the halt in the series, and ``role`` names which spawn
+    hit it (``implementation`` or ``fix``) — a repair exhausting the fix budget is a
+    different diagnosis from the implementation doing so. ``spend_usd`` / ``cap_usd`` are
+    the spawn's cost against the ceiling it hit, populated for a ``budget`` outcome; they
+    are ``None`` for halts where no ceiling was involved (``blocked``, ``infrastructure``),
+    because reporting a cap that did not cause the halt would invite the wrong fix.
+    """
+
+    pr_id: str
+    phase: str
+    role: str
+    spend_usd: float | None = None
+    cap_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -61,11 +88,17 @@ class RunComplete:
     """Emitted once per ``convoy run``. ``outcome`` is one of ``completed``,
     ``blocked``, ``infrastructure``, ``budget``; ``integrated`` records whether the
     result reached the integration branch.
+
+    ``halt`` carries the located reason on any non-``completed`` outcome and is ``None``
+    on a clean run. Without it the terminal record said only *that* a run stopped, so
+    answering "which PR, in which phase, and how close to which cap" meant hand-reading
+    the whole ledger — the one question a halted run always raises.
     """
 
     run_id: str
     outcome: str
     integrated: bool
+    halt: HaltDetail | None = None
 
 
 @dataclass(frozen=True)

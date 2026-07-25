@@ -15,6 +15,33 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **A halted run now says where and why it stopped.** *(consumer-affecting: a new
+  `classification` field on every `spawn_complete` line, a new `halt` object on
+  `run_complete`, and a new `halt` key in the run envelope both surfaces return.)* The
+  terminal record carried only `run_id` / `outcome` / `integrated`, so the first question
+  a halt raises — which PR, in which phase, and how close to which cap — meant hand-reading
+  the whole ledger. The cap itself was recorded nowhere at all.
+
+  `run_complete` now carries **`halt`**: `null` on a clean run, else
+  `{pr_id, phase, role, spend_usd, cap_usd}`. `role` is the spawn role that hit it
+  (`implementation` / `fix`) or `gate` when the bounded fix loop was exhausted — a repair
+  exhausting its own smaller ceiling is a different diagnosis from the implementation
+  doing so, and the fix role's cap is what gets reported in that case. `spend_usd` /
+  `cap_usd` are populated **only** for a `budget` outcome; they stay `null` for `blocked`
+  and `infrastructure`, because naming a ceiling that did not cause the halt would point
+  the reader at the wrong fix.
+
+  Each `spawn_complete` line also carries **`classification`** (`ok` / `infrastructure` /
+  `budget`) — the adapter verdict that drove the run's control flow all along. Without it
+  a consumer had to infer the cause from `exit_code` plus the shape of `output_tail`, an
+  inference that is wrong exactly when it matters, since a budget cut and an auth failure
+  can both exit `1`.
+
+  The envelope reads `halt` from the `run_complete` line rather than threading it through
+  `RunOutcome`, keeping `RunOutcome` a control-flow value and the envelope reconstructible
+  from the ledger alone (`core/telemetry.py`, `interface/drivers/headless.py`,
+  `interface/run_summary.py`). Serves backlog row T12b.
+
 - **`convoy run --json` — the run summary on stdout, as one JSON object.**
   *(consumer-affecting: new CLI flag, and stdout gains structured output on a verb that
   previously wrote nothing there.)* The folded envelope — outcome, exit code, economy

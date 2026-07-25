@@ -171,10 +171,10 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 | `event` | Emitted | Required fields |
 |---|---|---|
 | `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id` |
-| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model` |
+| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `classification` |
 | `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
 | `pr_skipped` | for each PR the run never processed because an earlier PR halted the series | `schema_version`, `event`, `run_id`, `pr_id`, `reason` |
-| `run_complete` | once per `convoy run` | `schema_version`, `event`, `run_id`, `outcome`, `integrated` |
+| `run_complete` | once per `convoy run` | `schema_version`, `event`, `run_id`, `outcome`, `integrated`, `halt` |
 
 - **`run_id`** — a lexicographically-sortable stamp (`%Y%m%dT%H%M%SZ` + short
   suffix) grouping one invocation's events; a reused `outputs` dir stays safe
@@ -191,6 +191,19 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   did not re-process because the integration branch already contains its work. The two
   are opposite outcomes (done, versus never ran), so a consumer folding a resumed run
   must branch on the reason rather than treat every `pr_skipped` as a casualty.
+- **`classification`** (additive) — the adapter's verdict on why a spawn ended:
+  `ok` | `infrastructure` | `budget`. It drove the run's control flow from the start but
+  was never recorded, so a consumer had to infer it from `exit_code` plus the shape of
+  `output_tail` — an inference that is wrong exactly when it matters, since a budget cut
+  and an auth failure can both exit `1`.
+- **`run_complete.halt`** (additive) — `null` on a `completed` run; on any halt, a nested
+  object `{pr_id, phase, role, spend_usd, cap_usd}` locating why the run stopped. `role`
+  is the spawn role that hit it (`implementation` / `fix`) or `gate` when the bounded fix
+  loop was exhausted. `spend_usd` / `cap_usd` are the spawn's cost against the ceiling it
+  hit and are populated **only** for a `budget` outcome — they stay `null` for `blocked`
+  and `infrastructure`, where no ceiling caused the halt and naming one would point the
+  reader at the wrong fix. Before this the terminal record said only *that* a run stopped,
+  so "which PR, in which phase, how close to which cap" meant hand-reading the ledger.
 - **`effective_model` is never blank.** On a killed or partial spawn it falls back
   to the requested model, so an economy consumer always has a model to attribute
   the row to.

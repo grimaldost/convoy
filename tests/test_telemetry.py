@@ -9,6 +9,7 @@ from convoy.core.telemetry import (
     SCHEMA_VERSION,
     GateCheckLine,
     GateComplete,
+    HaltDetail,
     PRSkipped,
     RunComplete,
     RunStart,
@@ -68,6 +69,7 @@ def test_spawn_complete_json_line_has_schema_tag_and_all_fields() -> None:
         'effective_model': 'claude-sonnet-5',
         'cost_estimated': False,
         'output_tail': '',
+        'classification': 'ok',
     }
 
 
@@ -80,7 +82,40 @@ def test_run_complete_json_line_has_schema_tag_and_all_fields() -> None:
         'run_id': '20260703T142210Z-a1',
         'outcome': 'completed',
         'integrated': True,
+        'halt': None,
     }
+
+
+def test_run_complete_carries_a_located_halt_when_the_run_stopped() -> None:
+    event = RunComplete(
+        run_id='r',
+        outcome='budget',
+        integrated=False,
+        halt=HaltDetail(pr_id='pr-2-parser', phase='core', role='fix', spend_usd=1.03, cap_usd=1.0),
+    )
+    parsed = json.loads(to_json_line(event))
+    # The nested record serializes as a plain object, like GateCheckLine does.
+    assert parsed['halt'] == {
+        'pr_id': 'pr-2-parser',
+        'phase': 'core',
+        'role': 'fix',
+        'spend_usd': 1.03,
+        'cap_usd': 1.0,
+    }
+
+
+def test_a_halt_with_no_ceiling_involved_reports_no_money() -> None:
+    """A blocked run hit no cap, so reporting one would send the reader after a wrong fix."""
+    event = RunComplete(
+        run_id='r',
+        outcome='blocked',
+        integrated=False,
+        halt=HaltDetail(pr_id='pr-1', phase='core', role='gate'),
+    )
+    parsed = json.loads(to_json_line(event))
+    assert parsed['halt']['spend_usd'] is None
+    assert parsed['halt']['cap_usd'] is None
+    assert parsed['halt']['role'] == 'gate'
 
 
 def test_json_line_is_single_line_without_trailing_newline() -> None:
