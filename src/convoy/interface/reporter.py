@@ -8,9 +8,11 @@ tailing the JSONL. stdout stays clean for any future machine output. Silence is 
 """
 
 import sys
+from collections.abc import Sequence
 from typing import Protocol, TextIO
 
 from convoy.core.gate import GateVerdict
+from convoy.core.preflight import Advisory
 from convoy.interface.spawn import SpawnResult
 
 # The most of a failing check's detail to echo on one line (the full detail is in telemetry).
@@ -21,6 +23,7 @@ class Reporter(Protocol):
     """A sink the driver calls at each notable step of a run. Every method is side-effecting."""
 
     def run_start(self, series_id: str, run_id: str, n_prs: int) -> None: ...
+    def advisories(self, advisories: Sequence[Advisory]) -> None: ...
     def spawn_done(self, pr_id: str, role: str, result: SpawnResult) -> None: ...
     def gate_result(self, pr_id: str, attempt: int, verdict: GateVerdict) -> None: ...
     def fix_attempt(self, pr_id: str, attempt: int, max_attempts: int) -> None: ...
@@ -33,6 +36,7 @@ class NullReporter:
     """A :class:`Reporter` that says nothing — the default, and what ``--quiet`` selects."""
 
     def run_start(self, series_id: str, run_id: str, n_prs: int) -> None: ...
+    def advisories(self, advisories: Sequence[Advisory]) -> None: ...
     def spawn_done(self, pr_id: str, role: str, result: SpawnResult) -> None: ...
     def gate_result(self, pr_id: str, attempt: int, verdict: GateVerdict) -> None: ...
     def fix_attempt(self, pr_id: str, attempt: int, max_attempts: int) -> None: ...
@@ -57,6 +61,16 @@ class StderrReporter:
     def run_start(self, series_id: str, run_id: str, n_prs: int) -> None:
         suffix = 'PR' if n_prs == 1 else 'PRs'
         self._line(f'convoy: {series_id} {run_id}  ({n_prs} {suffix})')
+
+    def advisories(self, advisories: Sequence[Advisory]) -> None:
+        """One line each, right after the run header — nothing when there is nothing to say.
+
+        Narrated on the run and not only on ``convoy validate``, because the operator who
+        needs to hear that a PR integrates unverified is the one whose run is about to
+        integrate it.
+        """
+        for advisory in advisories:
+            self._line(f'convoy: advisory [{advisory.kind}] {advisory.where} {advisory.message}')
 
     def spawn_done(self, pr_id: str, role: str, result: SpawnResult) -> None:
         label = _ROLE_LABEL.get(role, role)

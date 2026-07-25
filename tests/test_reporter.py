@@ -5,9 +5,11 @@ sequence of reporter hooks a run fires.
 """
 
 import io
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from convoy.core.gate import CheckResult, GateVerdict, decide
+from convoy.core.preflight import Advisory
 from convoy.core.spec import Check
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
 from convoy.interface.spawn import SpawnResult, ok_result
@@ -21,6 +23,12 @@ class RecordingReporter:
 
     def run_start(self, series_id: str, run_id: str, n_prs: int) -> None:
         self.calls.append(('run_start', series_id, run_id, n_prs))
+
+    def advisories(self, advisories: Sequence[Advisory]) -> None:
+        # Recorded only when non-empty: the ordinary run has nothing to say, and a hook
+        # firing on every run would make the sequence assertions noise.
+        if advisories:
+            self.calls.append(('advisories', tuple(a.kind for a in advisories)))
 
     def spawn_done(self, pr_id: str, role: str, result: SpawnResult) -> None:
         self.calls.append(('spawn_done', pr_id, role))

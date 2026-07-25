@@ -37,7 +37,11 @@ A real run passes these stages, in this order (`run_series_headless`):
    returns a `PreflightReport` carrying two lists: the blocking `problems` that
    decide runnability, and non-blocking `advisories` that do not (today: a PR that
    phase-scoped checks leave with no blocking check, so it integrates unverified).
-   Only `problems` raises; advisories are reported and the run proceeds.
+   Only `problems` raises; advisories are reported and the run proceeds. They are
+   reported on **every** path, the run included: on a run they ride the `run_start`
+   telemetry line and the reporter narrates them under the run header. Until 0.7.0 the
+   run path computed them and dropped them, so the ungated-PR advisory said nothing on
+   the run that actually integrated the unverified PR.
 2. **Workspace lock** (`interface/workspace_lock.py`) — an exclusive lock file,
    `<workspace>/.git/convoy-run.lock` (under `.git`, so it never dirties the
    tracked tree), created with `O_CREAT | O_EXCL` and holding the run's pid. A
@@ -182,7 +186,10 @@ failing blocking checks, any skip reason). `effective_model` is keyed on the
 overwrites it — and is `null` for a PR that never ran an implementation spawn.
 The envelope also carries **`halt`** — `null` on a clean run, else the located reason the
 run stopped, read from the `run_complete` line rather than threaded through `RunOutcome`
-so the envelope stays reconstructible from the ledger alone. The per-PR list is
+so the envelope stays reconstructible from the ledger alone. It also carries
+**`advisories`** — always present, empty when there is nothing to say — read from the
+`run_start` line the same way, so a run reports what its pre-flight said and
+`convoy_status` can too, without having been the process that pre-flighted it. The per-PR list is
 capped at 50 with a `truncated` report; the complete per-line trace stays on
 disk at the returned `telemetry_path`, referenced and never inlined. `ok` is
 true exactly when `outcome` is `completed`, and the envelope carries the same

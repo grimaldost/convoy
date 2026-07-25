@@ -170,7 +170,7 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 
 | `event` | Emitted | Required fields |
 |---|---|---|
-| `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id` |
+| `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id`, `advisories` (list of `{kind, where, message}`; `[]` when pre-flight had nothing to say) |
 | `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `classification` |
 | `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
 | `pr_skipped` | for each PR the run never processed because an earlier PR halted the series | `schema_version`, `event`, `run_id`, `pr_id`, `reason` |
@@ -229,7 +229,7 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 ### Worked example
 
 ```json
-{"schema_version": 1, "event": "run_start", "run_id": "20260703T142210Z-a1", "series_id": "add-comparison-ops"}
+{"schema_version": 1, "event": "run_start", "run_id": "20260703T142210Z-a1", "series_id": "add-comparison-ops", "advisories": []}
 {"schema_version": 1, "event": "spawn_complete", "run_id": "20260703T142210Z-a1", "pr_id": "pr-1-lexer", "role": "implementation", "exit_code": 0, "input_tokens": 18422, "output_tokens": 3110, "num_turns": 9, "duration_s": 74.2, "cost_usd": 0.11, "effective_model": "claude-sonnet-5"}
 {"schema_version": 1, "event": "spawn_complete", "run_id": "20260703T142210Z-a1", "pr_id": "pr-1-lexer", "role": "fix", "exit_code": 0, "input_tokens": 9004, "output_tokens": 1520, "num_turns": 4, "duration_s": 38.9, "cost_usd": 0.05, "effective_model": "claude-sonnet-5"}
 {"schema_version": 1, "event": "run_complete", "run_id": "20260703T142210Z-a1", "outcome": "completed", "integrated": true}
@@ -242,7 +242,7 @@ a blocking independent check; the bounded fix loop is exhausted and still red, s
 is still `blocking_red`.)
 
 ```json
-{"schema_version": 1, "event": "run_start", "run_id": "20260703T160102Z-b7", "series_id": "add-comparison-ops"}
+{"schema_version": 1, "event": "run_start", "run_id": "20260703T160102Z-b7", "series_id": "add-comparison-ops", "advisories": []}
 {"schema_version": 1, "event": "spawn_complete", "run_id": "20260703T160102Z-b7", "pr_id": "pr-1-lexer", "role": "implementation", "exit_code": 0, "input_tokens": 17330, "output_tokens": 2980, "num_turns": 8, "duration_s": 69.5, "cost_usd": 0.10, "effective_model": "claude-sonnet-5"}
 {"schema_version": 1, "event": "gate_complete", "run_id": "20260703T160102Z-b7", "pr_id": "pr-1-lexer", "attempt": 2, "blocking_red": true, "independent_red": true, "checks": [{"name": "suite", "passed": true, "blocking": true, "independent": false, "detail": "12 passed"}, {"name": "type-contract", "passed": false, "blocking": true, "independent": true, "detail": "type_probe: expected Ordering, got object"}]}
 {"schema_version": 1, "event": "pr_skipped", "run_id": "20260703T160102Z-b7", "pr_id": "pr-2-parser", "reason": "series halted at pr-1-lexer (blocked) before this PR started"}

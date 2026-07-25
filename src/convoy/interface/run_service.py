@@ -12,7 +12,7 @@ structured result.
 
 from pathlib import Path
 
-from convoy.core.preflight import Problem
+from convoy.core.preflight import PreflightReport, Problem
 from convoy.core.spec import Series
 from convoy.interface.config_isolation import isolated_config
 from convoy.interface.drivers.headless import RunOutcome, format_problems, run_series
@@ -107,25 +107,33 @@ def _run_id_problems(series: Series, run_id: str) -> list[Problem]:
     ]
 
 
-def start_problems(
+def start_report(
     series: Series, workspace: Path, *, run_id: str, fresh: bool = False, resume: bool = False
-) -> list[Problem]:
-    """Every problem that stops a run before it starts, without spending anything.
+) -> PreflightReport:
+    """Everything pre-flight has to say about starting this run, spending nothing.
 
     The free half of the gate: the structural and filesystem pre-flight plus the
     consistency checks on the options themselves. The seat probe is deliberately not here —
     it costs a spawn and needs the isolated config dir, so it runs inside
     :func:`run_series_headless` once the workspace is locked.
 
+    Returns the whole :class:`PreflightReport`, not just the blocking half, because the
+    advisories are as much a part of "what pre-flight said" as the problems — and a caller
+    that only ever received the problems is exactly how they came to be dropped on the run
+    path. A caller that only gates on runnability reads ``.problems``; a caller that reports
+    reads both.
+
     Named and shared because a *detached* launch needs exactly this much: the parent
     process can still answer a malformed series immediately, and only what genuinely needs
     the running process is left for the child to discover.
     """
     report = preflight(series, workspace)
-    problems = list(report.problems)
-    problems += _resume_problems(series, workspace, fresh=fresh, resume=resume)
-    problems += _run_id_problems(series, run_id)
-    return problems
+    problems = [
+        *report.problems,
+        *_resume_problems(series, workspace, fresh=fresh, resume=resume),
+        *_run_id_problems(series, run_id),
+    ]
+    return PreflightReport(problems=tuple(problems), advisories=report.advisories)
 
 
 def run_series_headless(
@@ -162,16 +170,16 @@ def run_series_headless(
     creating one, and skips every PR whose work it already contains — so a halt does not
     re-spend on the PRs that already gated green. ``resume`` with ``fresh``, or ``resume``
     with no integration branch, is a pre-flight problem (see :func:`_resume_problems`). A
-    ``run_id`` the ledger already holds lines for is one too (see :func:`start_problems`).
+    ``run_id`` the ledger already holds lines for is one too (see :func:`start_report`).
 
     Holds an exclusive lock on ``workspace`` (see :mod:`workspace_lock`) from right after a
     clean pre-flight through the end of the run, so a second concurrent run against the same
     workspace raises :class:`~convoy.interface.workspace_lock.WorkspaceBusyError` instead of
     interleaving git operations. Released on both normal return and exception.
     """
-    problems = start_problems(series, workspace, run_id=run_id, fresh=fresh, resume=resume)
-    if problems:
-        raise PreflightError(problems)
+    report = start_report(series, workspace, run_id=run_id, fresh=fresh, resume=resume)
+    if report.problems:
+        raise PreflightError(list(report.problems))
 
     with workspace_lock(workspace):
         reporter = reporter if reporter is not None else NullReporter()
@@ -204,6 +212,7 @@ def run_series_headless(
                 run_id=run_id,
                 reporter=reporter,
                 resume=resume,
+                advisories=report.advisories,
             )
 
         if not config_isolation:

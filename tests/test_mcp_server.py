@@ -720,3 +720,78 @@ def test_dry_run_takes_precedence_over_detach(
 
     assert result['outcome'] == 'validated'
     assert recorded == []
+
+
+# --- advisories in the run envelope --------------------------------------------------------
+#
+# Read from the run_start line for the same reason `halt` is read from run_complete: the
+# envelope stays reconstructible from the ledger alone, so `convoy_status` can report a
+# run's advisories without having been the process that pre-flighted it.
+
+
+def test_the_envelope_carries_the_runs_advisories(tmp_path: Path) -> None:
+    telem = tmp_path / 'spawns.jsonl'
+    _write_jsonl(
+        telem,
+        [
+            {
+                'schema_version': 1,
+                'event': 'run_start',
+                'run_id': 'r',
+                'series_id': 's',
+                'advisories': [
+                    {'kind': 'gate', 'where': "[[prs]] 'pr-1'", 'message': 'integrates unverified'}
+                ],
+            },
+            {
+                'schema_version': 1,
+                'event': 'run_complete',
+                'run_id': 'r',
+                'outcome': 'completed',
+                'integrated': True,
+                'halt': None,
+            },
+        ],
+    )
+
+    envelope = summarize_run(
+        telem, run_id='r', series_id='s', outcome=RunOutcome('completed', True, EXIT_OK)
+    )
+
+    assert envelope['advisories'] == [
+        {'kind': 'gate', 'where': "[[prs]] 'pr-1'", 'message': 'integrates unverified'}
+    ]
+
+
+def test_the_envelope_advisories_key_is_always_present(tmp_path: Path) -> None:
+    """Empty, not absent — the same guarantee the dry-run envelope already gives."""
+    telem = tmp_path / 'spawns.jsonl'
+    _write_jsonl(
+        telem, [{'schema_version': 1, 'event': 'run_start', 'run_id': 'r', 'series_id': 's'}]
+    )
+
+    envelope = summarize_run(telem, run_id='r', series_id='s', outcome=None)
+
+    assert envelope['advisories'] == []
+
+
+def test_an_advisory_from_another_run_does_not_leak_in(tmp_path: Path) -> None:
+    """The ledger accumulates runs; every fold selects by run_id and this one is no exception."""
+    telem = tmp_path / 'spawns.jsonl'
+    _write_jsonl(
+        telem,
+        [
+            {
+                'schema_version': 1,
+                'event': 'run_start',
+                'run_id': 'other',
+                'series_id': 's',
+                'advisories': [{'kind': 'gate', 'where': 'x', 'message': 'not mine'}],
+            },
+            {'schema_version': 1, 'event': 'run_start', 'run_id': 'r', 'series_id': 's'},
+        ],
+    )
+
+    envelope = summarize_run(telem, run_id='r', series_id='s', outcome=None)
+
+    assert envelope['advisories'] == []

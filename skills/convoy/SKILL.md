@@ -162,6 +162,11 @@ Every tool returns a single JSON object.
   they are `null` for `blocked` and `infrastructure`, where no ceiling caused the halt.
   Read this first on a non-`completed` run: it answers which PR and how close to which cap
   without opening the trace.
+- `advisories` — always present, empty when there is nothing to say: what pre-flight
+  remarked on without stopping the run (today, a PR no blocking check gates, which
+  therefore integrated **unverified**). Read on a real run, not only on `dry_run` —
+  they are recorded on the run's `run_start` telemetry line, so `convoy_status` reports
+  them too. They never affect `ok` or `outcome`.
 - `truncated` — `{ any, prs }`: how many PRs the `prs` list dropped past its cap. If
   `any` is `true`, read `telemetry_path` for the full set.
 

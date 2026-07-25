@@ -370,3 +370,52 @@ def test_resume_threads_through_to_the_engine(
 
     run_series_headless(series, ws, run_id='r', resume=True)
     assert seen['resume'] is True
+
+
+# --- advisories on the run path -----------------------------------------------------------
+#
+# They used to be computed here and thrown away: only `convoy validate` and a dry run ever
+# surfaced one, so ADR-0008's ungated-PR advisory said nothing on the run that actually
+# integrated the unverified PR. `_series` declares no checks, so pre-flight always has one
+# to say.
+
+
+def test_advisories_reach_the_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ws, series, _ = _clean(tmp_path)
+    seen: dict[str, object] = {}
+
+    def _fake(*_a: object, **k: object) -> RunOutcome:
+        seen['advisories'] = k['advisories']
+        return RunOutcome('completed', True, EXIT_OK)
+
+    monkeypatch.setattr(run_service, 'run_series', _fake)
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
+
+    run_series_headless(series, ws, run_id='r')
+
+    advisories = seen['advisories']
+    assert isinstance(advisories, tuple)
+    assert [a.kind for a in advisories] == ['gate']
+    assert 'integrates unverified' in advisories[0].message
+
+
+def test_an_advisory_still_never_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Carrying them must not have turned advice into a failure — the ADR-0008 invariant."""
+    ws, series, _ = _clean(tmp_path)
+    monkeypatch.setattr(
+        run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
+    )
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
+
+    assert run_series_headless(series, ws, run_id='r') == RunOutcome('completed', True, EXIT_OK)
+
+
+def test_start_report_separates_advice_from_what_gates_the_run(tmp_path: Path) -> None:
+    _ws, series, _ = _clean(tmp_path)
+    report = run_service.start_report(series, tmp_path / 'ws', run_id='r')
+
+    assert report.problems == ()
+    assert report.clean is True
+    assert [a.kind for a in report.advisories] == ['gate']

@@ -47,6 +47,9 @@ def test_run_start_json_line_has_schema_tag_and_all_fields() -> None:
         'event': 'run_start',
         'run_id': '20260703T142210Z-a1',
         'series_id': 'add-comparison-ops',
+        # Always emitted, empty on the ordinary run, so a consumer reads the key
+        # unconditionally rather than branching on its presence.
+        'advisories': [],
     }
     assert parsed['schema_version'] == 1
 

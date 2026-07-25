@@ -138,6 +138,7 @@ def summarize_run(
     }
     prs: dict[str, dict[str, Any]] = {}
     halt: dict[str, Any] | None = None
+    advisories: list[dict[str, Any]] = []
 
     def _pr(pr_id: str) -> dict[str, Any]:
         return prs.setdefault(
@@ -189,6 +190,11 @@ def summarize_run(
                 pr = _pr(entry['pr_id'])
                 pr['skipped'] = True
                 pr['skip_reason'] = entry['reason']
+            elif event == 'run_start':
+                # Read from the ledger for the same reason ``halt`` is: it keeps the
+                # envelope reconstructible from disk alone, so ``convoy_status`` reports
+                # a run's advisories without having been the process that pre-flighted it.
+                advisories = list(entry.get('advisories') or [])
             elif event == 'run_complete':
                 # Read from the ledger rather than threaded through ``RunOutcome``: the
                 # outcome is a control-flow value the driver returns, while this is
@@ -215,6 +221,9 @@ def summarize_run(
         # what hit it (a spawn role, or ``gate`` when the bounded fix loop was exhausted),
         # and for a budget halt the spend against the ceiling it hit.
         'halt': halt,
+        # Always present, empty when there is nothing to say, so a consumer reads the key
+        # unconditionally — the same shape and the same guarantee as the dry-run envelope.
+        'advisories': advisories,
         'telemetry_path': str(telemetry_path),
         'truncated': {'any': len(pr_list) > pr_cap, 'prs': max(0, len(pr_list) - pr_cap)},
     }
