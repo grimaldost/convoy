@@ -1213,3 +1213,170 @@ def test_the_fix_regate_uses_the_same_scoped_checks(harness: Harness) -> None:
     # Initial gate red, fix spawn, re-gate green — and the red 'extras-suite' never ran.
     assert recorder.calls == [('core-suite',), ('core-suite',)]
     assert outcome == RunOutcome('completed', True, EXIT_OK)
+
+
+# --- resume ------------------------------------------------------------------
+#
+# After a halt the integration branch retains every green merge, so what it contains is
+# the record of what is done. Resuming must not re-spawn those PRs -- the whole value of
+# the flag is the money NOT spent, so these assert on spawn counts, not just outcomes.
+#
+# Each PR commits a marker file (MarkerSpawn), because an empty branch points at the same
+# commit as the integration branch, and "merged" would then be indistinguishable from
+# "branched and did nothing" -- the distinction Git.is_merged_into exists to make.
+
+
+def _three_pr_series(base: Series) -> Series:
+    return replace(
+        base,
+        checks=(Check(name='green', run=_PASS_CMD, blocking=True),),
+        prs=(
+            PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),
+            PR(id='pr-2', branch='pr-2', prompt='impl.md', phase='core', depends_on=('pr-1',)),
+            PR(id='pr-3', branch='pr-3', prompt='impl.md', phase='core', depends_on=('pr-2',)),
+        ),
+    )
+
+
+def _resume_run(
+    series: Series, harness: Harness, spawn: FakeSpawn, run_id: str, *, resume: bool = False
+) -> RunOutcome:
+    return run_series(
+        series,
+        harness.repo,
+        spawn=spawn,
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id=run_id,
+        resume=resume,
+    )
+
+
+def _skips(outputs: Path, run_id: str) -> list[dict[str, str]]:
+    return [e for e in _events_of(_read_events(outputs), 'pr_skipped') if e['run_id'] == run_id]
+
+
+def _spawned_prs(outputs: Path, run_id: str) -> set[str]:
+    return {
+        event['pr_id']
+        for event in _events_of(_read_events(outputs), 'spawn_complete')
+        if event['run_id'] == run_id
+    }
+
+
+def test_resume_of_a_completed_series_spawns_nothing(harness: Harness) -> None:
+    """The money test: every PR already merged costs exactly zero on resume."""
+    series = _three_pr_series(harness.series)
+    first = _resume_run(
+        series,
+        harness,
+        MarkerSpawn([ok_result()] * 3, markers_for=['a.txt', 'b.txt', 'c.txt']),
+        'run-1',
+    )
+    assert first == RunOutcome('completed', True, EXIT_OK)
+
+    spawn = FakeSpawn([])  # asserts if called even once
+    outcome = _resume_run(series, harness, spawn, 'run-2', resume=True)
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert spawn.calls == []
+    skips = _skips(harness.outputs, 'run-2')
+    assert {event['pr_id'] for event in skips} == {'pr-1', 'pr-2', 'pr-3'}
+    # A reason distinct from the halt reasons: "done" and "never ran" are opposite
+    # outcomes, and a consumer folding a resumed run must not confuse them.
+    assert all('already integrated' in event['reason'] for event in skips)
+    assert all('halted' not in event['reason'] for event in skips)
+
+
+def test_resume_reruns_only_the_prs_that_never_landed(harness: Harness) -> None:
+    series = _three_pr_series(harness.series)
+    infra = SpawnResult(
+        exit_code=1,
+        classification='infrastructure',
+        output='auth failed',
+        economy=SpawnEconomy(
+            input_tokens=0,
+            output_tokens=0,
+            num_turns=0,
+            duration_s=0.0,
+            cost_usd=0.0,
+            effective_model='test-model',
+        ),
+    )
+    # pr-1 lands; pr-2 dies on an infrastructure spawn, so pr-2 and pr-3 never integrate.
+    first = _resume_run(
+        series,
+        harness,
+        MarkerSpawn([ok_result(), infra], markers_for=['a.txt', 'b.txt']),
+        'run-1',
+    )
+    assert first == RunOutcome('infrastructure', False, EXIT_INFRASTRUCTURE)
+    assert harness.git.is_merged_into('pr-1', 'integration')
+    assert not harness.git.is_merged_into('pr-2', 'integration')
+
+    spawn = MarkerSpawn([ok_result(), ok_result()], markers_for=['b.txt', 'c.txt'])
+    outcome = _resume_run(series, harness, spawn, 'run-2', resume=True)
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert len(spawn.calls) == 2  # pr-2 and pr-3 only -- pr-1 was not paid for twice
+    assert [event['pr_id'] for event in _skips(harness.outputs, 'run-2')] == ['pr-1']
+    assert _spawned_prs(harness.outputs, 'run-2') == {'pr-2', 'pr-3'}
+
+
+def test_resume_does_not_skip_a_branch_that_merely_points_at_integration(
+    harness: Harness,
+) -> None:
+    """The subtle one: an empty branch is CONTAINED but was never merged.
+
+    A PR whose implementation committed nothing leaves its branch on the same commit as
+    the integration branch. Plain containment calls that done, which would silently drop
+    the PR from a resumed run and still report ``completed``. It must be re-attempted.
+    """
+    series = replace(
+        harness.series,
+        checks=(Check(name='green', run=_PASS_CMD, blocking=True),),
+        prs=(PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),),
+    )
+    harness.git.checkout('base')
+    harness.git.checkout('integration', create=True)
+    harness.git.checkout('pr-1', create=True)
+    harness.git.checkout('integration')
+    assert harness.git.is_ancestor('pr-1', 'integration')  # contained...
+    assert not harness.git.is_merged_into('pr-1', 'integration')  # ...but never merged
+
+    spawn = MarkerSpawn([ok_result()], markers_for=['a.txt'])
+    outcome = _resume_run(series, harness, spawn, 'run-2', resume=True)
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert len(spawn.calls) == 1  # it really ran
+    assert _skips(harness.outputs, 'run-2') == []
+
+
+def test_resume_discards_a_failed_attempts_branch_rather_than_building_on_it(
+    harness: Harness,
+) -> None:
+    """A PR branch with unmerged commits is a failed attempt: re-attempt, do not extend."""
+    series = replace(
+        harness.series,
+        review=Review(blocking=True, max_fix_attempts=0),
+        checks=(Check(name='marker', run=_MARKER_CMD, blocking=True),),
+        prs=(PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),),
+    )
+    # The spawn commits work but the gate stays red (no fixed.marker) and there are zero
+    # fix attempts, so the series halts blocked with pr-1 unmerged and carrying commits.
+    first = _resume_run(
+        series, harness, MarkerSpawn([ok_result()], markers_for=['junk.txt']), 'run-1'
+    )
+    assert first == RunOutcome('blocked', False, EXIT_BLOCKED)
+    assert harness.git.branch_exists('pr-1')
+    assert not harness.git.is_merged_into('pr-1', 'integration')
+
+    # Resume: the stale branch is dropped and recreated, so `checkout -b` cannot collide
+    # and the PR is re-attempted from the current integration state.
+    spawn = MarkerSpawn([ok_result()], markers_for=['junk.txt'])
+    outcome = _resume_run(series, harness, spawn, 'run-2', resume=True)
+
+    assert outcome == RunOutcome('blocked', False, EXIT_BLOCKED)  # still red, but it RAN
+    assert len(spawn.calls) == 1
+    assert _skips(harness.outputs, 'run-2') == []

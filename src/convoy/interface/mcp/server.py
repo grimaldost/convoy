@@ -164,7 +164,12 @@ def _error_kind(exc: Exception) -> str:
 
 
 def _run_impl(
-    series_file: str, workspace: str, dry_run: bool, config_isolation: bool, reset: bool
+    series_file: str,
+    workspace: str,
+    dry_run: bool,
+    config_isolation: bool,
+    reset: bool,
+    resume: bool,
 ) -> dict[str, Any]:
     """Load, (dry-run) pre-flight or run the series, and shape a structured result (sync)."""
     try:
@@ -189,7 +194,12 @@ def _run_impl(
     run_id = make_run_id()
     try:
         outcome = run_series_headless(
-            series, ws, run_id=run_id, config_isolation=config_isolation, fresh=reset
+            series,
+            ws,
+            run_id=run_id,
+            config_isolation=config_isolation,
+            fresh=reset,
+            resume=resume,
         )
     except PreflightError as exc:
         return {
@@ -285,6 +295,17 @@ async def convoy_run(
             )
         ),
     ] = False,
+    resume: Annotated[
+        bool,
+        Field(
+            description=(
+                'Continue the existing integration branch instead of creating one, skipping '
+                'every PR whose work it already contains, so a halted run does not re-spend '
+                'on PRs that already gated green. Mutually exclusive with reset; resuming '
+                'when no integration branch exists is a pre-flight problem.'
+            )
+        ),
+    ] = False,
 ) -> dict[str, Any]:
     """Run a governed multi-PR series to an integrated branch; return an economy + gate summary.
 
@@ -319,9 +340,13 @@ async def convoy_run(
         dir (default true).
       - ``reset`` — reset the workspace to base and delete prior integration/PR branches
         before running, so a completed or halted run can be re-run cleanly (default false).
+      - ``resume`` — continue the existing integration branch, skipping every PR already
+        merged into it, so a halted run does not re-spend on its green PRs (default false).
+        Each skipped PR is recorded with a ``pr_skipped`` reason distinct from the halt
+        reasons. Mutually exclusive with ``reset``.
     """
     return await asyncio.to_thread(
-        _run_impl, series_file, workspace, dry_run, config_isolation, reset
+        _run_impl, series_file, workspace, dry_run, config_isolation, reset, resume
     )
 
 

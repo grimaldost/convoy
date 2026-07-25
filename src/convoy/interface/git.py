@@ -85,9 +85,7 @@ class Git:
         """
         self._run_checked('checkout', base)
         for branch in branches:
-            result = self._run('branch', '-D', branch)
-            if result.returncode != 0 and 'not found' not in result.stderr:
-                raise GitError(result.stderr.strip())
+            self.delete_branch(branch)
 
     def status_porcelain(self) -> tuple[str, ...]:
         """Every non-empty line of ``git status --porcelain`` (empty tuple when clean).
@@ -122,6 +120,40 @@ class Git:
         """Whether a local branch called ``name`` exists."""
         result = self._run('rev-parse', '--verify', '--quiet', f'refs/heads/{name}')
         return result.returncode == 0
+
+    def rev_parse(self, ref: str) -> str:
+        """The commit sha ``ref`` resolves to."""
+        return self._run_checked('rev-parse', ref).stdout.strip()
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        """Whether every commit of ``ancestor`` is contained in ``descendant``.
+
+        ``git merge-base --is-ancestor``: exit 0 means contained, 1 means not. Note a
+        commit is an ancestor of ITSELF, which is why :meth:`is_merged_into` exists.
+        """
+        return self._run('merge-base', '--is-ancestor', ancestor, descendant).returncode == 0
+
+    def is_merged_into(self, branch: str, target: str) -> bool:
+        """Whether ``branch`` was actually merged into ``target`` — not merely contained by it.
+
+        Containment alone is the wrong question, and getting it wrong is expensive. A PR
+        branch created from the integration branch whose implementation committed nothing
+        points at the *same commit*, and ``merge-base --is-ancestor`` duly reports it as
+        contained — so a resumed run would skip a PR that never landed, and the series
+        would report completed having silently dropped it.
+
+        The driver always integrates with ``merge --no-ff``, so a genuinely merged branch
+        is a **strict** ancestor: contained, and not the same commit. That is the signal.
+        """
+        if self.rev_parse(branch) == self.rev_parse(target):
+            return False
+        return self.is_ancestor(branch, target)
+
+    def delete_branch(self, name: str) -> None:
+        """Force-delete local branch ``name``; a branch that does not exist is not an error."""
+        result = self._run('branch', '-D', name)
+        if result.returncode != 0 and 'not found' not in result.stderr:
+            raise GitError(result.stderr.strip())
 
     def merge(self, source: str, into: str) -> None:
         """Check out ``into``, then merge ``source`` into it with a merge commit.

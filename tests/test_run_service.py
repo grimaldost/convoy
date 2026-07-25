@@ -284,3 +284,89 @@ def test_rerun_without_fresh_fails_where_fresh_succeeds(
     monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
     run_series_headless(series, ws, run_id='r2', fresh=True)
     Git(ws).checkout('pr-1', create=True)  # would have raised GitError before the reset
+
+
+# --- resume consistency ------------------------------------------------------
+#
+# Both checks run in pre-flight, before the lock, the seat probe, or any git mutation, so
+# an incoherent request costs nothing.
+
+
+def test_resume_with_fresh_is_a_preflight_problem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """They contradict: fresh deletes the integration branch resume continues from."""
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+    _git(ws, 'branch', 'integration')
+
+    called: list[int] = []
+    monkeypatch.setattr(run_service, 'run_series', lambda *a, **k: called.append(1))
+
+    with pytest.raises(PreflightError) as excinfo:
+        run_series_headless(series, ws, run_id='r', fresh=True, resume=True)
+
+    kinds = {problem.kind for problem in excinfo.value.problems}
+    assert 'resume' in kinds
+    assert 'mutually exclusive' in ' '.join(p.message for p in excinfo.value.problems)
+    assert called == []
+
+
+def test_resume_without_an_integration_branch_is_a_preflight_problem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing to resume. Silently starting a full run instead would spend real money."""
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)  # base only; no integration branch
+
+    called: list[int] = []
+    monkeypatch.setattr(run_service, 'run_series', lambda *a, **k: called.append(1))
+
+    with pytest.raises(PreflightError) as excinfo:
+        run_series_headless(series, ws, run_id='r', resume=True)
+
+    messages = ' '.join(p.message for p in excinfo.value.problems)
+    assert 'nothing to resume' in messages
+    assert 'integration' in messages
+    assert called == []
+
+
+def test_a_normal_run_is_unaffected_by_the_resume_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without --resume neither check applies, so a first run needs no integration branch."""
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+
+    seen: dict[str, object] = {}
+
+    def _fake(*_a: object, **k: object) -> RunOutcome:
+        seen['resume'] = k['resume']
+        return RunOutcome('completed', True, EXIT_OK)
+
+    monkeypatch.setattr(run_service, 'run_series', _fake)
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *a, **k: None)
+
+    outcome = run_series_headless(series, ws, run_id='r')
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert seen['resume'] is False
+
+
+def test_resume_threads_through_to_the_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+    _git(ws, 'branch', 'integration')
+
+    seen: dict[str, object] = {}
+
+    def _fake(*_a: object, **k: object) -> RunOutcome:
+        seen['resume'] = k['resume']
+        return RunOutcome('completed', True, EXIT_OK)
+
+    monkeypatch.setattr(run_service, 'run_series', _fake)
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *a, **k: None)
+
+    run_series_headless(series, ws, run_id='r', resume=True)
+    assert seen['resume'] is True

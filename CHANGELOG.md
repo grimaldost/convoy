@@ -15,6 +15,36 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **`convoy run --resume` / `convoy_run(resume=true)` — continue a halted run instead of
+  paying for it twice.** *(consumer-affecting: a new CLI flag and MCP tool argument, a new
+  `resume` pre-flight problem `kind`, and a new `pr_skipped.reason` value — `already
+  integrated before this resume` — that a consumer folding a resumed run must distinguish
+  from the halt reasons, because "done" and "never ran" are opposite outcomes.)*
+
+  After any halt the integration branch provably retains every green merge, so the work is
+  already on disk; re-running re-spawned it anyway. Measured against this corpus,
+  implementation spawns run ~$0.20–0.90 each, so a 4-PR series halting at PR4 discarded
+  roughly $0.6–2.7 of verified work per attempt — and an agent-CLI auth session that
+  expires mid-run makes that halt class recur by construction on any long series, not just
+  on a git flake.
+
+  `--resume` checks out the existing integration branch instead of creating one, skips
+  every PR whose work it already contains, and re-attempts the rest. **Containment alone
+  is the wrong test**: a PR branch whose implementation committed nothing points at the
+  *same commit* as the integration branch, which `merge-base --is-ancestor` reports as
+  contained — skipping it would silently drop a PR that never landed and still report
+  `completed`. Because the driver always integrates with `merge --no-ff`, a genuinely
+  merged branch is a **strict** ancestor, and that is the signal (`Git.is_merged_into`). A
+  PR branch carrying unmerged commits is a failed attempt: it is deleted and re-attempted
+  from the current integration state rather than built on.
+
+  Two incoherent requests are rejected in pre-flight, before the lock, the seat probe, or
+  any git mutation: `--resume` with `--fresh` (fresh deletes the branch resume continues
+  from), and `--resume` with no integration branch (falling back to a full run would be
+  friendlier but far more expensive when the real cause is a wrong workspace). A first run
+  takes no flag (`interface/drivers/headless.py`, `interface/git.py`, `interface/cli.py`,
+  `interface/run_service.py`, `interface/mcp/server.py`). Serves backlog row T11a.
+
 - **`convoy clean <series.toml>` — a destructive recovery verb for a halted or killed
   run.** In order: discard uncommitted changes to tracked files, delete untracked files
   and directories (ignored files are kept — a local venv survives), check out the base

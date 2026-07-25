@@ -55,6 +55,15 @@ then drop it for the real run.
   branches only; it does **not** discard uncommitted changes or untracked files (see
   "Limits and re-runs"). Off by default: a leftover branch still fails loud exactly as
   without the flag. CLI equivalent: `convoy run --fresh`.
+- `resume` (default `false`) — **the cheap way to recover a halted run.** Continue the
+  existing `integration` branch instead of creating one, skipping every PR whose work it
+  already contains and re-attempting the rest. After a halt that branch holds every PR
+  that gated green, so re-running without this pays a second time for work already on
+  disk. Each skipped PR is recorded as `pr_skipped` with the reason `already integrated
+  before this resume` — distinct from the halt reasons on purpose, since "done" and "never
+  ran" are opposite outcomes. Mutually exclusive with `reset`, and resuming when no
+  `integration` branch exists is a pre-flight problem rather than a silent full run (a
+  first run takes neither flag). CLI equivalent: `convoy run --resume`.
 
 Traps the pre-flight catches (so `dry_run` reports them instead of a half-run):
 `[paths]` that don't resolve to an existing prompts dir or that name missing prompt
