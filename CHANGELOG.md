@@ -13,6 +13,35 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **`convoy clean <series.toml>` — a destructive recovery verb for a halted or killed
+  run.** In order: discard uncommitted changes to tracked files, delete untracked files
+  and directories (ignored files are kept — a local venv survives), check out the base
+  branch, delete the series' integration and PR branches, and remove a stale run lock.
+  `--dry-run` / `-n` prints exactly what that means for this workspace and changes
+  nothing; the preview is built from git's stable porcelain status rather than parsing
+  `git clean`'s prose, so it reads the same under any locale.
+
+  This is deliberately not `run --fresh`. `--fresh` acquires the workspace lock and pays
+  for a seat probe *before* it resets anything, so it cannot clear a lock left by a
+  hard-killed run — the exact situation recovery is needed in. `clean` starts no run: no
+  lock, no probe, no spend. Recovering by hand was otherwise the only option, and one
+  campaign needed it five times (`interface/cli.py`, `interface/git.py`
+  `discard_changes` / `clean_untracked` / `status_porcelain` / `branch_exists`,
+  `interface/workspace_lock.py` `remove_stale_lock` / `lock_path`). Serves backlog row
+  T10a.
+
+- **`convoy run` / `convoy validate` take `--workspace DIR` (`-w`), defaulting to the
+  current directory.** The workspace was implicitly the process working directory, which
+  is not discoverable from `--help` and does not survive being run from anywhere else —
+  four separate reports across four campaigns hit it. The default is unchanged, so every
+  existing invocation behaves identically; the flag makes the coupling explicit and lets
+  either verb target a tree the shell is not sitting in, mirroring the `workspace`
+  argument the MCP tool always took explicitly. A path that is not an existing directory
+  is now a located usage error instead of a confusing git or filesystem failure later
+  (`interface/cli.py`). Serves backlog row T16a.
+
 ## [0.3.0] - 2026-07-25
 
 ### Added

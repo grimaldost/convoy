@@ -174,8 +174,8 @@ The two surfaces expose one engine; the mapping is mechanical.
 
 | CLI | MCP tool | Notes |
 |---|---|---|
-| `convoy run SERIES` (workspace = cwd) | `convoy_run(series_file, workspace)` | the CLI takes the workspace from its working directory; the tool takes it explicitly |
-| `convoy validate SERIES` (workspace = cwd) | `convoy_run(..., dry_run=true)` | same pre-flight; neither spawns (seat probe included) nor mutates. Advisories print to stderr / fill the `advisories` key, and change neither the exit code nor `ok`/`outcome` — so `validate` can write to stderr and still exit `0` |
+| `convoy run SERIES [--workspace DIR]` | `convoy_run(series_file, workspace)` | the CLI defaults the workspace to its working directory; `--workspace` makes it explicit, as the tool's argument always was |
+| `convoy validate SERIES [--workspace DIR]` | `convoy_run(..., dry_run=true)` | same pre-flight; neither spawns (seat probe included) nor mutates. Advisories print to stderr / fill the `advisories` key, and change neither the exit code nor `ok`/`outcome` — so `validate` can write to stderr and still exit `0` |
 | `--no-config-isolation` / `CONVOY_NO_CONFIG_ISOLATION` | `config_isolation=false` | polarity inverted; the env escape is read by the CLI entry point only |
 | `--fresh` | `reset=true` | the same `Git.reset_to_base` path |
 | `--quiet` | — | an MCP run is always silent (null reporter); the CLI narrates to stderr by default |

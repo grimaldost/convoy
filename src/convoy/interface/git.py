@@ -89,6 +89,40 @@ class Git:
             if result.returncode != 0 and 'not found' not in result.stderr:
                 raise GitError(result.stderr.strip())
 
+    def status_porcelain(self) -> tuple[str, ...]:
+        """Every non-empty line of ``git status --porcelain`` (empty tuple when clean).
+
+        ``--porcelain`` is git's documented stable machine format, so callers can classify
+        entries by their two-column status code without parsing human prose — untracked
+        paths are the ``??`` lines. Ignored files are excluded, matching ``git clean -fd``.
+        """
+        result = self._run_checked('status', '--porcelain')
+        return tuple(line for line in result.stdout.splitlines() if line.strip())
+
+    def discard_changes(self) -> None:
+        """``git reset --hard`` — discard every modification to TRACKED files.
+
+        Destructive and unrecoverable for uncommitted work. Untracked files are untouched
+        (that is :meth:`clean_untracked`'s job). Needed before checking out another branch
+        after a killed run, whose half-written tracked files would otherwise block or ride
+        along with the checkout.
+        """
+        self._run_checked('reset', '--hard')
+
+    def clean_untracked(self) -> None:
+        """``git clean -fd`` — delete untracked files and directories.
+
+        Destructive and unrecoverable. Ignored files are NOT removed (no ``-x``), so a
+        local venv or editor state survives. Use :meth:`status_porcelain` to enumerate what
+        this would delete before calling it.
+        """
+        self._run_checked('clean', '-fd')
+
+    def branch_exists(self, name: str) -> bool:
+        """Whether a local branch called ``name`` exists."""
+        result = self._run('rev-parse', '--verify', '--quiet', f'refs/heads/{name}')
+        return result.returncode == 0
+
     def merge(self, source: str, into: str) -> None:
         """Check out ``into``, then merge ``source`` into it with a merge commit.
 
