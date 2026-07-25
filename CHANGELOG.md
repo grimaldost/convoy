@@ -13,6 +13,8 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-25
+
 ### Added
 
 - **`convoy_run(detach=true)` — start a run and get a handle back at once.**
