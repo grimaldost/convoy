@@ -13,6 +13,8 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-25
+
 ### Added
 
 - **`convoy run --resume` / `convoy_run(resume=true)` — continue a halted run instead of
