@@ -184,3 +184,43 @@ def test_preflight_collects_across_categories(tmp_path: Path) -> None:
     assert len(report.problems) >= 2
     assert all(problem.kind == 'paths' for problem in report.problems)
     assert not report.clean
+
+
+# --- both advisory producers ---------------------------------------------------------------
+
+
+def test_an_inert_asset_reaches_the_report_without_making_it_unclean(tmp_path: Path) -> None:
+    workspace, prompts, outputs = _dirs(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series = _series(
+        prompts=prompts,
+        outputs=outputs,
+        prs=(PR(id='pr-1', branch='pr-1', prompt='pr1.md', phase='p'),),
+        checks=(
+            Check(name='suite', run='true', blocking=True),
+            Check(name='oracle', run='true', blocking=False, asset=str(tmp_path / 'o.py')),
+        ),
+    )
+
+    report = preflight(series, workspace)
+
+    assert report.problems == ()
+    assert report.clean is True
+    assert [(a.kind, a.where) for a in report.advisories] == [('gate', "[[checks]] 'oracle'")]
+
+
+def test_the_ungated_pr_advisory_stays_first(tmp_path: Path) -> None:
+    """A consumer has been reading advisories[0] as the ungated-PR remark since 0.3.0."""
+    workspace, prompts, outputs = _dirs(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series = _series(
+        prompts=prompts,
+        outputs=outputs,
+        prs=(PR(id='pr-1', branch='pr-1', prompt='pr1.md', phase='p'),),
+        # Non-blocking, so it gates nothing (an ungated PR) AND its asset is inert.
+        checks=(Check(name='oracle', run='true', blocking=False, asset=str(tmp_path / 'o.py')),),
+    )
+
+    report = preflight(series, workspace)
+
+    assert [a.where for a in report.advisories] == ["[[prs]] 'pr-1'", "[[checks]] 'oracle'"]

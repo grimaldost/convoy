@@ -44,7 +44,11 @@ its own). Per-PR governance follows four rules:
   a blocking independent check with no `asset`, an `asset` inside the scored
   workspace, or a missing `asset` **fails closed** (a synthetic failing result; the
   check is not run). See [01-gate.md](01-gate.md). It is empty (and omitted from a
-  round-tripped spec) for any check that does not use it.
+  round-tripped spec) for any check that does not use it. That guard is the field's
+  **only** consumer, so an `asset` on a check that is not both blocking and independent
+  is inert — accepted, round-tripped, and read by nothing. Pre-flight says so with an
+  advisory naming the missing flag, rather than rejecting it: the field changes no
+  behaviour, so the series is unusual rather than invalid.
 - **The gate is series-global by default, and may be scoped by phase.** A check with
   no `phases` runs after **every** PR — the default, so a series that scopes nothing
   behaves as it always did. A check that names `phases` gates only the PRs whose
