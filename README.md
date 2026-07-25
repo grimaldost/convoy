@@ -153,8 +153,9 @@ shelling out:
   resets the workspace to base first (CLI: `--fresh`).
 
 `convoy_run` blocks for the whole series (minutes to hours). For long or
-autonomous runs, use the CLI in a background shell — same engine, and the
-telemetry file is the progress feed. Every argument, the result envelope, cost
+autonomous runs, use the CLI in a background shell — same engine — and poll it
+with `convoy status` / `convoy_status`, which read the ledger and report the
+run's state and economy so far without spending anything. Every argument, the result envelope, cost
 and latency, and when *not* to use convoy:
 [skills/convoy/SKILL.md](skills/convoy/SKILL.md).
 
@@ -165,6 +166,7 @@ and latency, and when *not* to use convoy:
 | `convoy validate <series.toml>` | Free preflight (no git mutation, no spawn) | `--workspace <dir>` / `-w` (default: cwd) |
 | `convoy run <series.toml>` | Run the series against the workspace | `--workspace <dir>` / `-w` (default: cwd), `--json` (print the run summary to stdout as one JSON object), `--resume` (continue the integration branch, skipping PRs already merged into it), `--fresh` (reset to base, delete prior series branches first), `--quiet`, `--no-config-isolation` |
 | `convoy clean <series.toml>` | **Destructive** recovery after a halted or killed run: discard uncommitted changes, delete untracked files, return to base, delete the series' branches, remove a stale run lock | `--dry-run` / `-n` (print the plan, change nothing), `--workspace <dir>` / `-w` |
+| `convoy status <series.toml>` | Report a run's state and economy so far — including one still in progress. Reads the ledger only; spends nothing | `--run-id` (default: the latest run), `--json` |
 | `convoy init <dir>` | Scaffold the starter series | |
 
 Scored spawns run under **credential-only config isolation** by default: the

@@ -118,11 +118,18 @@ console text (`interface/mcp/server.py`):
 - **`convoy_init(directory)`** — scaffold the runnable starter series and
   return `{ok, created, series_file, workspace, next}`, naming the paths to
   hand straight to `convoy_run`.
+- **`convoy_status(series_file, run_id='')`** — report a run's state and
+  economy so far from the ledger alone, including a run still in progress and a
+  run this server never started. Spends nothing, holds no state between calls,
+  never touches the workspace.
 
 Each tool offloads its blocking work with `asyncio.to_thread`, which keeps the
-server's event loop responsive — but the call itself still blocks until the run
-completes. There is no job handle and no progress stream; a real run is minutes
-to hours, and the caller waits for the envelope.
+server's event loop responsive — but `convoy_run` itself still blocks until the
+run completes. There is no job handle and no progress stream; a real run is
+minutes to hours. The supported pattern for a long run is therefore the CLI in a
+background shell, polled with `convoy_status`, which answers from the ledger and
+so does not need the run to be one this process started. A detached launch that
+returns a handle immediately is still unbuilt (backlog T14c).
 
 **The result envelope** is built by `summarize_run`: it reads the on-disk
 `spawns.jsonl`, keeps only the lines tagged with this run's `run_id` (the file
@@ -193,6 +200,7 @@ The two surfaces expose one engine; the mapping is mechanical.
 | `--fresh` | `reset=true` | the same `Git.reset_to_base` path |
 | `--resume` | `resume=true` | continue the existing integration branch, skipping PRs already merged into it; rejected together with `--fresh`/`reset` |
 | `--quiet` | — | an MCP run is always silent (null reporter); the CLI narrates to stderr by default |
+| `convoy status SERIES [--run-id ID]` | `convoy_status(series_file, run_id)` | the same ledger read; `--json` gives the CLI the tool's envelope verbatim |
 | `convoy init [DIR]` | `convoy_init(directory)` | the same scaffold; the tool result names the follow-up `convoy_run` arguments |
 
 | CLI exit code | MCP result |

@@ -23,7 +23,7 @@ from convoy.interface.git import Git, GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
 from convoy.interface.run_service import PreflightError, run_series_headless
-from convoy.interface.run_summary import error_kind, summarize_run
+from convoy.interface.run_summary import error_kind, status_of, summarize_run
 from convoy.interface.scaffold import ScaffoldError, scaffold
 from convoy.interface.streams import harden_std_streams
 from convoy.interface.workspace_lock import WorkspaceBusyError, lock_path, remove_stale_lock
@@ -348,6 +348,57 @@ def clean(
     if removed_lock:
         typer.echo('removed the run lock')
     typer.echo(f'clean: {target} is on {series.branches.base!r}')
+
+
+@app.command()
+def status(
+    series_file: Path,
+    run_id: Annotated[
+        str,
+        typer.Option(
+            '--run-id',
+            help='Which run to report. Defaults to the most recent one in the ledger.',
+        ),
+    ] = '',
+    json_summary: Annotated[
+        bool, typer.Option('--json', help='Print the envelope as one JSON object.')
+    ] = False,
+) -> None:
+    """Report a run's state and economy so far — including a run still in progress.
+
+    Reads only the append-only ledger under ``[paths].outputs``, so it works for a run this
+    process never started: the supported long-run pattern is ``convoy run`` in a background
+    shell, and this is how you ask that run how it is doing. It spends nothing and never
+    touches the workspace, so polling is cheap and safe.
+
+    ``state`` is the field to read first — ``running`` (no terminal record yet; the economy
+    is a partial running total), ``finished`` (the outcome fields are meaningful), or
+    ``unknown`` (nothing recorded under that id yet, which is not an error). The exit code
+    is ``0`` whenever the status could be read, whatever the run's own outcome was: this
+    verb reports, it does not adopt the run's verdict.
+    """
+    series = _load_or_exit(series_file)
+    envelope = status_of(series, run_id=run_id)
+    if json_summary:
+        typer.echo(json.dumps(envelope))
+        return
+    state = envelope['state']
+    typer.echo(f'{envelope.get("run_id") or "(none)"}: {state}')
+    if state == 'unknown':
+        typer.echo(str(envelope['message']))
+        return
+    economy = envelope['economy']
+    typer.echo(
+        f'  spawns {economy["spawn_count"]}, turns {economy["num_turns"]}, '
+        f'${economy["total_cost_usd"]:.2f}{" (estimated)" if economy["cost_estimated"] else ""}'
+    )
+    if state == 'finished':
+        typer.echo(f'  outcome {envelope["outcome"]}, integrated {envelope["integrated"]}')
+        halt = envelope['halt']
+        if halt:
+            typer.echo(f'  halted at {halt["pr_id"]} (phase {halt["phase"]}, {halt["role"]})')
+            if halt['cap_usd'] is not None:
+                typer.echo(f'    spend ${halt["spend_usd"]:.2f} of ${halt["cap_usd"]:.2f}')
 
 
 @app.command()

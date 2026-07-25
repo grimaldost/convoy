@@ -22,7 +22,7 @@ so far.
 
 ## Leverage order
 
-**T19a, T10a, T16a, T11a (shipped 0.3.0/0.4.0), T13a, T20a, T12b (done) → T14b → T15a → T4a.**
+**T19a, T10a, T16a, T11a (shipped 0.3.0/0.4.0), T13a, T20a, T12b, T14b (done) → T15a → T4a → T14c.**
 
 T19a jumped the order: it was the only row unblocking a *capability* rather than
 recovering cost, and it is what makes an incremental multi-PR series runnable at all.
@@ -47,7 +47,8 @@ pushing the tag is not. Worth mechanizing (T24a).
 | T12b | Self-describing budget halt: halted PR + phase + spend-vs-cap on the terminal record and in `summarize_run`'s envelope; classification field on `spawn_complete`. Today the cap is recorded nowhere and `RunComplete` carries only `run_id/outcome/integrated`. **(consumer-affecting)** | `core/telemetry.py`, `interface/drivers/headless.py:318-323`, `interface/mcp/server.py` | accepted |
 | T13a | Sanitize the gate-check env: strip `VIRTUAL_ENV` (and uv siblings) via `run_with_timeout`'s existing `env` param; `_ENV_STRIP` in `headless_spawn.py:50-61` is the precedent. A benign uv warning on stderr currently displaces the real failure in `detail` and mis-briefs the fix spawn. | `interface/gate_runner.py:54` | accepted |
 | T13b | Stream-robust `detail`: combine bounded tails of stderr *and* stdout instead of stderr-precedence (`gate_runner.py:70-71`). | `interface/gate_runner.py::_red_detail` | watch |
-| T14b | Launch-and-poll: detached launch returning `{run_id, telemetry_path}` + a `convoy_status(run_id)` tool reusing `summarize_run`'s on-disk reconstruction; requires persisting the terminal outcome. **(consumer-affecting)** | `interface/mcp/server.py:144,296,335`, `interface/run_service.py:104` | proposed |
+| T14b | `convoy status` / `convoy_status(series_file, run_id)`: report a run's state and economy from the ledger alone — `running` / `finished` / `unknown` — so the documented long-run pattern (CLI in a background shell) is pollable. A finished outcome is rebuilt from `run_complete` plus the published outcome→exit-code mapping, so no server-side state is held; `run_id` defaults to the latest run. **(consumer-affecting)** | `interface/run_summary.py`, `interface/cli.py`, `interface/mcp/server.py` | accepted |
+| T14c | Detached launch: start a run and return `{run_id, telemetry_path}` immediately instead of blocking for minutes to hours. Split out of T14b, which shipped the polling half — with `convoy_status` in place the remaining work is purely process lifecycle (spawn detached, survive the server exiting, orphan behaviour on Windows vs POSIX), which is a different risk profile and deserves its own change. **(consumer-affecting)** | `interface/mcp/server.py`, `interface/run_service.py` | proposed |
 | T15a | Subcommand context on `GitError` at the `_run_checked` choke point (`git checkout -b <branch>: <stderr>`), enriching every call site at once. | `interface/git.py:43-48` | proposed |
 | T15b | Classify a mid-run git failure as a halt (reuse the infrastructure-halt pattern: `_skip_remaining` + `RunComplete` + distinct outcome) so telemetry doesn't dangle after `run_start`. **(consumer-affecting)** | `interface/drivers/headless.py:235-243`, `core/telemetry.py` | watch |
 | T15c | Bounded auto-retry of the branch-setup step before halting (observed environmental `checkout -b` flake). | `interface/drivers/headless.py` | watch |

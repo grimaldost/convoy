@@ -21,6 +21,7 @@ import convoy.interface.cli as cli
 from convoy.core.governance import GovernanceError
 from convoy.interface.drivers.headless import (
     EXIT_BLOCKED,
+    EXIT_BUDGET,
     EXIT_OK,
     EXIT_USAGE,
     RunOutcome,
@@ -907,3 +908,229 @@ def test_the_json_envelope_matches_the_mcp_tools_for_the_same_run(
         outcome=RunOutcome('completed', True, EXIT_OK),
     )
     assert from_cli == from_module
+
+
+# --- convoy status ------------------------------------------------------------------------
+#
+# Reads the ledger only, so it reports on a run this process never started -- which is the
+# point: the supported long-run pattern is `convoy run` in a background shell, and until
+# now nothing could ask that run how it was doing.
+
+
+def _ledger(outputs: Path, lines: list[dict[str, object]]) -> None:
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / 'spawns.jsonl').write_text(
+        '\n'.join(json.dumps(line) for line in lines) + '\n', encoding='utf-8'
+    )
+
+
+def _spawn_line(run_id: str, pr_id: str, cost: float) -> dict[str, object]:
+    return {
+        'schema_version': 1,
+        'event': 'spawn_complete',
+        'run_id': run_id,
+        'pr_id': pr_id,
+        'role': 'implementation',
+        'exit_code': 0,
+        'input_tokens': 10,
+        'output_tokens': 2,
+        'num_turns': 4,
+        'duration_s': 1.0,
+        'cost_usd': cost,
+        'effective_model': 'claude-haiku-4-5',
+        'classification': 'ok',
+    }
+
+
+def _status_series(tmp_path: Path) -> tuple[Path, Path]:
+    """A series file plus its outputs dir."""
+    _, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    return series_file, outputs
+
+
+def test_status_reports_a_run_still_in_progress(tmp_path: Path) -> None:
+    """No run_complete line yet: terminal fields are null, the economy is a running total."""
+    series_file, outputs = _status_series(tmp_path)
+    _ledger(
+        outputs,
+        [
+            {'schema_version': 1, 'event': 'run_start', 'run_id': 'r1', 'series_id': 'cli-test'},
+            _spawn_line('r1', 'pr-1', 0.4),
+        ],
+    )
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '--json'])
+    assert result.exit_code == EXIT_OK
+
+    payload = json.loads(result.stdout.strip())
+    assert payload['state'] == 'running'
+    assert payload['outcome'] is None
+    assert payload['exit_code'] is None
+    assert payload['integrated'] is None
+    assert payload['ok'] is False
+    # The partial total is the useful thing to watch while it runs.
+    assert payload['economy']['total_cost_usd'] == 0.4
+    assert payload['economy']['spawn_count'] == 1
+
+
+def test_status_reports_a_finished_run_with_its_halt(tmp_path: Path) -> None:
+    series_file, outputs = _status_series(tmp_path)
+    _ledger(
+        outputs,
+        [
+            {'schema_version': 1, 'event': 'run_start', 'run_id': 'r1', 'series_id': 'cli-test'},
+            _spawn_line('r1', 'pr-1', 1.5),
+            {
+                'schema_version': 1,
+                'event': 'run_complete',
+                'run_id': 'r1',
+                'outcome': 'budget',
+                'integrated': False,
+                'halt': {
+                    'pr_id': 'pr-1',
+                    'phase': 'core',
+                    'role': 'implementation',
+                    'spend_usd': 1.5,
+                    'cap_usd': 1.0,
+                },
+            },
+        ],
+    )
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '--json'])
+    assert result.exit_code == EXIT_OK
+
+    payload = json.loads(result.stdout.strip())
+    assert payload['state'] == 'finished'
+    assert payload['outcome'] == 'budget'
+    # Rebuilt from the outcome by the published mapping -- no live RunOutcome existed.
+    assert payload['exit_code'] == EXIT_BUDGET
+    assert payload['integrated'] is False
+    assert payload['halt']['cap_usd'] == 1.0
+
+
+def test_status_exit_code_does_not_adopt_the_runs_verdict(tmp_path: Path) -> None:
+    """Reporting a blocked run is a successful report, not a blocked status command."""
+    series_file, outputs = _status_series(tmp_path)
+    _ledger(
+        outputs,
+        [
+            {
+                'schema_version': 1,
+                'event': 'run_complete',
+                'run_id': 'r1',
+                'outcome': 'blocked',
+                'integrated': False,
+                'halt': {
+                    'pr_id': 'pr-1',
+                    'phase': 'core',
+                    'role': 'gate',
+                    'spend_usd': None,
+                    'cap_usd': None,
+                },
+            }
+        ],
+    )
+    result = runner.invoke(cli.app, ['status', str(series_file), '--json'])
+    assert result.exit_code == EXIT_OK
+    assert json.loads(result.stdout.strip())['outcome'] == 'blocked'
+
+
+def test_status_defaults_to_the_most_recent_run(tmp_path: Path) -> None:
+    """Run ids sort lexicographically by start time, which is what makes 'latest' answerable."""
+    series_file, outputs = _status_series(tmp_path)
+    _ledger(
+        outputs,
+        [
+            _spawn_line('20260101T000000Z-aa', 'pr-1', 0.1),
+            {
+                'schema_version': 1,
+                'event': 'run_complete',
+                'run_id': '20260101T000000Z-aa',
+                'outcome': 'completed',
+                'integrated': True,
+                'halt': None,
+            },
+            _spawn_line('20260725T120000Z-bb', 'pr-1', 0.9),
+        ],
+    )
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '--json'])
+    payload = json.loads(result.stdout.strip())
+    assert payload['run_id'] == '20260725T120000Z-bb'
+    assert payload['state'] == 'running'
+    # The older run's economy must not leak into the newer run's totals.
+    assert payload['economy']['total_cost_usd'] == 0.9
+
+
+def test_status_can_target_an_older_run_explicitly(tmp_path: Path) -> None:
+    series_file, outputs = _status_series(tmp_path)
+    _ledger(
+        outputs,
+        [
+            _spawn_line('20260101T000000Z-aa', 'pr-1', 0.1),
+            {
+                'schema_version': 1,
+                'event': 'run_complete',
+                'run_id': '20260101T000000Z-aa',
+                'outcome': 'completed',
+                'integrated': True,
+                'halt': None,
+            },
+            _spawn_line('20260725T120000Z-bb', 'pr-1', 0.9),
+        ],
+    )
+
+    result = runner.invoke(
+        cli.app, ['status', str(series_file), '--run-id', '20260101T000000Z-aa', '--json']
+    )
+    payload = json.loads(result.stdout.strip())
+    assert payload['state'] == 'finished'
+    assert payload['ok'] is True
+    assert payload['economy']['total_cost_usd'] == 0.1
+
+
+def test_status_on_an_empty_ledger_is_unknown_not_an_error(tmp_path: Path) -> None:
+    """A run that has not written its first line yet is a legitimate state to observe."""
+    series_file, _ = _status_series(tmp_path)
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '--json'])
+    assert result.exit_code == EXIT_OK
+
+    payload = json.loads(result.stdout.strip())
+    assert payload['state'] == 'unknown'
+    assert payload['ok'] is False
+    assert 'no run recorded' in payload['message']
+
+
+def test_status_human_output_names_the_halt(tmp_path: Path) -> None:
+    series_file, outputs = _status_series(tmp_path)
+    _ledger(
+        outputs,
+        [
+            _spawn_line('r1', 'pr-1', 1.5),
+            {
+                'schema_version': 1,
+                'event': 'run_complete',
+                'run_id': 'r1',
+                'outcome': 'budget',
+                'integrated': False,
+                'halt': {
+                    'pr_id': 'pr-1',
+                    'phase': 'core',
+                    'role': 'implementation',
+                    'spend_usd': 1.5,
+                    'cap_usd': 1.0,
+                },
+            },
+        ],
+    )
+
+    result = runner.invoke(cli.app, ['status', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert 'finished' in result.output
+    assert 'halted at pr-1' in result.output
+    assert '$1.50 of $1.00' in result.output
