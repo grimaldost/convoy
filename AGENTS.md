@@ -26,13 +26,17 @@ diverge, code wins — and the divergence is a bug to fix in the same change.
 ## Commands
 
 ```
+uv lock --check                                                       # lockfile current
 uv sync                                                               # install deps
 uv run ruff check src tests && uv run ruff format --check src tests   # lint + format
 uv run ty check src                                                   # type check
 uv run pytest                                                         # tests
 ```
 
-All four must pass before a PR is ready; CI runs the same set.
+All must pass before a PR is ready; CI runs the same set, **in this order**. The
+order is load-bearing at the top: `uv lock --check` reports a stale lockfile,
+while `uv sync` (and every later `uv run`) silently repairs one — so run it
+after, and it can only ever say yes.
 
 ## Architecture
 

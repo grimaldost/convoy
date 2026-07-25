@@ -50,12 +50,29 @@ Cadence: cut a release after each backlog build round (a batch of
 
 1. Move `[Unreleased]` into a new `## [0.x.y] - <date>` section in
    `CHANGELOG.md`.
-2. Bump the version in all THREE locked locations — `pyproject.toml`,
-   `.claude-plugin/plugin.json`, and `__version__` in `src/convoy/__init__.py`
-   (`.claude-plugin/marketplace.json` carries no version field).
-   `tests/test_manifest.py::test_versions_are_locked` asserts the three agree, so a
-   missed one fails the gate instead of shipping a split-brain version.
-3. Tag `v0.x.y` and push the tag.
+2. Bump the version in all FOUR locations. Three are hand-edited —
+   `pyproject.toml`, `.claude-plugin/plugin.json`, and `__version__` in
+   `src/convoy/__init__.py` (`.claude-plugin/marketplace.json` carries no version
+   field) — and `tests/test_manifest.py::test_versions_are_locked` asserts they
+   agree, so a missed one fails the gate instead of shipping a split-brain version.
+   The fourth is **`uv.lock`**, updated by running `uv sync` (or `uv lock`). It is
+   named here because it was named nowhere: it recorded `convoy-engine 0.1.1`
+   through the whole of `0.2.0`. No test can guard it — `uv run` re-locks before it
+   runs pytest, so the file is repaired before a test could read it — which is why
+   CI runs `uv lock --check` ahead of every step that would rewrite it.
+3. Tag `v0.x.y` on the **release PR's merge commit**, never `main`'s tip (the tip
+   may already carry post-release work), and push the tag. Shape the message like
+   the existing tags: `convoy 0.x.y`, a blank line, then what it serves and which
+   parts are consumer-affecting.
+
+**Why the tag is the step that matters.** The marketplace serves tags, so an
+untagged release is invisible to every installed consumer no matter how correct
+the merge was. That is not hypothetical: `0.2.0` was bumped, changelogged and
+merged while consumers went on being served `0.1.2` for ten days. The mechanized
+half of this checklist held and the unmechanized half did not, which is why the
+`release-tag` workflow now checks daily that `main`'s version has a matching tag —
+scheduled rather than push-triggered, since the tag is created *after* the merge
+and a push gate would fail every release by construction.
 
 ## The feedback loop
 

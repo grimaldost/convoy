@@ -12,6 +12,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.14'
+      # Before anything that would rewrite it. uv.lock carries the package version, and it
+      # recorded 0.1.1 through the whole of 0.2.0 because `uv sync` was not part of the
+      # documented cut. A test cannot catch this: `uv run` re-locks before it runs pytest,
+      # so the file is already repaired by the time a test could read it. `--check` fails
+      # on a stale lock instead of fixing it, which is the whole point.
+      - run: uv lock --check
       - run: uv sync
       - run: uv run ruff check src tests
       - run: uv run ruff format --check src tests

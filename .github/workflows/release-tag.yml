@@ -1,0 +1,35 @@
+name: release-tag
+
+# The tag is the unmechanized half of the release. `test_versions_are_locked` gates the
+# version fields agreeing, so a missed bump fails the gate — but nothing gated the tag
+# itself existing, and the marketplace serves tags. 0.2.0 was bumped, changelogged and
+# merged while installed consumers went on being served 0.1.2 for ten days.
+#
+# Scheduled rather than push-triggered, deliberately. The tag is created AFTER the release
+# PR merges, so a push gate would fail every release by construction and leave that commit
+# permanently red even once tagged — an alarm that is always wrong at first is an alarm
+# people learn to ignore. A scheduled run re-evaluates, so the alarm clears by itself the
+# next day; workflow_dispatch is there to clear it immediately.
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  tagged:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0 # full history, so the tags come with it
+      - name: main's version has a matching tag
+        run: |
+          version=$(python3 -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            echo "main is at $version and v$version is tagged."
+          else
+            echo "::error::main is at version $version with no v$version tag. The marketplace serves tags, so every change since the last tag is invisible to installed consumers. Tag the release PR's MERGE commit (never main's tip): git tag -a v$version <merge-commit> && git push origin v$version"
+            exit 1
+          fi
