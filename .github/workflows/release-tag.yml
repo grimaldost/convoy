@@ -1,9 +1,15 @@
 name: release-tag
 
-# The tag is the unmechanized half of the release. `test_versions_are_locked` gates the
-# version fields agreeing, so a missed bump fails the gate — but nothing gated the tag
-# itself existing, and the marketplace serves tags. 0.2.0 was bumped, changelogged and
-# merged while installed consumers went on being served 0.1.2 for ten days.
+# The two artifacts a release produces that no test can see: the tag and the release page.
+# `test_versions_are_locked` gates the version fields agreeing, so a missed bump fails the
+# gate — but nothing gated either of these existing.
+#
+# The tag is the one with functional weight: 0.2.0 was bumped, changelogged and merged while
+# installed consumers went on being served 0.1.2 for ten days. The release page is the one
+# with public weight, and it drifted the same way and further — every version from 0.2.0
+# through 0.6.0 carried a tag and no release, so the repository's own front page announced
+# 0.1.2 for six versions. Mechanizing only the first would have left the second to recur,
+# which is the whole argument this workflow exists to settle.
 #
 # Scheduled rather than push-triggered, deliberately. The tag is created AFTER the release
 # PR merges, so a push gate would fail every release by construction and leave that commit
@@ -24,12 +30,27 @@ jobs:
         with:
           ref: main
           fetch-depth: 0 # full history, so the tags come with it
-      - name: main's version has a matching tag
+      - name: main's version is tagged and published
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           version=$(python3 -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          missing=0
+
           if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
             echo "main is at $version and v$version is tagged."
           else
             echo "::error::main is at version $version with no v$version tag. The marketplace serves tags, so every change since the last tag is invisible to installed consumers. Tag the release PR's MERGE commit (never main's tip): git tag -a v$version <merge-commit> && git push origin v$version"
-            exit 1
+            missing=1
           fi
+
+          # Checked separately from the tag: a tag with no release page is the exact state
+          # 0.2.0 through 0.6.0 sat in, so one check passing must not vouch for the other.
+          if gh release view "v$version" > /dev/null 2>&1; then
+            echo "v$version has a release page."
+          else
+            echo "::error::v$version has no GitHub release, so the repository front page still advertises whatever the last published version was. Publish it from the CHANGELOG section for this version: gh release create v$version --verify-tag --title 'convoy $version' --notes-file <section>"
+            missing=1
+          fi
+
+          exit $missing

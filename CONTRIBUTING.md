@@ -64,15 +64,24 @@ Cadence: cut a release after each backlog build round (a batch of
    may already carry post-release work), and push the tag. Shape the message like
    the existing tags: `convoy 0.x.y`, a blank line, then what it serves and which
    parts are consumer-affecting.
+4. Publish the GitHub release for that tag, with the version's `CHANGELOG.md`
+   section as the body:
+   `gh release create v0.x.y --verify-tag --title 'convoy 0.x.y' --notes-file <section>`.
+   The tag is what the marketplace serves; the release is what the repository's own
+   front page advertises, and it drifted independently — every version from `0.2.0`
+   through `0.6.0` had a tag and no release, so the front page said `0.1.2` for six
+   versions.
 
 **Why the tag is the step that matters.** The marketplace serves tags, so an
 untagged release is invisible to every installed consumer no matter how correct
 the merge was. That is not hypothetical: `0.2.0` was bumped, changelogged and
 merged while consumers went on being served `0.1.2` for ten days. The mechanized
 half of this checklist held and the unmechanized half did not, which is why the
-`release-tag` workflow now checks daily that `main`'s version has a matching tag —
-scheduled rather than push-triggered, since the tag is created *after* the merge
-and a push gate would fail every release by construction.
+`release-tag` workflow now checks daily that `main`'s version has **both** a
+matching tag and a published release — scheduled rather than push-triggered, since
+both are created *after* the merge and a push gate would fail every release by
+construction. It checks the two separately: a tag with no release page is exactly
+the state five versions sat in, so one passing must not vouch for the other.
 
 ## The feedback loop
 

@@ -13,6 +13,21 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The release-tag workflow now gates the release page too.** No behaviour change to
+  convoy; this is repo discipline, and a follow-up to T24a's own argument. Mechanizing the
+  tag left its sibling artifact unmechanized: every version from `0.2.0` through `0.6.0`
+  carried a tag and **no GitHub release**, so the repository's front page advertised `0.1.2`
+  for six versions while the tags said otherwise. The six were backfilled from their
+  `CHANGELOG.md` sections.
+
+  The workflow checks the two **separately** rather than treating one as evidence of the
+  other, because a tag with no release page is precisely the state those five versions sat
+  in. `CONTRIBUTING.md` gains publishing the release as step 4, and names which artifact
+  carries which weight: the tag is what the marketplace serves, the release is what the
+  front page advertises.
+
 ## [0.7.0] - 2026-07-25
 
 ### Fixed
