@@ -25,6 +25,7 @@ import pytest
 from test_reporter import RecordingReporter
 
 from convoy.core.gate import CheckResult, decide
+from convoy.core.preflight import Advisory
 from convoy.core.spec import (
     PR,
     Branches,
@@ -1645,3 +1646,98 @@ def test_a_swept_fix_commit_names_the_work_it_repairs(harness: Harness) -> None:
 
     assert outcome == RunOutcome('completed', True, EXIT_OK)
     assert 'pr-1-fix-1: Implement the thing.' in _log_subjects(harness.repo, 'integration')
+
+
+# --- advisories on the run_start line -----------------------------------------------------
+#
+# They ride the terminal-of-the-beginning line for the same reason `halt` rides
+# `run_complete`: it keeps the fact reconstructible from the ledger alone, so every
+# consumer of a run sees it without the value being threaded through control flow.
+
+
+def _advisory(pr_id: str = 'pr-1') -> Advisory:
+    return Advisory(
+        kind='gate',
+        where=f'[[prs]] {pr_id!r}',
+        message='no blocking check gates this phase, so this PR integrates unverified',
+    )
+
+
+def test_the_run_start_line_carries_the_advisories(harness: Harness) -> None:
+    series = _one_pr_series(harness.series)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-advisory',
+        advisories=[_advisory()],
+    )
+
+    starts = _events_of(_read_events(harness.outputs), 'run_start')
+    assert starts[0]['advisories'] == [
+        {
+            'kind': 'gate',
+            'where': "[[prs]] 'pr-1'",
+            'message': 'no blocking check gates this phase, so this PR integrates unverified',
+        }
+    ]
+
+
+def test_an_ordinary_run_start_line_carries_an_empty_list(harness: Harness) -> None:
+    """Present and empty, not absent — a consumer reads the key unconditionally."""
+    series = _one_pr_series(harness.series)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-quiet',
+    )
+
+    starts = _events_of(_read_events(harness.outputs), 'run_start')
+    assert starts[0]['advisories'] == []
+
+
+def test_the_reporter_narrates_advisories_right_after_the_run_header(harness: Harness) -> None:
+    """The operator whose run is about to integrate it is the one who needs to hear it."""
+    series = _one_pr_series(harness.series)
+    rec = RecordingReporter()
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-narrate',
+        reporter=rec,
+        advisories=[_advisory()],
+    )
+
+    assert rec.names()[:2] == ['run_start', 'advisories']
+
+
+def test_a_quiet_run_does_not_fire_the_advisory_hook(harness: Harness) -> None:
+    series = _one_pr_series(harness.series)
+    rec = RecordingReporter()
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-narrate-quiet',
+        reporter=rec,
+    )
+
+    assert 'advisories' not in rec.names()

@@ -23,11 +23,37 @@ _EVENT_TAGS: dict[type, str] = {}
 
 
 @dataclass(frozen=True)
+class AdvisoryLine:
+    """One pre-flight advisory inside a ``run_start`` event — not itself an event.
+
+    A plain nested record, like :class:`GateCheckLine` and :class:`HaltDetail`: no
+    ``schema_version`` / ``event`` tag of its own. Deliberately telemetry's own type rather
+    than ``core.preflight.Advisory``, so the wire model stays independent of the pre-flight
+    model — but it serializes to the same ``{kind, where, message}`` object the dry-run
+    envelope already returns, because a consumer meeting an advisory on the run path and on
+    the dry-run path should not have to parse two shapes for one idea.
+    """
+
+    kind: str
+    where: str
+    message: str
+
+
+@dataclass(frozen=True)
 class RunStart:
-    """Emitted once per ``convoy run``, grouping the invocation's events."""
+    """Emitted once per ``convoy run``, grouping the invocation's events.
+
+    ``advisories`` carries what pre-flight said that did not stop the run — empty on the
+    ordinary case. They ride the terminal-of-the-beginning line for the same reason
+    ``halt`` rides ``run_complete``: it keeps the fact reconstructible from the ledger
+    alone, so every consumer of a run sees it without the value being threaded through the
+    engine's control flow. Before this they were computed and dropped, which meant the
+    ungated-PR advisory said nothing on the run that actually integrated the unverified PR.
+    """
 
     run_id: str
     series_id: str
+    advisories: tuple[AdvisoryLine, ...] = ()
 
 
 @dataclass(frozen=True)

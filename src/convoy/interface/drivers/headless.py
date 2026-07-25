@@ -39,6 +39,7 @@ from convoy.core.governance import effective_governance, resolve_spawn
 from convoy.core.preflight import Advisory, Problem
 from convoy.core.spec import PR, Series
 from convoy.core.telemetry import (
+    AdvisoryLine,
     GateCheckLine,
     GateComplete,
     HaltDetail,
@@ -276,6 +277,7 @@ def run_series(
     run_id: str,
     reporter: Reporter | None = None,
     resume: bool = False,
+    advisories: Sequence[Advisory] = (),
 ) -> RunOutcome:
     """Run ``series`` end-to-end in ``workspace``, returning its outcome.
 
@@ -305,8 +307,20 @@ def run_series(
     caller verifies the integration branch exists before the run starts.
     """
     reporter = reporter if reporter is not None else NullReporter()
-    telemetry.write(RunStart(run_id=run_id, series_id=series.id))
+    # Recorded and narrated at the top, before anything is staged. The caller pre-flighted;
+    # this run carries what that said so a reader of the ledger — or of stderr — sees it
+    # without having to have run `convoy validate` separately first.
+    telemetry.write(
+        RunStart(
+            run_id=run_id,
+            series_id=series.id,
+            advisories=tuple(
+                AdvisoryLine(kind=a.kind, where=a.where, message=a.message) for a in advisories
+            ),
+        )
+    )
     reporter.run_start(series.id, run_id, len(series.prs))
+    reporter.advisories(advisories)
 
     # Stage on base, then create the integration branch from it. v1 requires a CLEAN
     # base: this creates the integration branch (and each PR branch below) with

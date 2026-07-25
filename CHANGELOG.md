@@ -13,6 +13,37 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A pre-flight advisory now reaches the run that provokes it.** *(consumer-affecting: a
+  new `advisories` field on the `run_start` telemetry event, and a new `advisories` key on
+  the run envelope both surfaces return.)* `preflight` returns `problems` **and**
+  `advisories`, but the run path kept only the problems, so the only things that ever
+  surfaced an advisory were `convoy validate` and `convoy_run(dry_run=true)`. ADR-0008's
+  ungated-PR advisory therefore said nothing on the run that actually integrated the
+  unverified PR — its stated rationale, "the advisory makes the consequence visible without
+  taking the decision", held only for an operator who happened to validate first, which is
+  not the operator with the problem.
+
+  Advisories now ride the **`run_start`** line, the same way `halt` rides `run_complete`
+  rather than being threaded through `RunOutcome`: the fact stays reconstructible from the
+  ledger alone, so one mechanism serves the CLI reporter (a line under the run header), the
+  run envelope both surfaces return, and `convoy_status` — which reports a run this process
+  never started, and so could not have pre-flighted it. It also makes the channel's firing
+  rate measurable for the first time, which matters for any future producer whose
+  calibration would need revisiting on evidence.
+
+  `AdvisoryLine` is telemetry's own nested record, like `GateCheckLine` and `HaltDetail`, so
+  the wire model stays independent of the pre-flight model — but it serializes to the same
+  `{kind, where, message}` object the dry-run envelope already returns, because meeting one
+  idea in two shapes is a cost paid by every consumer. The envelope key is always present
+  and empty when there is nothing to say, matching the guarantee dry-run already gave.
+
+  Advice still never becomes failure: only `problems` gates a run, and a test pins that
+  carrying advisories did not change it (`core/telemetry.py`, `core/preflight.py`,
+  `interface/reporter.py`, `interface/drivers/headless.py`, `interface/run_service.py`,
+  `interface/run_summary.py`). Serves backlog row T25a.
+
 ### Changed
 
 - **A dead seat now says what is wrong before it says everything else.** The seat probe's

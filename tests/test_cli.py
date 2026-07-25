@@ -1261,3 +1261,29 @@ def test_status_treats_a_half_written_result_file_as_absent(tmp_path: Path) -> N
 
     assert result.exit_code == EXIT_OK
     assert json.loads(result.stdout.strip())['state'] == 'running'
+
+
+def test_status_reports_the_runs_advisories(tmp_path: Path) -> None:
+    """A run this process never started still reports what its pre-flight said."""
+    series_file, outputs = _status_series(tmp_path)
+    _ledger(
+        outputs,
+        [
+            {
+                'schema_version': 1,
+                'event': 'run_start',
+                'run_id': 'r1',
+                'series_id': 'cli-test',
+                'advisories': [
+                    {'kind': 'gate', 'where': "[[prs]] 'pr-1'", 'message': 'integrates unverified'}
+                ],
+            },
+            _spawn_line('r1', 'pr-1', 0.2),
+        ],
+    )
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '--json'])
+
+    assert result.exit_code == EXIT_OK
+    payload = json.loads(result.stdout.strip())
+    assert [a['kind'] for a in payload['advisories']] == ['gate']

@@ -56,9 +56,11 @@ class Advisory:
 class PreflightReport:
     """The whole pre-flight verdict: blocking ``problems`` plus non-blocking ``advisories``.
 
-    Only ``problems`` decide whether the series runs. Advisories are reported and ignored
-    by the run path — they exist so a series can be *unusual* (a PR no check gates) without
-    being *invalid*.
+    Only ``problems`` decide whether the series runs — advisories exist so a series can be
+    *unusual* (a PR no check gates) without being *invalid*. They are reported on every
+    path, the run included: an advisory the run does not carry is one the operator meets
+    only if they happened to validate first, which is not the operator with the problem.
+    On a run they ride the ``run_start`` telemetry line.
     """
 
     problems: tuple[Problem, ...] = ()

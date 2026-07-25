@@ -34,7 +34,7 @@ from convoy.interface.detached import launch_detached
 from convoy.interface.drivers.headless import make_run_id
 from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
-from convoy.interface.run_service import PreflightError, run_series_headless, start_problems
+from convoy.interface.run_service import PreflightError, run_series_headless, start_report
 from convoy.interface.run_summary import error_kind, status_of, summarize_run
 from convoy.interface.scaffold import ScaffoldError, scaffold
 from convoy.interface.workspace_lock import WorkspaceBusyError
@@ -60,7 +60,9 @@ def _detached_impl(
     the running process (the seat probe, the workspace lock, git) is left to the child, and
     lands in its result file; see :func:`~convoy.interface.run_summary.detached_result`.
     """
-    problems = start_problems(series, workspace, run_id=run_id, fresh=reset, resume=resume)
+    # Only the blocking half gates a launch; the child re-runs pre-flight and records the
+    # advisories on its own run_start line, so reporting them here too would double them.
+    problems = start_report(series, workspace, run_id=run_id, fresh=reset, resume=resume).problems
     if problems:
         return {
             'ok': False,
