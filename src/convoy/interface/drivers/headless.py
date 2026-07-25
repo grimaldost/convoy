@@ -120,6 +120,45 @@ def _fix_brief(original_brief: str, verdict: GateVerdict) -> str:
     return '\n'.join(lines)
 
 
+# Git's own tooling assumes a short subject: ``--oneline``, ``format:%s``, and the
+# 72-column convention every reviewer's terminal is sized for. The whole subject is
+# budgeted, not just the summary, since the id prefix spends part of it. Below
+# ``_MIN_SUMMARY`` characters a cut sentence carries no information, so the summary is
+# dropped rather than shown as a stub.
+_SUBJECT_BUDGET = 72
+_MIN_SUMMARY = 20
+_ELLIPSIS = '...'
+
+
+def _commit_subject(prefix: str, brief: str) -> str:
+    """``<prefix>: <the brief's opening line>``, or bare ``prefix`` when there is none.
+
+    The sweep after each spawn commits whatever the agent left uncommitted, so this text
+    becomes the message of record in the integration branch's history. It used to be the
+    bare PR id, which made ``git log --oneline`` a list of opaque identifiers — and the id
+    is already on the branch name, so it was the one thing the reader could get elsewhere.
+
+    A ``PR`` carries no title, so the prompt's own opening line is the closest thing to a
+    human title the series holds. Leading ``#`` marks are stripped, since a prompt written
+    as markdown opens with a heading. A line with no alphanumeric character at all is not a
+    title (a ``---`` frontmatter fence, a code fence) and falls back to the bare id, as does
+    an empty brief — so this never invents a subject where the prompt offers none.
+
+    A long opening line is cut at a word boundary rather than dropped: convoy's own starter
+    prompt opens with an 85-character sentence, and most of a real subject beats none. The
+    id stays the prefix either way, so anything matching on it by prefix is unaffected.
+    """
+    summary = next((line for line in map(str.strip, brief.splitlines()) if line), '')
+    summary = summary.lstrip('#').strip()
+    budget = _SUBJECT_BUDGET - len(prefix) - len(': ')
+    if not any(char.isalnum() for char in summary) or budget < _MIN_SUMMARY:
+        return prefix
+    if len(summary) > budget:
+        head = summary[: budget - len(_ELLIPSIS)]
+        summary = (head.rsplit(' ', 1)[0] if ' ' in head else head).rstrip() + _ELLIPSIS
+    return f'{prefix}: {summary}'
+
+
 def _gate_event(run_id: str, pr_id: str, attempt: int, verdict: GateVerdict) -> GateComplete:
     """A ``gate_complete`` event for ``verdict``: one line per check plus the derived flags.
 
@@ -362,7 +401,7 @@ def run_series(
             reporter.run_done('budget', False)
             return RunOutcome('budget', False, EXIT_BUDGET)
 
-        git.commit_all(pr.id)
+        git.commit_all(_commit_subject(pr.id, brief))
 
         # Gate the PR, then repair on a blocking red. The re-gate after each fix is
         # the sole arbiter: a red always blocks regardless of provenance, so
@@ -427,7 +466,9 @@ def run_series(
                 reporter.run_done('budget', False)
                 return RunOutcome('budget', False, EXIT_BUDGET)
 
-            git.commit_all(f'{pr.id}-fix-{attempts}')
+            # The PR's own brief, not the fix brief: both commits then name the same work,
+            # and the ``-fix-N`` suffix already says which kind of commit this is.
+            git.commit_all(_commit_subject(f'{pr.id}-fix-{attempts}', brief))
             verdict = decide(gate_runner.run(workspace, pr_checks))
             telemetry.write(_gate_event(run_id, pr.id, attempts, verdict))
             reporter.gate_result(pr.id, attempts, verdict)

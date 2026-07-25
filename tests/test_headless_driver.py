@@ -42,6 +42,7 @@ from convoy.interface.drivers.headless import (
     EXIT_INFRASTRUCTURE,
     EXIT_OK,
     RunOutcome,
+    _commit_subject,
     _fix_brief,
     make_run_id,
     run_series,
@@ -1543,3 +1544,104 @@ def test_every_spawn_line_records_its_classification(harness: Harness) -> None:
         if e['run_id'] == 'run-class'
     ]
     assert [e['classification'] for e in spawns] == ['budget']
+
+
+# --- commit subjects ----------------------------------------------------------------------
+#
+# The sweep after each spawn commits whatever the agent left uncommitted, so its message is
+# the message of record on the integration branch. It used to be the bare PR id, which is
+# also the branch name -- the one thing a reader could already get elsewhere.
+
+
+def _log_subjects(repo: Path, ref: str) -> list[str]:
+    """Every commit subject on ``ref``, newest first."""
+    result = subprocess.run(
+        ['git', 'log', '--pretty=%s', ref],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.splitlines()
+
+
+def test_commit_subject_uses_the_prompts_heading() -> None:
+    subject = _commit_subject('pr-1', '# Wire the queue consumer\n\nDetails follow.\n')
+    assert subject == 'pr-1: Wire the queue consumer'
+
+
+def test_commit_subject_uses_a_prose_opening_line_and_skips_blanks() -> None:
+    subject = _commit_subject('pr-1', '\n\n  Add a retry policy.  \n\nMore text.\n')
+    assert subject == 'pr-1: Add a retry policy.'
+
+
+def test_commit_subject_cuts_a_long_line_at_a_word_boundary() -> None:
+    """convoy's own starter prompt opens with an 85-character sentence."""
+    line = 'Create a file named `greeting.txt` in the repository root containing exactly one line:'
+
+    subject = _commit_subject('pr-1', f'{line}\n\nhello convoy\n')
+
+    assert len(subject) <= 72
+    assert subject.startswith('pr-1: Create a file named ')
+    assert subject.endswith('...')
+    # What survived is a prefix of the original ending on a word boundary, not mid-word.
+    kept = subject[len('pr-1: ') : -len('...')]
+    assert line.startswith(kept)
+    assert line[len(kept)] == ' '
+
+
+def test_commit_subject_falls_back_to_the_bare_id_for_an_empty_brief() -> None:
+    assert _commit_subject('pr-1', '') == 'pr-1'
+    assert _commit_subject('pr-1', '   \n\n\t\n') == 'pr-1'
+
+
+def test_commit_subject_falls_back_when_the_opening_line_is_not_a_title() -> None:
+    """A frontmatter fence or a code fence is punctuation, not a summary."""
+    assert _commit_subject('pr-1', '---\ntitle: something\n---\n') == 'pr-1'
+    assert _commit_subject('pr-1', '```\ncode\n```\n') == 'pr-1'
+    assert _commit_subject('pr-1', '#\n\nbody\n') == 'pr-1'
+
+
+def test_commit_subject_falls_back_when_the_id_leaves_no_room() -> None:
+    """A stub of a sentence carries no information, so it is dropped rather than shown."""
+    long_id = 'pr-' + 'x' * 60
+
+    assert _commit_subject(long_id, 'Add a retry policy.\n') == long_id
+
+
+def test_the_swept_commit_names_the_work_not_just_the_pr_id(harness: Harness) -> None:
+    """End to end: the message on the integration branch carries the prompt's opening line."""
+    series = _one_pr_series(harness.series)  # prompt impl.md: 'Implement the thing.'
+    spawn = MarkerSpawn([ok_result()], markers_for=('marker-1',))
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=spawn,
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-subject',
+    )
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert 'pr-1: Implement the thing.' in _log_subjects(harness.repo, 'integration')
+
+
+def test_a_swept_fix_commit_names_the_work_it_repairs(harness: Harness) -> None:
+    """The PR's own brief, so both commits name the same work; ``-fix-N`` says which is which."""
+    series = _marker_series(harness, max_fix_attempts=2)
+    spawn = FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True)
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=spawn,
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-fix-subject',
+    )
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert 'pr-1-fix-1: Implement the thing.' in _log_subjects(harness.repo, 'integration')
