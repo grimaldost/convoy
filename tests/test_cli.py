@@ -10,6 +10,7 @@ point of the verb is what it does to a dirty working tree, which a stubbed ``Git
 demonstrate. It drives git only — never a spawn.
 """
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from convoy.interface.drivers.headless import (
 from convoy.interface.git import Git, GitError
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.reporter import NullReporter, StderrReporter
+from convoy.interface.run_summary import summarize_run
 from convoy.interface.workspace_lock import lock_path
 
 runner = CliRunner()
@@ -748,3 +750,160 @@ def test_clean_takes_no_lock_and_runs_no_seat_probe(
     result = runner.invoke(cli.app, ['clean', str(series_file), '--workspace', str(workspace)])
     assert result.exit_code == EXIT_OK
     assert not lock_path(workspace).exists()
+
+
+# --- run --json ---------------------------------------------------------------------------
+#
+# The contract is narrow and worth pinning exactly: stdout carries ONE JSON object and
+# nothing else, on every path, and only when asked. A measurement harness parses stdout;
+# anything else there breaks it, and prose-on-failure forces it to special-case the case it
+# most needs to classify.
+
+
+def _stdout_json(result: object) -> dict[str, object]:
+    """Parse the CliRunner result's stdout as a single JSON object."""
+    payload = json.loads(result.stdout.strip())  # type: ignore[attr-defined]
+    assert isinstance(payload, dict)
+    return payload
+
+
+def _fake_completed(monkeypatch: pytest.MonkeyPatch, outputs: Path) -> None:
+    """Stub the engine so it writes a small real ledger and reports completed."""
+
+    def _fake(_series: object, _ws: object, **k: object) -> RunOutcome:
+        outputs.mkdir(parents=True, exist_ok=True)
+        run_id = k['run_id']
+        lines = [
+            {'schema_version': 1, 'event': 'run_start', 'run_id': run_id, 'series_id': 'cli-test'},
+            {
+                'schema_version': 1,
+                'event': 'spawn_complete',
+                'run_id': run_id,
+                'pr_id': 'pr-1',
+                'role': 'implementation',
+                'exit_code': 0,
+                'input_tokens': 10,
+                'output_tokens': 2,
+                'num_turns': 3,
+                'duration_s': 1.5,
+                'cost_usd': 0.25,
+                'effective_model': 'claude-haiku-4-5',
+            },
+        ]
+        (outputs / 'spawns.jsonl').write_text(
+            '\n'.join(json.dumps(line) for line in lines) + '\n', encoding='utf-8'
+        )
+        return RunOutcome('completed', True, EXIT_OK)
+
+    monkeypatch.setattr(cli, 'run_series_headless', _fake)
+
+
+def test_stdout_is_empty_without_the_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default is unchanged: a caller reading only the exit code sees nothing on stdout."""
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+    _fake_completed(monkeypatch, outputs)
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '--quiet'])
+    assert result.exit_code == EXIT_OK
+    assert result.stdout.strip() == ''
+
+
+def test_json_emits_the_run_envelope_on_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+    _fake_completed(monkeypatch, outputs)
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '--json', '--quiet'])
+    assert result.exit_code == EXIT_OK
+
+    payload = _stdout_json(result)
+    assert payload['ok'] is True
+    assert payload['outcome'] == 'completed'
+    assert payload['exit_code'] == EXIT_OK
+    assert payload['series_id'] == 'cli-test'
+    # The folded economy the harness came for -- not the raw ledger.
+    assert payload['economy']['total_cost_usd'] == 0.25
+    assert payload['economy']['spawn_count'] == 1
+    assert payload['economy']['num_turns'] == 3
+    # The full trace is referenced, never inlined.
+    assert payload['telemetry_path'].endswith('spawns.jsonl')
+    assert [pr['pr_id'] for pr in payload['prs']] == ['pr-1']
+    assert payload['prs'][0]['effective_model'] == 'claude-haiku-4-5'
+
+
+def test_json_failure_is_the_same_shape_the_mcp_tool_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A could-not-start run must still be ONE parseable object, not prose."""
+    workspace, prompts, outputs = _layout(tmp_path)
+    # No pr1.md -> a prompt pre-flight problem.
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '--json'])
+    assert result.exit_code == EXIT_USAGE
+
+    payload = _stdout_json(result)
+    assert payload['ok'] is False
+    assert payload['outcome'] == 'usage'
+    assert any(problem['kind'] == 'prompt' for problem in payload['problems'])
+
+
+def test_json_failure_carries_the_error_kind_taxonomy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """error_kind comes from the shared module, so the two surfaces cannot drift."""
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+
+    def _boom(*_a: object, **_k: object) -> RunOutcome:
+        raise GitError('checkout failed')
+
+    monkeypatch.setattr(cli, 'run_series_headless', _boom)
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '--json'])
+    assert result.exit_code == EXIT_USAGE
+
+    payload = _stdout_json(result)
+    assert payload['ok'] is False
+    assert payload['error_kind'] == 'git'
+    assert 'checkout failed' in payload['error']
+
+
+def test_the_json_envelope_matches_the_mcp_tools_for_the_same_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both surfaces fold one ledger through one function, so the totals cannot disagree.
+
+    This is the reason summarize_run was lifted out of the MCP server rather than copied.
+    """
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+    _fake_completed(monkeypatch, outputs)
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '--json', '--quiet'])
+    from_cli = _stdout_json(result)
+
+    from_module = summarize_run(
+        outputs / 'spawns.jsonl',
+        run_id=from_cli['run_id'],
+        series_id='cli-test',
+        outcome=RunOutcome('completed', True, EXIT_OK),
+    )
+    assert from_cli == from_module

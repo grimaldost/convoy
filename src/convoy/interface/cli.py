@@ -1,7 +1,9 @@
 """convoy command-line interface."""
 
+import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -9,6 +11,7 @@ import typer
 
 from convoy import __version__
 from convoy.core.governance import GovernanceError
+from convoy.core.preflight import Problem
 from convoy.core.spec import Series, SpecError, load_series
 from convoy.interface.drivers.headless import (
     EXIT_USAGE,
@@ -20,6 +23,7 @@ from convoy.interface.git import Git, GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
 from convoy.interface.run_service import PreflightError, run_series_headless
+from convoy.interface.run_summary import error_kind, summarize_run
 from convoy.interface.scaffold import ScaffoldError, scaffold
 from convoy.interface.streams import harden_std_streams
 from convoy.interface.workspace_lock import WorkspaceBusyError, lock_path, remove_stale_lock
@@ -109,6 +113,31 @@ def validate(
     typer.echo('ok')
 
 
+def _emit_failure_json(
+    enabled: bool,
+    series_id: str,
+    *,
+    problems: Sequence[Problem] = (),
+    exc: Exception | None = None,
+) -> None:
+    """Under ``--json``, print the could-not-start envelope — the MCP tool's shape exactly.
+
+    A machine consumer needs one parseable object per invocation, not a parseable object
+    on the happy path and prose on stderr otherwise; the failure case is the one it most
+    needs to classify. Reuses ``error_kind`` rather than restating the taxonomy, so the two
+    surfaces cannot drift on what counts as ``spec`` versus ``git`` versus ``busy``.
+    """
+    if not enabled:
+        return
+    envelope: dict[str, object] = {'ok': False, 'outcome': 'usage', 'series_id': series_id}
+    if problems:
+        envelope['problems'] = [asdict(problem) for problem in problems]
+    if exc is not None:
+        envelope['error_kind'] = error_kind(exc)
+        envelope['error'] = str(exc)
+    typer.echo(json.dumps(envelope))
+
+
 def _select_reporter(quiet: bool) -> Reporter:
     """Silence progress with ``--quiet``; otherwise narrate to stderr (stdout stays clean)."""
     return NullReporter() if quiet else StderrReporter()
@@ -163,15 +192,35 @@ def run(
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
+    json_summary: Annotated[
+        bool,
+        typer.Option(
+            '--json',
+            help=(
+                'Print the run summary to stdout as one JSON object — the same envelope '
+                'the MCP tool returns. Off by default so stdout stays empty for a caller '
+                'that only reads the exit code.'
+            ),
+        ),
+    ] = False,
 ) -> None:
-    """Run a convoy series headless."""
+    """Run a convoy series headless.
+
+    With ``--json``, stdout carries exactly one JSON object and nothing else, whatever
+    happened: the run envelope (outcome, exit code, economy totals, the per-PR view, and
+    the ``telemetry_path`` holding the full trace) for a run that executed, or the same
+    ``outcome: "usage"`` shape the MCP tool returns for a run that could not start.
+    Progress narration is on stderr either way, so it never contaminates the object.
+    The exit code is unchanged — ``--json`` adds output, it does not replace the contract.
+    """
     series = _load_or_exit(series_file)
     target = _workspace_or_exit(workspace)
+    run_id = make_run_id()
     try:
         outcome = run_series_headless(
             series,
             target,
-            run_id=make_run_id(),
+            run_id=run_id,
             config_isolation=not _isolation_disabled(os.environ, no_config_isolation),
             reporter=_select_reporter(quiet),
             fresh=fresh,
@@ -179,18 +228,35 @@ def run(
         )
     except PreflightError as exc:
         # A misconfigured series fails fast and whole, before any git mutation or spawn.
+        _emit_failure_json(json_summary, series.id, problems=exc.problems)
         typer.echo(format_problems(exc.problems), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
     except WorkspaceBusyError as exc:
         # Another run already holds the workspace lock — fail loud, not a traceback.
+        _emit_failure_json(json_summary, series.id, exc=exc)
         typer.echo(str(exc), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
     except (GovernanceError, GitError, OSError) as exc:
         # A resolvable-only-at-runtime misconfiguration, or a git / filesystem failure, must
         # not escape as a traceback and must not collide with EXIT_BLOCKED — map to EXIT_USAGE.
+        _emit_failure_json(json_summary, series.id, exc=exc)
         typer.echo(str(exc), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
 
+    if json_summary:
+        # The same fold the MCP tool returns, from the same module — so the two surfaces
+        # can never report different totals for one run, and a CLI-driven consumer stops
+        # re-implementing the per-spawn fold over the raw ledger.
+        typer.echo(
+            json.dumps(
+                summarize_run(
+                    Path(series.paths.outputs) / 'spawns.jsonl',
+                    run_id=run_id,
+                    series_id=series.id,
+                    outcome=outcome,
+                )
+            )
+        )
     raise typer.Exit(outcome.exit_code)
 
 
