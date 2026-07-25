@@ -1,6 +1,12 @@
 """Tests for the pure structural pre-flight (core/preflight.py)."""
 
-from convoy.core.preflight import check_dag, check_governance, structural_problems
+from convoy.core.preflight import (
+    check_dag,
+    check_governance,
+    check_phases,
+    structural_problems,
+    ungated_prs,
+)
 from convoy.core.spec import (
     PR,
     Branches,
@@ -121,3 +127,85 @@ def test_structural_collects_both_categories() -> None:
     problems = structural_problems(_series(governance=_gov(tier='banana'), prs=_CYCLE))
     kinds = sorted(problem.kind for problem in problems)
     assert kinds == ['dag', 'governance']
+
+
+# --- phase resolution and gate coverage --------------------------------------
+
+
+def _phased(pr_id: str, phase: str) -> PR:
+    return PR(id=pr_id, branch=pr_id, prompt=f'{pr_id}.md', phase=phase)
+
+
+def test_unknown_phase_tag_is_a_problem() -> None:
+    """A typo would silently reduce the check to gating nothing, so it must fail loud."""
+    series = _series(
+        prs=(_phased('pr-1', 'core'),),
+        checks=(Check(name='suite', run='true', blocking=True, phases=('cores',)),),
+    )
+    problems = check_phases(series)
+    assert len(problems) == 1
+    assert problems[0].kind == 'phases'
+    assert problems[0].where == "[[checks]] 'suite'"
+    assert 'cores' in problems[0].message
+    # The message names what IS declared, so the fix is obvious without opening the spec.
+    assert 'core' in problems[0].message
+
+
+def test_known_phase_tags_are_clean() -> None:
+    series = _series(
+        prs=(_phased('pr-1', 'core'), _phased('pr-2', 'extras')),
+        checks=(Check(name='suite', run='true', blocking=True, phases=('core', 'extras')),),
+    )
+    assert check_phases(series) == []
+
+
+def test_unscoped_check_needs_no_declared_phase() -> None:
+    series = _series(
+        prs=(_phased('pr-1', 'core'),),
+        checks=(Check(name='suite', run='true', blocking=True),),
+    )
+    assert check_phases(series) == []
+
+
+def test_phase_problems_are_part_of_the_structural_pass() -> None:
+    series = _series(
+        prs=(_phased('pr-1', 'core'),),
+        checks=(Check(name='suite', run='true', blocking=True, phases=('nope',)),),
+    )
+    assert any(problem.kind == 'phases' for problem in structural_problems(series))
+
+
+def test_pr_left_ungated_by_scoping_is_an_advisory() -> None:
+    series = _series(
+        prs=(_phased('pr-1', 'core'), _phased('pr-9', 'docs')),
+        checks=(Check(name='suite', run='true', blocking=True, phases=('core',)),),
+    )
+    advisories = ungated_prs(series)
+    assert len(advisories) == 1
+    assert advisories[0].kind == 'gate'
+    assert advisories[0].where == "[[prs]] 'pr-9'"
+    assert 'docs' in advisories[0].message
+    # Advice, never a problem: the series stays runnable.
+    assert check_phases(series) == []
+
+
+def test_a_covered_pr_raises_no_advisory() -> None:
+    series = _series(
+        prs=(_phased('pr-1', 'core'),),
+        checks=(Check(name='suite', run='true', blocking=True, phases=('core',)),),
+    )
+    assert ungated_prs(series) == []
+
+
+def test_a_non_blocking_check_does_not_count_as_a_gate() -> None:
+    """A check that cannot stop a merge does not make a PR gated."""
+    series = _series(
+        prs=(_phased('pr-1', 'core'),),
+        checks=(Check(name='lint', run='true', blocking=False),),
+    )
+    assert len(ungated_prs(series)) == 1
+
+
+def test_a_series_with_no_checks_advises_every_pr() -> None:
+    series = _series(prs=(_phased('pr-1', 'core'), _phased('pr-2', 'core')))
+    assert len(ungated_prs(series)) == 2

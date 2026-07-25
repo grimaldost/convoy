@@ -74,6 +74,13 @@ class Check:
     # regeneration recipes; without a declared one, whether a fix spawn infers the
     # right command from the failure text is luck. Empty when unused.
     repair_hint: str = ''
+    # The ``[[prs]].phase`` tags this check gates. EMPTY MEANS EVERY PR — the
+    # series-global default, so a series that never sets it behaves exactly as before
+    # this field existed. Naming phases narrows the check to PRs carrying one of them,
+    # which is what makes an incremental series runnable: an early PR is not gated on
+    # a later phase's tests. Selection is ``core.gate.checks_for``; an entry no PR
+    # declares is a pre-flight problem, since a typo would silently disable the check.
+    phases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -329,6 +336,12 @@ def _parse_check(data: Mapping[str, Any], index: int) -> Check:
     # fail-closed at gate time by asset isolation, not forbidden here.
     asset = _optional_str(data, 'asset', where)
     repair_hint = _optional_str(data, 'repair_hint', where)
+    phases = _optional_str_tuple(data, 'phases', where)
+    for phase in phases:
+        # A blank phase tag matches no PR, so it would silently narrow the check to
+        # nothing. Reject at load, like the other never-blank spec values.
+        if not phase.strip():
+            raise SpecError(f'{where}: {"phases"!r} entries must be non-empty')
     return Check(
         name=_require_str(data, 'name', where),
         run=_require_str(data, 'run', where),
@@ -336,6 +349,7 @@ def _parse_check(data: Mapping[str, Any], index: int) -> Check:
         independent=independent,
         asset='' if asset is None else asset,
         repair_hint='' if repair_hint is None else repair_hint,
+        phases=phases,
     )
 
 
@@ -408,8 +422,8 @@ def load_series(text: str) -> Series:
 def _check_table(check: Check) -> dict[str, Any]:
     """One ``[[checks]]`` table for ``dump_series``.
 
-    ``asset`` and ``repair_hint`` are omitted when empty (each re-parses as its
-    ``''`` default), so a check that never used them round-trips to the same
+    ``asset``, ``repair_hint`` and ``phases`` are omitted when empty (each re-parses as
+    its own empty default), so a check that never used them round-trips to the same
     minimal table.
     """
     table: dict[str, Any] = {
@@ -422,6 +436,8 @@ def _check_table(check: Check) -> dict[str, Any]:
         table['asset'] = check.asset
     if check.repair_hint:
         table['repair_hint'] = check.repair_hint
+    if check.phases:
+        table['phases'] = list(check.phases)
     return table
 
 

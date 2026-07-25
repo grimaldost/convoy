@@ -20,7 +20,7 @@ PR-sized tasks plus the governance and gate that apply to them.
 | `[governance.budgets]` | `implementation`, `review`, `fix` | USD ceiling per phase |
 | `[governance.tools]` | `implementation`, `review`, `fix` | Tool allow-list per phase |
 | `[review]` | `blocking` (optional), `max_fix_attempts` | `max_fix_attempts` bounds the fix loop; `blocking` is **reserved** for an optional blocking LLM self-review the v1 headless driver does not run — optional, default `false` (the deterministic `[[checks]]` gate is the sole merge arbiter) |
-| `[[checks]]` | `name`, `run`, `blocking`, `independent`, `asset`, `repair_hint` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)); `asset` is an optional absolute out-of-tree path to a blocking independent check's oracle; `repair_hint` is an optional one-line repair recipe (a command or instruction) appended verbatim to the fix brief when THAT check fails |
+| `[[checks]]` | `name`, `run`, `blocking`, `independent`, `asset`, `repair_hint`, `phases` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)); `asset` is an optional absolute out-of-tree path to a blocking independent check's oracle; `repair_hint` is an optional one-line repair recipe (a command or instruction) appended verbatim to the fix brief when THAT check fails; `phases` is an optional list of `[[prs]].phase` tags this check gates, empty (the default) meaning every PR |
 | `[[prs]]` | `id`, `branch`, `prompt`, `phase`, `depends_on`, `model`, `tier`, `effort` | The PR decomposition as a DAG; `model`/`tier`/`effort` are optional per-PR overrides |
 
 `permission_mode` ∈ {`default`, `acceptEdits`, `plan`, `bypassPermissions`};
@@ -45,9 +45,20 @@ its own). Per-PR governance follows four rules:
   workspace, or a missing `asset` **fails closed** (a synthetic failing result; the
   check is not run). See [01-gate.md](01-gate.md). It is empty (and omitted from a
   round-tripped spec) for any check that does not use it.
-- **The gate is series-global.** The same `[[checks]]` run after **every** PR —
-  there is no per-PR check. A PR either passes the one shared gate or is repaired
-  against it.
+- **The gate is series-global by default, and may be scoped by phase.** A check with
+  no `phases` runs after **every** PR — the default, so a series that scopes nothing
+  behaves as it always did. A check that names `phases` gates only the PRs whose
+  `[[prs]].phase` tag is among them, which is what makes an *incremental* series
+  runnable: PR1 is not gated on a check belonging to a phase PR4 will land. Scoping
+  narrows *which checks run*, never what a red means — whatever is selected is judged
+  under the same rules, and a blocking red still blocks (ADR-0008). A PR's checks
+  resolve once and the fix re-gate reuses them, so a repair is judged by exactly the
+  checks that failed it.
+- **A `phases` tag no PR declares is a load-time-adjacent pre-flight error.** A typo
+  would reduce the check to gating nothing, and a check that never runs is worse than a
+  missing one, because the series still looks gated. A PR that *no blocking check*
+  gates is allowed — it integrates unverified, which is a legitimate authoring choice —
+  and pre-flight reports it as a non-blocking **advisory**, not a problem.
 - **`[governance.budgets]` and `[governance.tools]` each require all three roles**
   — `implementation`, `review`, and `fix`. A missing role is a load-time error. The
   **`review` role is reserved**: the v1 headless driver spawns only `implementation` and
@@ -63,8 +74,11 @@ its own). Per-PR governance follows four rules:
 - **"Phase" has two unrelated meanings.** The governance **role**
   (`implementation` / `review` / `fix`) — what `[governance.budgets]`,
   `[governance.tools]`, and the spawn resolution key on — is distinct from the
-  free-form `[[prs]].phase` grouping tag on the DAG. PR execution order is
-  determined by `depends_on`; the `phase` tag imposes no cross-phase ordering.
+  `[[prs]].phase` grouping tag on the DAG. PR execution order is
+  determined by `depends_on`; the `phase` tag imposes no cross-phase ordering. The
+  distinction matters more now that the tag is load-bearing: `[[checks]].phases`
+  selects on the **grouping tag**, never on the role, and renaming a PR's phase
+  changes which checks gate it.
 
 ### Worked example
 

@@ -272,6 +272,31 @@ def test_check_repair_hint_defaults_to_empty_when_omitted() -> None:
     assert all(check.repair_hint == '' for check in series.checks)
 
 
+def test_check_phases_parse_as_a_tuple() -> None:
+    text = VALID_TOML.replace('name = "suite"', 'name = "suite"\nphases = ["core", "extras"]')
+    series = load_series(text)
+    assert series.checks[0].phases == ('core', 'extras')
+
+
+def test_check_phases_default_to_empty_meaning_every_pr() -> None:
+    # Empty is the series-global default: a series that never sets phases is unchanged.
+    series = load_series(VALID_TOML)
+    assert all(check.phases == () for check in series.checks)
+
+
+def test_check_phases_must_be_an_array_of_strings() -> None:
+    text = VALID_TOML.replace('name = "suite"', 'name = "suite"\nphases = "core"')
+    with pytest.raises(SpecError, match='phases'):
+        load_series(text)
+
+
+def test_blank_phase_entry_is_rejected() -> None:
+    # A blank tag matches no PR, so it would silently narrow the check to gating nothing.
+    text = VALID_TOML.replace('name = "suite"', 'name = "suite"\nphases = ["core", "  "]')
+    with pytest.raises(SpecError, match='non-empty'):
+        load_series(text)
+
+
 def test_review_blocking_defaults_to_false_when_omitted() -> None:
     # `[review].blocking` is reserved for an optional blocking LLM self-review the v1 driver
     # does not run, so it is optional (default False) — authors are not forced to set a no-op.
@@ -340,11 +365,12 @@ def _series(draw: st.DrawFn) -> Series:
             run=draw(_TEXT),
             blocking=draw(st.booleans()),
             independent=draw(st.booleans()),
-            # asset and repair_hint are optional; '' exercises the omit-on-dump
-            # path, a value the round-trip-through-TOML path. Spec data only here —
-            # no filesystem is touched by load/dump.
+            # asset, repair_hint and phases are optional; the empty value exercises the
+            # omit-on-dump path, a non-empty one the round-trip-through-TOML path. Spec
+            # data only here — no filesystem is touched by load/dump.
             asset=draw(st.just('') | _TEXT),
             repair_hint=draw(st.just('') | _TEXT),
+            phases=draw(st.just(()) | st.lists(_TEXT, max_size=3).map(tuple)),
         )
         for _ in draw(st.lists(st.booleans(), max_size=4))
     )

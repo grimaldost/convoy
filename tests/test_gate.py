@@ -16,8 +16,8 @@ on the dataclass.
 from hypothesis import given
 from hypothesis import strategies as st
 
-from convoy.core.gate import CheckResult, GateVerdict, decide
-from convoy.core.spec import Check
+from convoy.core.gate import CheckResult, GateVerdict, checks_for, decide
+from convoy.core.spec import PR, Check
 
 
 def _check(name: str, *, blocking: bool, independent: bool = False) -> Check:
@@ -141,3 +141,59 @@ def test_independence_never_suppresses_blocking_red(results: tuple[CheckResult, 
     # And a blocking failure anywhere always means blocking_red, directly.
     expected = any(not r.passed and r.check.blocking for r in results)
     assert baseline == expected
+
+
+# --- phase scoping (checks_for) ----------------------------------------------
+#
+# Scoping decides WHICH checks run for a PR; it never touches what a red means.
+# The default — a check with no ``phases`` — must select every PR, so a series that
+# scopes nothing behaves exactly as it did before the field existed.
+
+
+def _pr(pr_id: str, phase: str) -> PR:
+    return PR(id=pr_id, branch=pr_id, prompt=f'{pr_id}.md', phase=phase)
+
+
+def test_unscoped_check_gates_every_pr() -> None:
+    check = _check('suite', blocking=True)
+    assert checks_for([check], _pr('pr-1', 'core')) == (check,)
+    assert checks_for([check], _pr('pr-2', 'extras')) == (check,)
+
+
+def test_scoped_check_gates_only_its_phases() -> None:
+    core = Check(name='core-suite', run='true', blocking=True, phases=('core',))
+    late = Check(name='late-suite', run='true', blocking=True, phases=('extras',))
+    assert checks_for([core, late], _pr('pr-1', 'core')) == (core,)
+    assert checks_for([core, late], _pr('pr-4', 'extras')) == (late,)
+
+
+def test_check_may_name_several_phases() -> None:
+    both = Check(name='shared', run='true', blocking=True, phases=('core', 'extras'))
+    assert checks_for([both], _pr('pr-1', 'core')) == (both,)
+    assert checks_for([both], _pr('pr-4', 'extras')) == (both,)
+    assert checks_for([both], _pr('pr-9', 'docs')) == ()
+
+
+def test_selection_preserves_declaration_order() -> None:
+    a = Check(name='a', run='true', blocking=True, phases=('core',))
+    b = _check('b', blocking=True)
+    c = Check(name='c', run='true', blocking=True, phases=('core',))
+    assert checks_for([a, b, c], _pr('pr-1', 'core')) == (a, b, c)
+
+
+def test_a_pr_may_select_no_checks() -> None:
+    # Deliberately not an error: pre-flight reports it as a non-blocking advisory.
+    scoped = Check(name='core-suite', run='true', blocking=True, phases=('core',))
+    assert checks_for([scoped], _pr('pr-9', 'docs')) == ()
+
+
+@given(
+    st.lists(st.sampled_from(['core', 'extras', 'docs']), max_size=4),
+    st.sampled_from(['core', 'extras', 'docs']),
+)
+def test_scoping_never_changes_what_a_red_means(phases: list[str], pr_phase: str) -> None:
+    """Whatever survives selection is judged by the same rules — a blocking red still blocks."""
+    check = Check(name='c', run='true', blocking=True, phases=tuple(phases))
+    selected = checks_for([check], _pr('pr-1', pr_phase))
+    verdict = decide([_result(c, passed=False) for c in selected])
+    assert verdict.blocking_red is bool(selected)

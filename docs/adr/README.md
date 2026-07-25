@@ -19,3 +19,4 @@ were written retroactively (2026-07-09) for founding decisions already shipped;
 | [0005](0005-series-global-governance.md) | Series-global governance (no per-PR overrides) in v1 | Superseded by [ADR-0007](0007-per-pr-governance-overrides.md) |
 | [0006](0006-feedback-local-backlog-tracked.md) | Feedback reports are local; the backlog ledger is tracked | Accepted |
 | [0007](0007-per-pr-governance-overrides.md) | Per-PR governance overrides with a series fallback | Accepted |
+| [0008](0008-phase-scoped-checks.md) | Phase-scoped checks, and a non-blocking advisory channel | Accepted |

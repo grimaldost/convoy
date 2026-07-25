@@ -33,7 +33,11 @@ A real run passes these stages, in this order (`run_series_headless`):
 
 1. **Pre-flight** — the pure structural checks plus the filesystem probes
    (prompts exist, `outputs` out-of-tree, asset isolation). A `PreflightError`
-   here precedes any side effect: no lock, no spawn, no git mutation.
+   here precedes any side effect: no lock, no spawn, no git mutation. Pre-flight
+   returns a `PreflightReport` carrying two lists: the blocking `problems` that
+   decide runnability, and non-blocking `advisories` that do not (today: a PR that
+   phase-scoped checks leave with no blocking check, so it integrates unverified).
+   Only `problems` raises; advisories are reported and the run proceeds.
 2. **Workspace lock** (`interface/workspace_lock.py`) — an exclusive lock file,
    `<workspace>/.git/convoy-run.lock` (under `.git`, so it never dirties the
    tracked tree), created with `O_CREAT | O_EXCL` and holding the run's pid. A
@@ -171,7 +175,7 @@ The two surfaces expose one engine; the mapping is mechanical.
 | CLI | MCP tool | Notes |
 |---|---|---|
 | `convoy run SERIES` (workspace = cwd) | `convoy_run(series_file, workspace)` | the CLI takes the workspace from its working directory; the tool takes it explicitly |
-| `convoy validate SERIES` (workspace = cwd) | `convoy_run(..., dry_run=true)` | same pre-flight; neither spawns (seat probe included) nor mutates |
+| `convoy validate SERIES` (workspace = cwd) | `convoy_run(..., dry_run=true)` | same pre-flight; neither spawns (seat probe included) nor mutates. Advisories print to stderr / fill the `advisories` key, and change neither the exit code nor `ok`/`outcome` — so `validate` can write to stderr and still exit `0` |
 | `--no-config-isolation` / `CONVOY_NO_CONFIG_ISOLATION` | `config_isolation=false` | polarity inverted; the env escape is read by the CLI entry point only |
 | `--fresh` | `reset=true` | the same `Git.reset_to_base` path |
 | `--quiet` | — | an MCP run is always silent (null reporter); the CLI narrates to stderr by default |
@@ -184,7 +188,7 @@ The two surfaces expose one engine; the mapping is mechanical.
 | `2` infrastructure | `outcome: "infrastructure"`, `exit_code: 2` |
 | `4` budget | `outcome: "budget"`, `exit_code: 4` |
 | `3` usage | `outcome: "usage"`, with `problems` (pre-flight) or `error` + `error_kind` ∈ {`spec`, `governance`, `git`, `busy`, `filesystem`} |
-| `convoy validate`: `0` / `3` | `dry_run`: `outcome: "validated"` (`ok: true`) / `"usage"` with `problems` |
+| `convoy validate`: `0` / `3` | `dry_run`: `outcome: "validated"` (`ok: true`) / `"usage"` with `problems`. `advisories` is always present (empty when there is nothing to say) and never affects either |
 
 An executed run's envelope carries `exit_code` alongside `outcome`, so a
 consumer that already branches on the CLI's codes needs no second mapping.

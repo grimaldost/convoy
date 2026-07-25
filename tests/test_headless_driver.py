@@ -1076,3 +1076,140 @@ def test_output_tail_is_bounded_to_the_last_chars(harness: Harness) -> None:
 
     spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
     assert spawns[0]['output_tail'] == long_output[-2000:]
+
+
+# --- phase-scoped checks -----------------------------------------------------
+#
+# The motivating case: an INCREMENTAL series, where PR1 lands a core slice and a later
+# PR completes it. Before phase scoping, PR1 was gated on the whole tuple — including
+# the check belonging to the phase PR2 will land — so PR1 could not pass its own gate
+# and the series was unrunnable. These run the real driver against the real gate runner.
+
+
+class RecordingGateRunner:
+    """Wraps the real runner and records the check names each gate call received."""
+
+    def __init__(self, inner: SubprocessGateRunner) -> None:
+        self._inner = inner
+        self.calls: list[tuple[str, ...]] = []
+
+    def run(self, workspace: Path, checks: Sequence[Check]) -> tuple[CheckResult, ...]:
+        self.calls.append(tuple(check.name for check in checks))
+        return self._inner.run(workspace, checks)
+
+
+def _two_phase_series(base: Series, checks: tuple[Check, ...]) -> Series:
+    """``base`` with two PRs in different phases: pr-1 in 'core', pr-2 in 'extras'."""
+    return replace(
+        base,
+        checks=checks,
+        prs=(
+            PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),
+            PR(id='pr-2', branch='pr-2', prompt='impl.md', phase='extras', depends_on=('pr-1',)),
+        ),
+    )
+
+
+def test_a_later_phases_failing_check_does_not_block_an_earlier_pr(harness: Harness) -> None:
+    """PR1 passes even though the 'extras' check is red — it does not gate PR1's phase.
+
+    This is the whole point of the feature. Without scoping this series halts at pr-1.
+    """
+    series = _two_phase_series(
+        harness.series,
+        (
+            Check(name='core-suite', run=_PASS_CMD, blocking=True, phases=('core',)),
+            Check(name='extras-suite', run=_FAIL_CMD, blocking=True, phases=('extras',)),
+        ),
+    )
+    recorder = RecordingGateRunner(harness.gate_runner)
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(), ok_result()]),
+        git=harness.git,
+        gate_runner=cast('SubprocessGateRunner', recorder),
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-phases',
+    )
+
+    # pr-1 gated only on core-suite and integrated; pr-2 gated only on the red one and blocked.
+    assert recorder.calls == [('core-suite',), ('extras-suite',)]
+    assert outcome == RunOutcome('blocked', False, EXIT_BLOCKED)
+
+
+def test_an_unscoped_check_still_gates_every_pr(harness: Harness) -> None:
+    """The default is unchanged: no ``phases`` anywhere means the whole tuple, every PR."""
+    series = _two_phase_series(
+        harness.series,
+        (
+            Check(name='always', run=_PASS_CMD, blocking=True),
+            Check(name='core-only', run=_PASS_CMD, blocking=True, phases=('core',)),
+        ),
+    )
+    recorder = RecordingGateRunner(harness.gate_runner)
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(), ok_result()]),
+        git=harness.git,
+        gate_runner=cast('SubprocessGateRunner', recorder),
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-mixed',
+    )
+
+    assert recorder.calls == [('always', 'core-only'), ('always',)]
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+
+
+def test_a_pr_no_check_gates_integrates_ungated(harness: Harness) -> None:
+    """Selecting nothing is allowed: the PR runs with an empty gate and integrates.
+
+    Pre-flight advises on this (``core.preflight.ungated_prs``); the driver does not
+    refuse it. An empty verdict is not ``blocking_red``, so the merge proceeds.
+    """
+    series = _two_phase_series(
+        harness.series,
+        (Check(name='core-suite', run=_PASS_CMD, blocking=True, phases=('core',)),),
+    )
+    recorder = RecordingGateRunner(harness.gate_runner)
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(), ok_result()]),
+        git=harness.git,
+        gate_runner=cast('SubprocessGateRunner', recorder),
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-ungated',
+    )
+
+    assert recorder.calls == [('core-suite',), ()]
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+
+
+def test_the_fix_regate_uses_the_same_scoped_checks(harness: Harness) -> None:
+    """A repair is judged by exactly the checks that failed it, not the whole tuple."""
+    series = replace(
+        harness.series,
+        review=Review(blocking=True, max_fix_attempts=1),
+        checks=(
+            Check(name='core-suite', run=_MARKER_CMD, blocking=True, phases=('core',)),
+            Check(name='extras-suite', run=_FAIL_CMD, blocking=True, phases=('extras',)),
+        ),
+        prs=(PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),),
+    )
+
+    recorder = RecordingGateRunner(harness.gate_runner)
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True),
+        git=harness.git,
+        gate_runner=cast('SubprocessGateRunner', recorder),
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-refix',
+    )
+
+    # Initial gate red, fix spawn, re-gate green — and the red 'extras-suite' never ran.
+    assert recorder.calls == [('core-suite',), ('core-suite',)]
+    assert outcome == RunOutcome('completed', True, EXIT_OK)

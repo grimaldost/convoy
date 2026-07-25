@@ -9,7 +9,11 @@
 ## What the gate does
 
 A series declares `[[checks]]` — each a `name`, a `run` command, and a `blocking`
-flag. After a PR is implemented, convoy runs the checks against the workspace.
+flag. After a PR is implemented, convoy runs that PR's checks against the workspace
+— every check by default, or the subset a check's optional `phases` selects
+(`core.gate.checks_for`; see [02-formats.md](02-formats.md) and ADR-0008). Scoping
+decides *which* checks run and nothing else; everything below applies unchanged to
+whatever is selected.
 **A blocking check that is red blocks the merge — full stop, and fail-loud**
 (nonzero exit, the PR is not integrated). convoy never emits a green exit over a
 red. That is the whole safety contract, and it holds regardless of anything

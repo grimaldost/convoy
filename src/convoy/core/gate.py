@@ -12,7 +12,7 @@ red is still a red. All command execution lives in the shell runner
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from convoy.core.spec import Check
+from convoy.core.spec import PR, Check
 
 
 @dataclass(frozen=True)
@@ -40,3 +40,21 @@ class GateVerdict:
 def decide(results: Sequence[CheckResult]) -> GateVerdict:
     """Wrap results into a verdict (pure)."""
     return GateVerdict(results=tuple(results))
+
+
+def checks_for(checks: Sequence[Check], pr: PR) -> tuple[Check, ...]:
+    """The checks that gate ``pr``, in declaration order.
+
+    A check with no ``phases`` gates every PR — the series-global default, so a series
+    that sets ``phases`` nowhere selects the whole tuple for every PR and behaves exactly
+    as it did before the field existed. A check that names phases gates only the PRs
+    whose ``phase`` tag is among them, which is what lets an incremental series run: PR1
+    is not gated on a check belonging to a phase PR4 will land.
+
+    Scoping narrows *which checks run*, never what a red means. Whatever is selected here
+    is judged by :func:`decide` under the same rules — a blocking red still blocks.
+    Selecting nothing is possible and is deliberately not an error: the series author may
+    leave a PR ungated (a docs-only PR, say), and pre-flight reports that as a non-blocking
+    advisory rather than refusing to run.
+    """
+    return tuple(check for check in checks if not check.phases or pr.phase in check.phases)

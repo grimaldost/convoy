@@ -13,6 +13,47 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Phase-scoped `[[checks]]` — a check may declare the PR phases it gates.**
+  *(consumer-affecting: a new optional series.toml key `[[checks]].phases`, and a new
+  `phases` pre-flight problem `kind` a caller may branch on. An older engine rejects a
+  series that sets the key outright.)* The gate ran the whole check tuple after every PR,
+  so an **incremental** series was unrunnable: if PR1 lands a core slice and PR2–PR4
+  extend it, the full suite is red until the last PR and PR1 cannot pass its own gate.
+  That forced every real series into one fat PR or per-PR full-suite green, which left
+  `depends_on` — the reason the engine walks a DAG at all — with no workable incremental
+  use case.
+
+  A check with no `phases` gates every PR, so a series that scopes nothing is
+  bit-for-bit unchanged. A check that names `phases` gates only the PRs whose
+  `[[prs]].phase` is among them. Scoping decides *which* checks run and nothing else:
+  whatever is selected is judged under the existing rules, a blocking red still blocks,
+  and a PR's checks resolve once so the fix re-gate is judged by exactly the checks that
+  failed it. `[[prs]].phase` — parsed and serialized since v1 but read by nothing — is
+  now load-bearing. A `phases` tag no PR declares is a pre-flight problem, because a typo
+  would silently reduce the check to gating nothing, and a check that never runs is worse
+  than a missing one (ADR-0008; `core/spec.py`, `core/gate.py`, `core/preflight.py`,
+  `interface/drivers/headless.py`, `docs/design/01-gate.md`, `02-formats.md`,
+  `skills/convoy/SKILL.md`).
+
+- **A non-blocking advisory channel in pre-flight.** *(consumer-affecting: adds an
+  `advisories` list to the `convoy_run(dry_run=true)` result.)* Phase scoping makes it
+  possible for a PR to end up with no blocking check, so it integrates unverified. That
+  is a legitimate authoring choice (a docs-only PR), so it does not block the run — but
+  it is silent and expensive to discover afterwards. Pre-flight had nowhere to put a
+  non-fatal remark: every `Problem` is fatal and both surfaces treat a non-empty list as
+  failure. Pre-flight now returns a `PreflightReport` carrying `problems` and
+  `advisories` side by side; only `problems` decides runnability. `Advisory` is a
+  distinct type rather than a severity flag on `Problem`, so no surface can turn advice
+  into a failure — or lose a failure among advice — by accident.
+
+  **`convoy validate` can now write to stderr and still exit `0`**: a caller that treated
+  any stderr output as failure must key on the exit code instead. On the MCP surface
+  `advisories` is always present (empty when there is nothing to say) and never affects
+  `ok` or `outcome` (`core/preflight.py`, `interface/preflight_probe.py`,
+  `interface/cli.py`, `interface/mcp/server.py`, `interface/run_service.py`).
+
 ### Fixed
 
 - **`docs/design/03-serving.md` is now actually in the repository.** Six references across
