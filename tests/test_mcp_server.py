@@ -101,7 +101,14 @@ def test_build_server_registers_both_tools() -> None:
 def test_every_tool_schema_documents_every_parameter() -> None:
     tools = _tools()
     expected = {
-        'convoy_run': {'series_file', 'workspace', 'dry_run', 'config_isolation', 'reset'},
+        'convoy_run': {
+            'series_file',
+            'workspace',
+            'dry_run',
+            'config_isolation',
+            'reset',
+            'resume',
+        },
         'convoy_init': {'directory'},
     }
     for name, params in expected.items():
@@ -283,6 +290,7 @@ def test_convoy_run_summarizes_telemetry_by_path(
         config_isolation: bool = True,
         reporter: Any = None,
         fresh: bool = False,
+        resume: bool = False,
     ) -> RunOutcome:
         _write_jsonl(
             telem,
@@ -361,6 +369,7 @@ def test_convoy_run_reset_threads_through_to_fresh(
         config_isolation: bool = True,
         reporter: Any = None,
         fresh: bool = False,
+        resume: bool = False,
     ) -> RunOutcome:
         captured['fresh'] = fresh
         return RunOutcome('completed', True, EXIT_OK)

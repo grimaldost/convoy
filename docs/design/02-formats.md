@@ -186,7 +186,11 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   self-explaining: a consumer sees which check failed and why.
 - **`pr_skipped.reason`** is free-form (e.g. `series halted at pr-1 (blocked) before
   this PR started`): it states *why the series stopped*, not a claim of a direct
-  dependency edge to the halted PR.
+  dependency edge to the halted PR. A **resumed** run reuses the same event with a
+  different reason — `already integrated before this resume` — for a PR it deliberately
+  did not re-process because the integration branch already contains its work. The two
+  are opposite outcomes (done, versus never ran), so a consumer folding a resumed run
+  must branch on the reason rather than treat every `pr_skipped` as a casualty.
 - **`effective_model` is never blank.** On a killed or partial spawn it falls back
   to the requested model, so an economy consumer always has a model to attribute
   the row to.

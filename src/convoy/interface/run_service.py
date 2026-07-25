@@ -39,6 +39,50 @@ class PreflightError(Exception):
         super().__init__(format_problems(problems))
 
 
+def _resume_problems(
+    series: Series, workspace: Path, *, fresh: bool, resume: bool
+) -> list[Problem]:
+    """Pre-flight problems specific to ``resume``, checked before any side effect.
+
+    Two ways to ask for something incoherent, both cheap to catch and expensive to
+    discover late:
+
+    - **``fresh`` and ``resume`` together.** ``fresh`` deletes the integration branch;
+      ``resume`` continues from it. Whichever ran first would silently defeat the other,
+      so the combination is rejected rather than given an arbitrary precedence.
+    - **``resume`` with no integration branch.** There is nothing to resume. Falling back
+      to a normal run would be friendlier but far more expensive when the real cause is a
+      wrong workspace or a typo'd branch name: convoy would quietly spawn the whole series
+      from scratch. A first run takes no flag; this fails loud instead.
+    """
+    if not resume:
+        return []
+    if fresh:
+        return [
+            Problem(
+                kind='resume',
+                where='[branches]',
+                message=(
+                    'resume and fresh are mutually exclusive: fresh deletes the '
+                    'integration branch that resume continues from'
+                ),
+            )
+        ]
+    if not Git(workspace).branch_exists(series.branches.integration):
+        return [
+            Problem(
+                kind='resume',
+                where='[branches]',
+                message=(
+                    f'nothing to resume: integration branch '
+                    f'{series.branches.integration!r} does not exist in {workspace}. '
+                    'A first run takes no --resume.'
+                ),
+            )
+        ]
+    return []
+
+
 def run_series_headless(
     series: Series,
     workspace: Path,
@@ -47,6 +91,7 @@ def run_series_headless(
     config_isolation: bool = True,
     reporter: Reporter | None = None,
     fresh: bool = False,
+    resume: bool = False,
 ) -> RunOutcome:
     """Pre-flight then run ``series`` end-to-end in ``workspace``; return its :class:`RunOutcome`.
 
@@ -68,14 +113,21 @@ def run_series_headless(
     without a prior "branch already exists" failure. Off by default: with ``fresh`` false,
     a leftover branch still fails loud exactly as before this option existed.
 
+    When ``resume`` is true, the run continues the existing integration branch instead of
+    creating one, and skips every PR whose work it already contains — so a halt does not
+    re-spend on the PRs that already gated green. ``resume`` with ``fresh``, or ``resume``
+    with no integration branch, is a pre-flight problem (see :func:`_resume_problems`).
+
     Holds an exclusive lock on ``workspace`` (see :mod:`workspace_lock`) from right after a
     clean pre-flight through the end of the run, so a second concurrent run against the same
     workspace raises :class:`~convoy.interface.workspace_lock.WorkspaceBusyError` instead of
     interleaving git operations. Released on both normal return and exception.
     """
     report = preflight(series, workspace)
-    if not report.clean:
-        raise PreflightError(list(report.problems))
+    problems = list(report.problems)
+    problems += _resume_problems(series, workspace, fresh=fresh, resume=resume)
+    if problems:
+        raise PreflightError(problems)
 
     with workspace_lock(workspace):
         reporter = reporter if reporter is not None else NullReporter()
@@ -107,6 +159,7 @@ def run_series_headless(
                 telemetry=TelemetryWriter(Path(series.paths.outputs) / 'spawns.jsonl'),
                 run_id=run_id,
                 reporter=reporter,
+                resume=resume,
             )
 
         if not config_isolation:

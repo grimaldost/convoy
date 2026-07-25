@@ -149,6 +149,17 @@ def run(
             'running, so a completed or halted run can be re-run cleanly.'
         ),
     ),
+    resume: Annotated[
+        bool,
+        typer.Option(
+            '--resume',
+            help=(
+                'Continue the existing integration branch, skipping every PR whose work '
+                'it already contains, so a halted run does not re-spend on PRs that '
+                'already gated green. Mutually exclusive with --fresh.'
+            ),
+        ),
+    ] = False,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -164,6 +175,7 @@ def run(
             config_isolation=not _isolation_disabled(os.environ, no_config_isolation),
             reporter=_select_reporter(quiet),
             fresh=fresh,
+            resume=resume,
         )
     except PreflightError as exc:
         # A misconfigured series fails fast and whole, before any git mutation or spawn.

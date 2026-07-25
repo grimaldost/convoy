@@ -555,6 +555,32 @@ def test_run_passes_the_explicit_workspace_through_to_the_engine(
     assert seen != [elsewhere]  # the cwd, which is what it would have been before
 
 
+def test_run_threads_resume_through_to_the_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+
+    seen: dict[str, object] = {}
+
+    def _fake(*_a: object, **k: object) -> RunOutcome:
+        seen.update(k)
+        return RunOutcome('completed', True, EXIT_OK)
+
+    monkeypatch.setattr(cli, 'run_series_headless', _fake)
+
+    assert runner.invoke(cli.app, ['run', str(series_file), '--resume']).exit_code == EXIT_OK
+    assert seen['resume'] is True
+    assert seen['fresh'] is False
+
+    seen.clear()
+    assert runner.invoke(cli.app, ['run', str(series_file)]).exit_code == EXIT_OK
+    assert seen['resume'] is False
+
+
 def test_run_without_the_flag_still_uses_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

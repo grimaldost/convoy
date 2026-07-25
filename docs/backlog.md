@@ -22,8 +22,8 @@ so far.
 
 ## Leverage order
 
-**T19a, T10a, T16a (done) → T11a (resume; biggest per-halt $ recovery) → T13a
-(one-line env strip protecting the fix loop) → T20a → T12b → T14b → T15a → T4a.**
+**T19a, T10a, T16a, T11a (done) → T13a (one-line env strip protecting the fix loop) →
+T20a → T12b → T14b → T15a → T4a.**
 
 T19a jumped the order: it was the only row unblocking a *capability* rather than
 recovering cost, and it is what makes an incremental multi-PR series runnable at all.
@@ -44,7 +44,7 @@ pushing the tag is not. Worth mechanizing (T24a).
 |---|-----------|------|--------|
 | T10a | `convoy clean <series.toml>` verb: reset to base, delete the series' integration+PR branches, `git clean -fd`, remove the run lock — without starting a run (no seat probe, no lock acquisition). Shipped with `--dry-run`, since the verb deletes files. Recovery was fully manual and was needed ~5× in one campaign; `--fresh` cannot serve it because it acquires the lock and probes the seat before resetting. MCP mirror still optional and unbuilt. | `interface/cli.py`, `interface/git.py`, `interface/workspace_lock.py` | accepted |
 | T10b | Stale-lock auto-reclaim: the lock file already records the owning PID (`workspace_lock.py:43`) but never reads it back — reclaim iff the recorded process is dead. | `interface/workspace_lock.py:34-43` | watch |
-| T11a | `--resume`: check out the existing integration branch (it provably retains every green merge after any halt — `headless.py:345`), skip PRs already merged into it (`git merge-base --is-ancestor`), record skipped-because-done PRs with a distinct `pr_skipped` reason, preflight consistency. Thread like `--fresh` (`cli.py:106` → `run_service.py:49` → `mcp/server.py:166`). Second independent report, now with a magnitude and a recurring trigger: implementation spawns measure ~$0.20–0.90 each, so a 4-PR series halting at PR4 discards ~$0.6–2.7 of already-verified work on every re-run; and an agent-CLI auth session that expires mid-run (~6h lifetime) halts at a seat/infrastructure boundary on any long series, so this halt class recurs by construction rather than only on a git flake. **(consumer-affecting)** | `interface/drivers/headless.py:235-243`, `interface/git.py`, `interface/run_service.py`, `interface/preflight_probe.py` | proposed |
+| T11a | `--resume` / `resume=true`: continue the existing integration branch, skip every PR whose work it already contains, re-attempt the rest. Containment alone is the WRONG test — an empty PR branch points at the same commit as integration, so `is_merged_into` requires a STRICT ancestor (the driver always merges `--no-ff`). Skipped PRs get a distinct `pr_skipped.reason`. `resume`+`fresh` and `resume` with no integration branch are pre-flight problems. **(consumer-affecting)** | `interface/drivers/headless.py`, `interface/git.py`, `interface/run_service.py`, `interface/cli.py`, `interface/mcp/server.py` | accepted |
 | T12b | Self-describing budget halt: halted PR + phase + spend-vs-cap on the terminal record and in `summarize_run`'s envelope; classification field on `spawn_complete`. Today the cap is recorded nowhere and `RunComplete` carries only `run_id/outcome/integrated`. **(consumer-affecting)** | `core/telemetry.py`, `interface/drivers/headless.py:318-323`, `interface/mcp/server.py` | proposed |
 | T13a | Sanitize the gate-check env: strip `VIRTUAL_ENV` (and uv siblings) via `run_with_timeout`'s existing `env` param; `_ENV_STRIP` in `headless_spawn.py:50-61` is the precedent. A benign uv warning on stderr currently displaces the real failure in `detail` and mis-briefs the fix spawn. | `interface/gate_runner.py:54` | proposed |
 | T13b | Stream-robust `detail`: combine bounded tails of stderr *and* stdout instead of stderr-precedence (`gate_runner.py:70-71`). | `interface/gate_runner.py::_red_detail` | watch |

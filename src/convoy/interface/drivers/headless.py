@@ -171,6 +171,12 @@ def _skip_remaining(
 # diagnose an auth/usage halt from telemetry alone, mirroring the gate's detail bound.
 _OUTPUT_TAIL_CHARS = 2000
 
+# The ``pr_skipped.reason`` for a PR a resumed run did not re-process because its work is
+# already contained in the integration branch. Distinct from the halt reasons on purpose: a
+# consumer folding a resumed run must be able to tell "already done, deliberately not
+# re-spent" from "never ran because the series stopped", which are opposite outcomes.
+_RESUME_DONE_REASON = 'already integrated before this resume'
+
 
 def _record_spawn(
     telemetry: TelemetryWriter, run_id: str, pr_id: str, role: str, result: SpawnResult
@@ -211,6 +217,7 @@ def run_series(
     telemetry: TelemetryWriter,
     run_id: str,
     reporter: Reporter | None = None,
+    resume: bool = False,
 ) -> RunOutcome:
     """Run ``series`` end-to-end in ``workspace``, returning its outcome.
 
@@ -230,6 +237,14 @@ def run_series(
     trusted. Green is never emitted while the gate is still ``blocking_red``. When
     every PR is green, the integration branch — carrying every PR's work — is left
     checked out.
+
+    With ``resume``, the existing integration branch is checked out instead of created,
+    and any PR whose branch is already contained in it (``git merge-base --is-ancestor``)
+    is recorded as skipped and not re-spawned: after a halt that branch provably retains
+    every green merge, so re-running those PRs would pay again for work already present. A
+    PR branch that exists but never merged is a partial or gate-failed attempt; it is
+    deleted and re-attempted from the current integration state rather than built on. The
+    caller verifies the integration branch exists before the run starts.
     """
     reporter = reporter if reporter is not None else NullReporter()
     telemetry.write(RunStart(run_id=run_id, series_id=series.id))
@@ -241,14 +256,37 @@ def run_series(
     # must first reset the workspace to base and delete the prior integration / PR
     # branches (see "Limits and re-runs" in the convoy skill). Every PR below branches
     # off the accumulated integration state rather than off base.
-    git.checkout(series.branches.base)
-    git.checkout(series.branches.integration, create=True)
+    #
+    # Resuming inverts that one step: the integration branch already exists and carries
+    # every PR the halted run merged, so it is checked out rather than created. Its
+    # existence is verified before the run starts (``run_service``), so reaching here
+    # with ``resume`` means it is there.
+    if resume:
+        git.checkout(series.branches.integration)
+    else:
+        git.checkout(series.branches.base)
+        git.checkout(series.branches.integration, create=True)
 
     ordered = order(series.prs)
     for pr in ordered:
         # Branch off the accumulated integration state so this PR builds on every
         # predecessor already merged onto the integration branch.
         git.checkout(series.branches.integration)
+
+        if resume and git.branch_exists(pr.branch):
+            if git.is_merged_into(pr.branch, series.branches.integration):
+                # Its work is already in the integration branch — the halted run got this
+                # far and merged it. Re-running would re-spend to reproduce work that is
+                # provably present, which is the whole cost this flag exists to avoid.
+                telemetry.write(PRSkipped(run_id=run_id, pr_id=pr.id, reason=_RESUME_DONE_REASON))
+                reporter.pr_skipped(pr.id, _RESUME_DONE_REASON)
+                continue
+            # The branch exists but never merged: a partial or gate-failed attempt from the
+            # halted run. Drop it and re-attempt from the current integration state rather
+            # than layering a new attempt on a failed one. Strictly narrower than --fresh,
+            # which deletes every PR branch including the integrated ones.
+            git.delete_branch(pr.branch)
+
         git.checkout(pr.branch, create=True)
 
         # UTF-8 pinned, replacement over crash: by here money is already spent on the

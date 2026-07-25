@@ -61,12 +61,23 @@ A real run passes these stages, in this order (`run_series_headless`):
    even `'budget'` pass: the seat answered. The probe is pre-flight, not a
    scored spawn — it writes no telemetry line, and it costs ~$0.05 per distinct
    model (usually one to three).
-4. **Optional fresh reset** — with `--fresh` / `reset=true`, `Git.reset_to_base`
+4. **Optional resume** — with `--resume` / `resume=true`, the run continues the
+   existing integration branch instead of creating one, and skips every PR whose
+   work that branch already contains. Two consistency checks run in pre-flight,
+   before any side effect: `resume` with `fresh` is rejected (fresh deletes the
+   branch resume continues from), and `resume` with no integration branch is
+   rejected rather than quietly starting a full run, which is the expensive
+   failure when the real cause is a wrong workspace. "Already contained" means a
+   **strict** ancestor (`Git.is_merged_into`), not mere containment: a PR branch
+   whose implementation committed nothing points at the same commit as the
+   integration branch, and treating that as done would silently drop a PR that
+   never landed.
+5. **Optional fresh reset** — with `--fresh` / `reset=true`, `Git.reset_to_base`
    (`interface/git.py`) checks out the base branch and force-deletes the
    integration branch and every PR branch the series names, so a completed or
    halted run re-runs without manual git surgery. Off by default: a leftover
    branch still fails loud exactly as before.
-5. **Engine** — the `outputs` dir is created and `run_series`
+6. **Engine** — the `outputs` dir is created and `run_series`
    (`interface/drivers/headless.py`) takes over.
 
 ## Config isolation — credential-only scored spawns
@@ -101,9 +112,9 @@ mirror the CLI verbs but return structured dicts instead of exit codes and
 console text (`interface/mcp/server.py`):
 
 - **`convoy_run(series_file, workspace, dry_run=false, config_isolation=true,
-  reset=false)`** — run a series through the headless engine and return the
-  summary envelope below. `dry_run` pre-flights for free: no git mutation, no
-  spawn (seat probe included), no spend.
+  reset=false, resume=false)`** — run a series through the headless engine and
+  return the summary envelope below. `dry_run` pre-flights for free: no git
+  mutation, no spawn (seat probe included), no spend.
 - **`convoy_init(directory)`** — scaffold the runnable starter series and
   return `{ok, created, series_file, workspace, next}`, naming the paths to
   hand straight to `convoy_run`.
@@ -178,6 +189,7 @@ The two surfaces expose one engine; the mapping is mechanical.
 | `convoy validate SERIES [--workspace DIR]` | `convoy_run(..., dry_run=true)` | same pre-flight; neither spawns (seat probe included) nor mutates. Advisories print to stderr / fill the `advisories` key, and change neither the exit code nor `ok`/`outcome` — so `validate` can write to stderr and still exit `0` |
 | `--no-config-isolation` / `CONVOY_NO_CONFIG_ISOLATION` | `config_isolation=false` | polarity inverted; the env escape is read by the CLI entry point only |
 | `--fresh` | `reset=true` | the same `Git.reset_to_base` path |
+| `--resume` | `resume=true` | continue the existing integration branch, skipping PRs already merged into it; rejected together with `--fresh`/`reset` |
 | `--quiet` | — | an MCP run is always silent (null reporter); the CLI narrates to stderr by default |
 | `convoy init [DIR]` | `convoy_init(directory)` | the same scaffold; the tool result names the follow-up `convoy_run` arguments |
 
