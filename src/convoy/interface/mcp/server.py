@@ -29,16 +29,82 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from convoy.core.governance import GovernanceError
-from convoy.core.spec import SpecError, load_series
+from convoy.core.spec import Series, SpecError, load_series
+from convoy.interface.detached import launch_detached
 from convoy.interface.drivers.headless import make_run_id
 from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
-from convoy.interface.run_service import PreflightError, run_series_headless
+from convoy.interface.run_service import PreflightError, run_series_headless, start_problems
 from convoy.interface.run_summary import error_kind, status_of, summarize_run
 from convoy.interface.scaffold import ScaffoldError, scaffold
 from convoy.interface.workspace_lock import WorkspaceBusyError
 
 _SERVER_NAME = 'convoy'
+
+
+def _detached_impl(
+    series: Series,
+    series_file: str,
+    workspace: Path,
+    *,
+    run_id: str,
+    config_isolation: bool,
+    reset: bool,
+    resume: bool,
+) -> dict[str, Any]:
+    """Start the run as a detached child and return its handle, not its result (sync).
+
+    The free pre-flight still runs **here**, in the calling process, so a malformed series
+    is answered immediately rather than discovered by polling — detaching is about not
+    waiting for the run, not about deferring what can be known now. What genuinely needs
+    the running process (the seat probe, the workspace lock, git) is left to the child, and
+    lands in its result file; see :func:`~convoy.interface.run_summary.detached_result`.
+    """
+    problems = start_problems(series, workspace, run_id=run_id, fresh=reset, resume=resume)
+    if problems:
+        return {
+            'ok': False,
+            'outcome': 'usage',
+            'series_id': series.id,
+            'problems': [asdict(problem) for problem in problems],
+        }
+    outputs = Path(series.paths.outputs)
+    try:
+        launch = launch_detached(
+            Path(series_file),
+            workspace,
+            outputs,
+            run_id=run_id,
+            config_isolation=config_isolation,
+            fresh=reset,
+            resume=resume,
+        )
+    except OSError as exc:
+        return {
+            'ok': False,
+            'outcome': 'usage',
+            'series_id': series.id,
+            'error_kind': error_kind(exc),
+            'error': str(exc),
+        }
+    return {
+        # ``ok`` reports the operation, and the operation was a launch: the run itself has
+        # no verdict yet. ``state`` is the same vocabulary convoy_status answers in, so a
+        # caller can hand this envelope and that one to the same branch.
+        'ok': True,
+        'outcome': 'started',
+        'state': 'running',
+        'run_id': launch.run_id,
+        'series_id': series.id,
+        'pid': launch.pid,
+        'telemetry_path': str(outputs / 'spawns.jsonl'),
+        'result_path': str(launch.result_path),
+        'log_path': str(launch.log_path),
+        'next': (
+            f'poll convoy_status with series_file={series_file} and '
+            f'run_id={launch.run_id} until state is "finished"'
+        ),
+    }
 
 
 def _run_impl(
@@ -48,8 +114,9 @@ def _run_impl(
     config_isolation: bool,
     reset: bool,
     resume: bool,
+    detach: bool,
 ) -> dict[str, Any]:
-    """Load, (dry-run) pre-flight or run the series, and shape a structured result (sync)."""
+    """Load, (dry-run) pre-flight, detach, or run the series, and shape a result (sync)."""
     try:
         series = load_series(Path(series_file).read_text(encoding='utf-8'))
     except (OSError, UnicodeDecodeError, SpecError) as exc:
@@ -70,6 +137,17 @@ def _run_impl(
         }
 
     run_id = make_run_id()
+    if detach:
+        return _detached_impl(
+            series,
+            series_file,
+            ws,
+            run_id=run_id,
+            config_isolation=config_isolation,
+            reset=reset,
+            resume=resume,
+        )
+
     try:
         outcome = run_series_headless(
             series,
@@ -184,6 +262,18 @@ async def convoy_run(
             )
         ),
     ] = False,
+    detach: Annotated[
+        bool,
+        Field(
+            description=(
+                'Start the run as a detached child process and return a handle immediately '
+                '({outcome: "started", run_id, telemetry_path, result_path, log_path}) '
+                'instead of blocking for the whole series. Follow it with convoy_status '
+                'using the returned run_id. The run survives this server exiting. Pre-flight '
+                'still runs here, so a malformed series is refused immediately.'
+            )
+        ),
+    ] = False,
 ) -> dict[str, Any]:
     """Run a governed multi-PR series to an integrated branch; return an economy + gate summary.
 
@@ -203,7 +293,9 @@ async def convoy_run(
 
     COST & LATENCY: a real run SPENDS real model budget and takes minutes to hours — it
     spawns one or more nested agents per PR. Pass ``dry_run=True`` first for a free,
-    side-effect-free pre-flight.
+    side-effect-free pre-flight. Pass ``detach=True`` to start the run and get a handle
+    back at once rather than holding this call open for the whole series; then poll
+    ``convoy_status`` with the returned ``run_id``.
 
     REQUIREMENTS: ``series_file`` is a convoy series.toml (use ``convoy_init`` for a runnable
     example); ``workspace`` is an existing git repo whose base branch the series names; the
@@ -222,9 +314,13 @@ async def convoy_run(
         merged into it, so a halted run does not re-spend on its green PRs (default false).
         Each skipped PR is recorded with a ``pr_skipped`` reason distinct from the halt
         reasons. Mutually exclusive with ``reset``.
+      - ``detach`` — start the run and return at once with ``outcome: "started"`` plus the
+        ``run_id`` to poll, the ``telemetry_path``, and the ``result_path`` / ``log_path``
+        the detached run writes (default false). The run outlives this server. ``dry_run``
+        takes precedence: a pre-flight is free and instant, so there is nothing to detach.
     """
     return await asyncio.to_thread(
-        _run_impl, series_file, workspace, dry_run, config_isolation, reset, resume
+        _run_impl, series_file, workspace, dry_run, config_isolation, reset, resume, detach
     )
 
 

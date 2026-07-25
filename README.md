@@ -141,30 +141,34 @@ versioning discipline in
 
 ## Agent surface (MCP tools)
 
-The plugin exposes two tools so a coding agent can drive a series without
+The plugin exposes three tools so a coding agent can drive a series without
 shelling out:
 
 - **`convoy_init(directory)`** — scaffold the starter series and return the
   paths.
 - **`convoy_run(series_file, workspace, dry_run=false, config_isolation=true,
-  reset=false)`** — run a series and return a structured summary: outcome,
-  exit code, per-spawn economy totals, and a per-PR gate view, with the full
-  trace referenced by path. `dry_run=true` preflights for free; `reset=true`
-  resets the workspace to base first (CLI: `--fresh`).
+  reset=false, resume=false, detach=false)`** — run a series and return a
+  structured summary: outcome, exit code, per-spawn economy totals, and a per-PR
+  gate view, with the full trace referenced by path. `dry_run=true` preflights for
+  free; `reset=true` resets the workspace to base first (CLI: `--fresh`);
+  `resume=true` continues a halted run's integration branch (CLI: `--resume`).
+- **`convoy_status(series_file, run_id='')`** — report a run's state and economy so
+  far from the ledger alone, including a run still in progress and one this server
+  never started. Spends nothing and never touches the workspace.
 
-`convoy_run` blocks for the whole series (minutes to hours). For long or
-autonomous runs, use the CLI in a background shell — same engine — and poll it
-with `convoy status` / `convoy_status`, which read the ledger and report the
-run's state and economy so far without spending anything. Every argument, the result envelope, cost
-and latency, and when *not* to use convoy:
-[skills/convoy/SKILL.md](skills/convoy/SKILL.md).
+`convoy_run` blocks for the whole series (minutes to hours). For a long or
+autonomous run, either pass `detach=true` — which starts the run as a child that
+outlives the server and returns the `run_id` to poll — or use the CLI in a
+background shell, same engine. Either way, follow it with `convoy status` /
+`convoy_status`. Every argument, the result envelope, cost and latency, and when
+*not* to use convoy: [skills/convoy/SKILL.md](skills/convoy/SKILL.md).
 
 ## CLI reference
 
 | Verb | What | Notable flags |
 |------|------|---------------|
 | `convoy validate <series.toml>` | Free preflight (no git mutation, no spawn) | `--workspace <dir>` / `-w` (default: cwd) |
-| `convoy run <series.toml>` | Run the series against the workspace | `--workspace <dir>` / `-w` (default: cwd), `--json` (print the run summary to stdout as one JSON object), `--resume` (continue the integration branch, skipping PRs already merged into it), `--fresh` (reset to base, delete prior series branches first), `--quiet`, `--no-config-isolation` |
+| `convoy run <series.toml>` | Run the series against the workspace | `--workspace <dir>` / `-w` (default: cwd), `--json` (print the run summary to stdout as one JSON object), `--resume` (continue the integration branch, skipping PRs already merged into it), `--fresh` (reset to base, delete prior series branches first), `--run-id <id>` (pin the run id instead of minting one), `--quiet`, `--no-config-isolation` |
 | `convoy clean <series.toml>` | **Destructive** recovery after a halted or killed run: discard uncommitted changes, delete untracked files, return to base, delete the series' branches, remove a stale run lock | `--dry-run` / `-n` (print the plan, change nothing), `--workspace <dir>` / `-w` |
 | `convoy status <series.toml>` | Report a run's state and economy so far — including one still in progress. Reads the ledger only; spends nothing | `--run-id` (default: the latest run), `--json` |
 | `convoy init <dir>` | Scaffold the starter series | |

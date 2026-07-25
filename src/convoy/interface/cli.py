@@ -203,6 +203,17 @@ def run(
             ),
         ),
     ] = False,
+    pinned_run_id: Annotated[
+        str,
+        typer.Option(
+            '--run-id',
+            help=(
+                'Use this run id instead of minting one, for a caller that must know the '
+                'id before the run starts. An id the ledger already holds lines for is '
+                'refused, since folding two runs under one id is undetectable downstream.'
+            ),
+        ),
+    ] = '',
 ) -> None:
     """Run a convoy series headless.
 
@@ -215,7 +226,7 @@ def run(
     """
     series = _load_or_exit(series_file)
     target = _workspace_or_exit(workspace)
-    run_id = make_run_id()
+    run_id = pinned_run_id or make_run_id()
     try:
         outcome = run_series_headless(
             series,

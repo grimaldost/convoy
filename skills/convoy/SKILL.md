@@ -22,14 +22,20 @@ failure, integrates the green branches, and records **per-spawn economy** (token
 turns, cost, duration) as an append-only, versioned trace. It is headless —
 fire-and-walk-away, no human checkpoints.
 
-The plugin exposes two MCP tools:
+The plugin exposes three MCP tools:
 
-- **`convoy_run`** — run a series (or, with `dry_run`, pre-flight it for free).
+- **`convoy_run`** — run a series (or, with `dry_run`, pre-flight it for free; or,
+  with `detach`, start it and get a handle back at once).
 - **`convoy_init`** — scaffold a runnable starter series to adapt or smoke-test.
+- **`convoy_status`** — ask a run how it is doing, including one still in progress
+  and one this server never started. Reads the ledger only: no spend, no state, no
+  touch on the workspace, so polling is cheap and safe.
 
 A run **spends real model budget** and takes minutes to hours — it spawns a
 subprocess `claude -p` per PR. Always `dry_run` first (free, no side effects),
-then drop it for the real run.
+then drop it for the real run. Because a real run is that long, do not hold a
+blocking `convoy_run` open for it: pass `detach: true` and poll `convoy_status`
+with the `run_id` it returns.
 
 ## Arguments
 
@@ -64,6 +70,25 @@ then drop it for the real run.
   ran" are opposite outcomes. Mutually exclusive with `reset`, and resuming when no
   `integration` branch exists is a pre-flight problem rather than a silent full run (a
   first run takes neither flag). CLI equivalent: `convoy run --resume`.
+- `detach` (default `false`) — **start the run and return at once** instead of blocking
+  for the whole series. The result is a handle, not a result: `{ok: true, outcome:
+  "started", state: "running", run_id, pid, telemetry_path, result_path, log_path,
+  next}`. Follow it with `convoy_status` using that `run_id`. The run is a detached
+  child process, so it survives this server exiting — though a host that confines its
+  children to a kill-on-close job object still takes it down, which shows up as a run
+  that stops advancing. Pre-flight still runs before the launch, so a malformed series
+  is refused immediately rather than discovered by polling; the seat probe, the
+  workspace lock and git are the child's to hit, and land in `result_path`. `dry_run`
+  takes precedence: a pre-flight is free and instant, so there is nothing to detach.
+  CLI equivalent: `convoy run` in a background shell.
+
+### `convoy_status`
+
+- `series_file` (required) — absolute path to the series.toml whose run you want the
+  state of. Its `[paths].outputs` is where the ledger lives, and that is all this reads.
+- `run_id` (default `""`) — which run to report. Defaults to the most recent run in the
+  ledger, which is usually what a poller means; pass an explicit id to follow one run in
+  an outputs dir that accumulates several — including the id a `detach` launch returned.
 
 Traps the pre-flight catches (so `dry_run` reports them instead of a half-run):
 `[paths]` that don't resolve to an existing prompts dir or that name missing prompt
@@ -143,7 +168,8 @@ Every tool returns a single JSON object.
 **`convoy_run`, `dry_run: true`** — `{ ok, outcome, series_id, problems, advisories }`,
 where `outcome` is `validated` (clean, `ok: true`) or `usage` (problems found, `ok:
 false`), and `problems` is a list of `{ kind, where, message }` (empty when clean; `kind`
-is one of `governance`, `dag`, `paths`, `prompt`, `isolation`, `phases`, and `where`
+is one of `governance`, `dag`, `paths`, `prompt`, `isolation`, `phases`, `resume`,
+`run_id`, `seat`, and `where`
 locates the offending section or entry, e.g. `[[prs]] 'pr-2'`). `advisories` is a list of
 the same shape, always present and often empty; it is **non-blocking** and never affects
 `ok` or `outcome` (`kind` is `gate` today).
@@ -156,6 +182,19 @@ failure, or `error` (a message string) with an `error_kind` (`spec` | `governanc
 failure, or another run holding the workspace lock (`busy`). So
 `usage` is the one `outcome` a real-run call can return **besides** the four engine outcomes
 above.
+
+**`convoy_run`, `detach: true`** — `{ ok: true, outcome: "started", state: "running",
+run_id, pid, telemetry_path, result_path, log_path, next }`. `ok` reports the *launch*
+here, since the run has no verdict yet, and `outcome: "started"` is the one outcome only
+this call returns. A failed launch is the ordinary `outcome: "usage"` shape above.
+
+**`convoy_status`** — the same envelope `convoy_run` returns, plus a **`state`** to
+branch on first: `running` (no `run_complete` line yet, so `outcome` / `integrated` /
+`exit_code` are `null` and `economy` is a partial running total — the useful thing to
+watch), `finished` (the terminal fields are meaningful, `halt` included), or `unknown`
+(nothing recorded under that id — not an error, just a run that has not written its first
+line). A detached run that died before writing to the ledger reports `finished` with its
+own could-not-start envelope, read from `result_path`.
 
 **`convoy_init`** — `{ ok, created, series_file, workspace, next }`: the paths
 written, and the `series_file` / `workspace` to hand straight to `convoy_run`.
