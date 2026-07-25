@@ -13,6 +13,57 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **`convoy_run(detach=true)` — start a run and get a handle back at once.**
+  *(consumer-affecting: a new MCP tool argument, a new `outcome` value `started`, a new
+  `--run-id` CLI flag, and a new `problems[].kind` value `run_id`.)* `convoy_run` blocked
+  for the whole series — minutes to hours — with no job handle and no progress stream, so
+  the only way an agent could start a long run was to hold the call open for it.
+  `detach=true` returns `{ok: true, outcome: "started", state: "running", run_id, pid,
+  telemetry_path, result_path, log_path, next}`: a handle, not a result. `ok` reports the
+  launch, since the run has no verdict yet, and `state` uses `convoy_status`' vocabulary so
+  one branch handles both envelopes.
+
+  The child is convoy's own CLI, started as `sys.executable -m convoy run --run-id <id>
+  --json` (a new `convoy/__main__.py`, so the launcher never has to guess where the console
+  script installed). One run path stays one run path. Three consequences:
+
+  - **The parent pins the run id.** A handle the caller cannot poll by is not a handle, and
+    the child cannot be asked afterwards what id it chose — hence **`--run-id`**, also
+    useful to any harness that must know the id up front. An id the ledger already holds
+    lines for is refused (`kind: "run_id"`): every fold selects by `run_id`, so reusing one
+    would sum two runs' economies into a single envelope, wrong in a way nothing downstream
+    can detect.
+  - **The child records its own verdict.** Under `--json` its stdout is exactly one
+    envelope on every path, so `result_path` holds the answer even for a run that died
+    before the engine wrote a ledger line. `convoy_status` now reads that file when the
+    ledger holds nothing under the id — otherwise a detached run that hit a busy workspace
+    or an expired seat would report `running` forever. The ledger wins whenever it has
+    anything; a half-written file does not parse and is treated as absent.
+  - **The free pre-flight still runs in the calling process**, so a malformed series is
+    refused immediately: detaching is about not waiting for the run, not deferring what is
+    knowable now. `dry_run` takes precedence over `detach` — a pre-flight is free and
+    instant, so there is nothing to detach.
+
+  Detachment is `start_new_session` on POSIX and `DETACHED_PROCESS |
+  CREATE_NEW_PROCESS_GROUP` on Windows. Neither escapes a **job object**: a host confining
+  its children to a kill-on-close job still takes the run down when it exits. Convoy does
+  not attempt `CREATE_BREAKAWAY_FROM_JOB` — that limit is usually deliberate host policy,
+  and breaking out of it silently would be worse than honouring it; the run then stops
+  advancing, which is what `convoy_status` reports (`interface/detached.py`,
+  `interface/run_service.py`, `interface/run_summary.py`, `interface/mcp/server.py`,
+  `interface/cli.py`). Completes backlog row T14b's cluster as row T14c.
+
+### Fixed
+
+- **The skill and README documented two MCP tools; there are three.** `convoy_status`
+  shipped in 0.5.0 and reached neither, so the agent-facing manual described a surface
+  without the one tool that makes a long run followable. Both now list all three, and the
+  skill documents `convoy_status`' arguments and its `state` field alongside the rest of
+  the envelope. The skill's `problems[].kind` list was also three values short (`resume`,
+  `run_id`, `seat`).
+
 ### Changed
 
 - **The commit convoy sweeps after each spawn now names the work, not just the PR id.** The

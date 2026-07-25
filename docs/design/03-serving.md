@@ -112,9 +112,10 @@ mirror the CLI verbs but return structured dicts instead of exit codes and
 console text (`interface/mcp/server.py`):
 
 - **`convoy_run(series_file, workspace, dry_run=false, config_isolation=true,
-  reset=false, resume=false)`** — run a series through the headless engine and
-  return the summary envelope below. `dry_run` pre-flights for free: no git
-  mutation, no spawn (seat probe included), no spend.
+  reset=false, resume=false, detach=false)`** — run a series through the headless
+  engine and return the summary envelope below. `dry_run` pre-flights for free: no
+  git mutation, no spawn (seat probe included), no spend. `detach` returns a handle
+  instead of a result (below).
 - **`convoy_init(directory)`** — scaffold the runnable starter series and
   return `{ok, created, series_file, workspace, next}`, naming the paths to
   hand straight to `convoy_run`.
@@ -125,11 +126,50 @@ console text (`interface/mcp/server.py`):
 
 Each tool offloads its blocking work with `asyncio.to_thread`, which keeps the
 server's event loop responsive — but `convoy_run` itself still blocks until the
-run completes. There is no job handle and no progress stream; a real run is
-minutes to hours. The supported pattern for a long run is therefore the CLI in a
-background shell, polled with `convoy_status`, which answers from the ledger and
-so does not need the run to be one this process started. A detached launch that
-returns a handle immediately is still unbuilt (backlog T14c).
+run completes, and a real run is minutes to hours. There are two ways not to wait:
+the CLI in a background shell, or `detach=true`.
+
+### Detached launch
+
+`convoy_run(detach=true)` starts the run and returns at once with
+`{ok: true, outcome: "started", state: "running", run_id, pid, telemetry_path,
+result_path, log_path, next}` — a handle, not a result. `ok` reports the launch,
+since the run has no verdict yet; `state` uses `convoy_status`' vocabulary so one
+branch handles both envelopes.
+
+The child is convoy's own CLI, started as `sys.executable -m convoy run
+--run-id <id> --json` (`interface/detached.py`). Three things follow from that
+choice:
+
+- **One run path stays one run path.** No second engine wiring to drift.
+- **The run id is pinned by the parent.** A handle the caller cannot poll by is
+  not a handle, and the child cannot be asked afterwards what id it chose. Hence
+  `--run-id`, which refuses an id the ledger already holds lines for: every fold
+  selects by `run_id`, so reusing one would sum two runs' economies into a single
+  envelope with nothing downstream able to detect it (a `kind='run_id'`
+  pre-flight problem).
+- **The child records its own verdict.** Under `--json` its stdout is exactly one
+  envelope on every path, so `result_path` holds the answer even for a run that
+  died before the engine wrote a ledger line. `convoy_status` reads that file when
+  the ledger holds nothing under the id — otherwise a detached run that hit a busy
+  workspace or an expired seat would report `running` forever. The ledger wins
+  whenever it has anything; a half-written file does not parse and is treated as
+  absent.
+
+The **free pre-flight still runs in the calling process**, so a malformed series
+is refused immediately: detaching is about not waiting for the run, not about
+deferring what is knowable now. What genuinely needs the running process — the
+seat probe, the workspace lock, git — is the child's to discover. `dry_run` takes
+precedence over `detach`: a pre-flight is free and instant, so there is nothing to
+detach.
+
+Detachment is `start_new_session` on POSIX and `DETACHED_PROCESS |
+CREATE_NEW_PROCESS_GROUP` on Windows. Neither escapes a **job object**: a host that
+confines its children to a job with kill-on-close still takes the run down when it
+exits. Convoy does not attempt `CREATE_BREAKAWAY_FROM_JOB` — that limit is usually
+a deliberate host policy, and breaking out of it silently would be worse than
+honouring it. A run killed that way stops advancing, which is what `convoy_status`
+reports.
 
 **The result envelope** is built by `summarize_run`: it reads the on-disk
 `spawns.jsonl`, keeps only the lines tagged with this run's `run_id` (the file
@@ -199,6 +239,8 @@ The two surfaces expose one engine; the mapping is mechanical.
 | `--no-config-isolation` / `CONVOY_NO_CONFIG_ISOLATION` | `config_isolation=false` | polarity inverted; the env escape is read by the CLI entry point only |
 | `--fresh` | `reset=true` | the same `Git.reset_to_base` path |
 | `--resume` | `resume=true` | continue the existing integration branch, skipping PRs already merged into it; rejected together with `--fresh`/`reset` |
+| `--run-id ID` | — | pins the run id instead of minting one; the tool mints its own, and only needs the flag to pin a *detached* child's. An id already in the ledger is refused either way |
+| a background shell | `detach=true` | the CLI's answer is the operator's shell; the tool's is a detached child of the same CLI, returning `outcome: "started"` plus the `run_id` to poll |
 | `--quiet` | — | an MCP run is always silent (null reporter); the CLI narrates to stderr by default |
 | `convoy status SERIES [--run-id ID]` | `convoy_status(series_file, run_id)` | the same ledger read; `--json` gives the CLI the tool's envelope verbatim |
 | `convoy init [DIR]` | `convoy_init(directory)` | the same scaffold; the tool result names the follow-up `convoy_run` arguments |
@@ -211,6 +253,7 @@ The two surfaces expose one engine; the mapping is mechanical.
 | `4` budget | `outcome: "budget"`, `exit_code: 4` |
 | `3` usage | `outcome: "usage"`, with `problems` (pre-flight) or `error` + `error_kind` ∈ {`spec`, `governance`, `git`, `busy`, `filesystem`} |
 | `convoy validate`: `0` / `3` | `dry_run`: `outcome: "validated"` (`ok: true`) / `"usage"` with `problems`. `advisories` is always present (empty when there is nothing to say) and never affects either |
+| — | `detach`: `outcome: "started"` (`ok: true`, `state: "running"`), carrying `run_id`, `pid`, `telemetry_path`, `result_path`, `log_path`. No exit code: the run has not finished |
 
 An executed run's envelope carries `exit_code` alongside `outcome`, so a
 consumer that already branches on the CLI's codes needs no second mapping.

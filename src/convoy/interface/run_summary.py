@@ -14,6 +14,7 @@ from typing import Any
 
 from convoy.core.governance import GovernanceError
 from convoy.core.spec import Series, SpecError
+from convoy.interface import detached
 from convoy.interface.drivers.headless import (
     EXIT_BLOCKED,
     EXIT_BUDGET,
@@ -55,6 +56,16 @@ def _run_lines(telemetry_path: Path, run_id: str | None = None) -> list[dict[str
         if run_id is None or entry.get('run_id') == run_id:
             lines.append(entry)
     return lines
+
+
+def run_recorded(telemetry_path: Path, run_id: str) -> bool:
+    """Whether ``run_id`` has written anything to the ledger yet.
+
+    The ledger is append-only across runs, so folding two runs that share an id would
+    silently sum their economies and report one of their halts. This is what lets a caller
+    pinning its own id (``--run-id``) be refused before it does that.
+    """
+    return bool(_run_lines(telemetry_path, run_id))
 
 
 def latest_run_id(telemetry_path: Path) -> str | None:
@@ -221,9 +232,19 @@ def status_of(series: Series, *, run_id: str = '', pr_cap: int = _PR_CAP) -> dic
     poller usually means. An empty ledger — no file yet, or a run that has not written its
     first line — returns ``state: "unknown"`` rather than an error: "no run has recorded
     anything here" is information, not a failure.
+
+    A **detached** run can fail before it writes its first ledger line — an expired seat, a
+    busy workspace, a git failure — and reporting that as ``running`` forever would be the
+    worst answer available. So when the ledger holds nothing under the id, its own result
+    file is consulted (see :func:`detached_result`) before falling back.
     """
-    telemetry_path = Path(series.paths.outputs) / 'spawns.jsonl'
+    outputs = Path(series.paths.outputs)
+    telemetry_path = outputs / 'spawns.jsonl'
     target = run_id or latest_run_id(telemetry_path) or ''
+    if target and not run_recorded(telemetry_path, target):
+        detached = detached_result(outputs, target)
+        if detached is not None:
+            return detached
     if not target:
         return {
             'state': 'unknown',
@@ -240,6 +261,32 @@ def status_of(series: Series, *, run_id: str = '', pr_cap: int = _PR_CAP) -> dic
         outcome=reconstruct_outcome(telemetry_path, target),
         pr_cap=pr_cap,
     )
+
+
+def detached_result(outputs: Path, run_id: str) -> dict[str, Any] | None:
+    """The envelope a detached run wrote on exit, or ``None`` if there is not one yet.
+
+    A detached child runs under ``--json``, so it writes exactly one envelope to
+    ``<outputs>/<run_id>.json`` whatever happened — including the could-not-start shape.
+    That file is the only record of a run that died before the engine wrote its first
+    ledger line, which is why status consults it.
+
+    The ledger is preferred whenever it has anything, so this is read only in that gap. A
+    half-written file (caught mid-flush) does not parse and is treated as absent, which
+    lands the caller back on ``running`` — correct, since the child is evidently still
+    going. ``state`` is filled in when the envelope lacks it: the could-not-start shape
+    predates ``state`` and is ``finished`` by construction, a run that will not advance.
+    """
+    path = detached.result_path(outputs, run_id)
+    if not path.exists():
+        return None
+    try:
+        envelope = json.loads(path.read_text(encoding='utf-8'))
+    except OSError, json.JSONDecodeError:
+        return None
+    if not isinstance(envelope, dict):
+        return None
+    return {'state': 'finished', **envelope}
 
 
 def error_kind(exc: Exception) -> str:

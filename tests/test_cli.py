@@ -11,6 +11,7 @@ demonstrate. It drives git only — never a spawn.
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -1134,3 +1135,129 @@ def test_status_human_output_names_the_halt(tmp_path: Path) -> None:
     assert 'finished' in result.output
     assert 'halted at pr-1' in result.output
     assert '$1.50 of $1.00' in result.output
+
+
+# --- --run-id -----------------------------------------------------------------------------
+#
+# A caller that must know the run id before the run starts (a detached launch returning a
+# handle) pins it. The ledger is append-only across runs and every fold selects by run_id,
+# so reusing one is refused rather than silently folding two runs into one summary.
+
+
+def test_run_id_is_pinned_when_given(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    series_file = _valid_run_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        'convoy.interface.run_service.run_series',
+        lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK),
+    )
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '--run-id', 'pinned-1', '--json'])
+
+    assert result.exit_code == EXIT_OK
+    assert json.loads(result.stdout.strip())['run_id'] == 'pinned-1'
+
+
+def test_run_id_is_minted_when_omitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    series_file = _valid_run_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        'convoy.interface.run_service.run_series',
+        lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK),
+    )
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '--json'])
+
+    # The minted shape: a UTC stamp plus a random suffix, which is what makes ids sortable.
+    assert re.fullmatch(r'\d{8}T\d{6}Z-[0-9a-f]{8}', json.loads(result.stdout.strip())['run_id'])
+
+
+def test_a_reused_run_id_is_refused_before_anything_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Folding two runs under one id sums their economies -- undetectable downstream."""
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / 'spawns.jsonl').write_text(
+        json.dumps({'schema_version': 1, 'event': 'run_start', 'run_id': 'taken', 'series_id': 'x'})
+        + '\n',
+        encoding='utf-8',
+    )
+
+    called: list[object] = []
+    monkeypatch.setattr(
+        'convoy.interface.run_service.run_series', lambda *_a, **_k: called.append(1)
+    )
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '--run-id', 'taken', '--json'])
+
+    assert result.exit_code == EXIT_USAGE
+    assert called == []
+    payload = json.loads(result.stdout.strip())
+    assert payload['outcome'] == 'usage'
+    assert [p['kind'] for p in payload['problems']] == ['run_id']
+
+
+# --- status of a detached run that never reached the ledger -------------------------------
+#
+# A detached run can die before writing its first ledger line (a busy workspace, an expired
+# seat, a git failure). Reporting that as `running` forever would be the worst answer
+# available, so status consults the envelope the child wrote under --json.
+
+
+def _detached_envelope(outputs: Path, run_id: str, payload: dict[str, object]) -> None:
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / f'{run_id}.json').write_text(json.dumps(payload), encoding='utf-8')
+
+
+def test_status_reports_a_detached_run_that_failed_to_start(tmp_path: Path) -> None:
+    series_file, outputs = _status_series(tmp_path)
+    _detached_envelope(
+        outputs,
+        'r1',
+        {'ok': False, 'outcome': 'usage', 'series_id': 'cli-test', 'error_kind': 'busy'},
+    )
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '--run-id', 'r1', '--json'])
+
+    assert result.exit_code == EXIT_OK
+    payload = json.loads(result.stdout.strip())
+    # `finished` is filled in: the could-not-start shape predates `state`, and a run that
+    # never started will not advance.
+    assert payload['state'] == 'finished'
+    assert payload['ok'] is False
+    assert payload['error_kind'] == 'busy'
+
+
+def test_status_prefers_the_ledger_over_the_detached_result_file(tmp_path: Path) -> None:
+    """The ledger is the record of a run that actually got going; the file is the gap-filler."""
+    series_file, outputs = _status_series(tmp_path)
+    _ledger(
+        outputs,
+        [
+            {'schema_version': 1, 'event': 'run_start', 'run_id': 'r1', 'series_id': 'cli-test'},
+            _spawn_line('r1', 'pr-1', 0.7),
+        ],
+    )
+    _detached_envelope(outputs, 'r1', {'ok': False, 'outcome': 'usage', 'error_kind': 'busy'})
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '--run-id', 'r1', '--json'])
+
+    payload = json.loads(result.stdout.strip())
+    assert payload['state'] == 'running'
+    assert payload['economy']['total_cost_usd'] == 0.7
+    assert 'error_kind' not in payload
+
+
+def test_status_treats_a_half_written_result_file_as_absent(tmp_path: Path) -> None:
+    """Caught mid-flush it does not parse, which means the child is evidently still going."""
+    series_file, outputs = _status_series(tmp_path)
+    outputs.mkdir(parents=True, exist_ok=True)
+    (outputs / 'r1.json').write_text('{"ok": fal', encoding='utf-8')
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '--run-id', 'r1', '--json'])
+
+    assert result.exit_code == EXIT_OK
+    assert json.loads(result.stdout.strip())['state'] == 'running'

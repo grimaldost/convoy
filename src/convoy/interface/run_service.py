@@ -21,6 +21,7 @@ from convoy.interface.git import Git
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter
+from convoy.interface.run_summary import run_recorded
 from convoy.interface.seat_probe import seat_problem
 from convoy.interface.telemetry_writer import TelemetryWriter
 from convoy.interface.workspace_lock import workspace_lock
@@ -83,6 +84,50 @@ def _resume_problems(
     return []
 
 
+def _run_id_problems(series: Series, run_id: str) -> list[Problem]:
+    """Refuse a run id the ledger already holds lines for.
+
+    Only reachable when the caller pinned one: convoy's own ids carry a timestamp and a
+    random suffix. The ledger is append-only across runs and every fold selects by
+    ``run_id``, so a reused id would sum two runs' economies into one envelope and report
+    whichever halt came last — wrong in a way nothing downstream can detect.
+    """
+    telemetry_path = Path(series.paths.outputs) / 'spawns.jsonl'
+    if not run_recorded(telemetry_path, run_id):
+        return []
+    return [
+        Problem(
+            kind='run_id',
+            where='[paths]',
+            message=(
+                f'run id {run_id!r} already has lines in {telemetry_path}: reusing it would '
+                'fold two runs into one summary. Pick another, or omit it to have one minted.'
+            ),
+        )
+    ]
+
+
+def start_problems(
+    series: Series, workspace: Path, *, run_id: str, fresh: bool = False, resume: bool = False
+) -> list[Problem]:
+    """Every problem that stops a run before it starts, without spending anything.
+
+    The free half of the gate: the structural and filesystem pre-flight plus the
+    consistency checks on the options themselves. The seat probe is deliberately not here —
+    it costs a spawn and needs the isolated config dir, so it runs inside
+    :func:`run_series_headless` once the workspace is locked.
+
+    Named and shared because a *detached* launch needs exactly this much: the parent
+    process can still answer a malformed series immediately, and only what genuinely needs
+    the running process is left for the child to discover.
+    """
+    report = preflight(series, workspace)
+    problems = list(report.problems)
+    problems += _resume_problems(series, workspace, fresh=fresh, resume=resume)
+    problems += _run_id_problems(series, run_id)
+    return problems
+
+
 def run_series_headless(
     series: Series,
     workspace: Path,
@@ -116,16 +161,15 @@ def run_series_headless(
     When ``resume`` is true, the run continues the existing integration branch instead of
     creating one, and skips every PR whose work it already contains — so a halt does not
     re-spend on the PRs that already gated green. ``resume`` with ``fresh``, or ``resume``
-    with no integration branch, is a pre-flight problem (see :func:`_resume_problems`).
+    with no integration branch, is a pre-flight problem (see :func:`_resume_problems`). A
+    ``run_id`` the ledger already holds lines for is one too (see :func:`start_problems`).
 
     Holds an exclusive lock on ``workspace`` (see :mod:`workspace_lock`) from right after a
     clean pre-flight through the end of the run, so a second concurrent run against the same
     workspace raises :class:`~convoy.interface.workspace_lock.WorkspaceBusyError` instead of
     interleaving git operations. Released on both normal return and exception.
     """
-    report = preflight(series, workspace)
-    problems = list(report.problems)
-    problems += _resume_problems(series, workspace, fresh=fresh, resume=resume)
+    problems = start_problems(series, workspace, run_id=run_id, fresh=fresh, resume=resume)
     if problems:
         raise PreflightError(problems)
 

@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from convoy.interface.detached import Launch
 from convoy.interface.drivers.headless import EXIT_OK, RunOutcome
 from convoy.interface.git import GitError
 from convoy.interface.mcp import server as srv
@@ -108,6 +109,7 @@ def test_every_tool_schema_documents_every_parameter() -> None:
             'config_isolation',
             'reset',
             'resume',
+            'detach',
         },
         'convoy_init': {'directory'},
         'convoy_status': {'series_file', 'run_id'},
@@ -589,3 +591,132 @@ def test_tools_write_nothing_to_stdout(tmp_path: Path, capsys: pytest.CaptureFix
     # The stdio MCP server owns stdout for JSON-RPC; the tools must print nothing there.
     asyncio.run(convoy_init(directory=str(tmp_path / 'proj')))
     assert capsys.readouterr().out == ''
+
+
+# --- convoy_run: detach ---------------------------------------------------------------------
+#
+# The launch itself is covered end to end in test_detached.py; here the tool's own wiring is
+# what matters -- what it returns, and what it refuses before spending a process on it.
+
+
+def _detach_setup(tmp_path: Path) -> tuple[Path, Path]:
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    prompts = tmp_path / 'prompts'
+    prompts.mkdir()
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, tmp_path / 'outputs'))
+    return series_file, ws
+
+
+def _record_launch(recorded: list[dict[str, Any]]) -> Any:
+    def _fake(series_file: Path, workspace: Path, outputs: Path, **kwargs: Any) -> Launch:
+        recorded.append({'series_file': series_file, 'workspace': workspace, **kwargs})
+        run_id = str(kwargs['run_id'])
+        return Launch(
+            run_id=run_id,
+            pid=31337,
+            result_path=outputs / f'{run_id}.json',
+            log_path=outputs / f'{run_id}.log',
+        )
+
+    return _fake
+
+
+def test_convoy_run_detach_returns_a_handle_not_a_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    series_file, ws = _detach_setup(tmp_path)
+    recorded: list[dict[str, Any]] = []
+    monkeypatch.setattr(srv, 'launch_detached', _record_launch(recorded))
+
+    result = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws), detach=True))
+
+    # ok reports the operation -- the launch -- since the run itself has no verdict yet.
+    assert result['ok'] is True
+    assert result['outcome'] == 'started'
+    # The same vocabulary convoy_status answers in, so one branch handles both envelopes.
+    assert result['state'] == 'running'
+    assert result['run_id'] == recorded[0]['run_id']
+    assert result['pid'] == 31337
+    assert result['result_path'].endswith(f'{result["run_id"]}.json')
+    assert result['log_path'].endswith(f'{result["run_id"]}.log')
+    assert result['telemetry_path'].endswith('spawns.jsonl')
+    assert result['run_id'] in result['next']
+
+
+def test_convoy_run_detach_passes_its_options_to_the_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    series_file, ws = _detach_setup(tmp_path)
+    recorded: list[dict[str, Any]] = []
+    monkeypatch.setattr(srv, 'launch_detached', _record_launch(recorded))
+
+    asyncio.run(
+        convoy_run(
+            series_file=str(series_file),
+            workspace=str(ws),
+            detach=True,
+            config_isolation=False,
+            reset=True,
+        )
+    )
+
+    assert recorded[0]['config_isolation'] is False
+    assert recorded[0]['fresh'] is True
+    assert recorded[0]['resume'] is False
+
+
+def test_convoy_run_detach_refuses_a_bad_series_before_launching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Detaching is about not waiting for the run, not about deferring what is knowable now."""
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    prompts = tmp_path / 'prompts'
+    prompts.mkdir()  # no pr1.md -> a prompt problem
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, tmp_path / 'outputs'))
+    recorded: list[dict[str, Any]] = []
+    monkeypatch.setattr(srv, 'launch_detached', _record_launch(recorded))
+
+    result = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws), detach=True))
+
+    assert result['ok'] is False
+    assert result['outcome'] == 'usage'
+    assert [p['kind'] for p in result['problems']] == ['prompt']
+    assert recorded == []
+
+
+def test_convoy_run_detach_reports_a_child_that_could_not_be_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    series_file, ws = _detach_setup(tmp_path)
+
+    def _boom(*_a: Any, **_k: Any) -> Launch:
+        raise OSError('no interpreter')
+
+    monkeypatch.setattr(srv, 'launch_detached', _boom)
+
+    result = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws), detach=True))
+
+    assert result['ok'] is False
+    assert result['outcome'] == 'usage'
+    assert result['error_kind'] == 'filesystem'
+
+
+def test_dry_run_takes_precedence_over_detach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-flight is free and instant, so there is nothing to detach."""
+    series_file, ws = _detach_setup(tmp_path)
+    recorded: list[dict[str, Any]] = []
+    monkeypatch.setattr(srv, 'launch_detached', _record_launch(recorded))
+
+    result = asyncio.run(
+        convoy_run(series_file=str(series_file), workspace=str(ws), dry_run=True, detach=True)
+    )
+
+    assert result['outcome'] == 'validated'
+    assert recorded == []
