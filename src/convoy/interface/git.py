@@ -4,9 +4,11 @@ The driver stages a fixture, branches per PR, and integrates the results. Those 
 operations here: reading the current branch, checking out (optionally creating) a ref,
 staging-and-committing every change, and merging one branch into another with a merge
 commit. Each is a thin wrapper over ``git`` run via ``subprocess.run`` in the tree's root;
-a nonzero exit becomes a :class:`GitError` carrying the command's stderr.
+a nonzero exit becomes a :class:`GitError` naming the failing command and carrying its
+stderr.
 """
 
+import shlex
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -40,11 +42,30 @@ class Git:
             check=False,
         )
 
+    def _failure(self, args: Sequence[str], result: subprocess.CompletedProcess[str]) -> GitError:
+        """A :class:`GitError` naming the command that failed, then what git said about it.
+
+        The command comes first because it is the half a reader cannot recover: git's
+        stderr says *what* went wrong ("pathspec did not match any file(s) known to git"),
+        never *which* invocation asked — and convoy shells a dozen of them per PR. The
+        hermetic ``-c`` flags are left out; they are on every command, so including them
+        would bury the subcommand in constant noise, which is the burial this message
+        exists to undo. An argument carrying whitespace is quoted, so a commit message
+        cannot be mistaken for further operands.
+
+        When git said nothing on stderr the exit code stands in. That path is real, not
+        defensive: ``git commit`` reports "nothing to commit" on *stdout* and leaves
+        stderr empty, which used to raise a `GitError` whose message was the empty string.
+        """
+        command = ' '.join(shlex.quote(arg) for arg in ('git', *args))
+        detail = result.stderr.strip() or f'exited {result.returncode}'
+        return GitError(f'{command}: {detail}')
+
     def _run_checked(self, *args: str) -> subprocess.CompletedProcess[str]:
-        """Run ``git <args>``; raise :class:`GitError` with stderr on nonzero exit."""
+        """Run ``git <args>``; raise :class:`GitError` naming it on nonzero exit."""
         result = self._run(*args)
         if result.returncode != 0:
-            raise GitError(result.stderr.strip())
+            raise self._failure(args, result)
         return result
 
     def current_branch(self) -> str:
@@ -151,9 +172,10 @@ class Git:
 
     def delete_branch(self, name: str) -> None:
         """Force-delete local branch ``name``; a branch that does not exist is not an error."""
-        result = self._run('branch', '-D', name)
+        args = ('branch', '-D', name)
+        result = self._run(*args)
         if result.returncode != 0 and 'not found' not in result.stderr:
-            raise GitError(result.stderr.strip())
+            raise self._failure(args, result)
 
     def merge(self, source: str, into: str) -> None:
         """Check out ``into``, then merge ``source`` into it with a merge commit.

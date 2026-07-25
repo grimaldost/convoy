@@ -13,6 +13,26 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **A git failure now names the command that failed.** `GitError` carried git's stderr and
+  nothing else, so a message like `fatal: pathspec did not match any file(s) known to git`
+  arrived with no indication of which invocation asked — and convoy shells a dozen of them
+  per PR (branch setup, staging, the per-PR commit, integration). The command is the half a
+  reader cannot recover from the text; git never repeats it. Messages now read
+  `git checkout -b pr-3: fatal: a branch named 'pr-3' already exists`.
+
+  Enriched at the `_run_checked` choke point, so every call site gains it at once rather
+  than each wrapper prepending its own prefix. The hermetic `-c` flags convoy adds to every
+  command are left out — including them would bury the subcommand in constant noise, which
+  is the burial this message exists to undo — and an argument carrying whitespace is quoted,
+  so a commit message cannot be read as further operands. When git exits nonzero having
+  written nothing to stderr the exit code stands in; that path is real rather than
+  defensive, since `git commit` reports "nothing to commit" on *stdout*, which used to
+  produce a `GitError` whose message was the empty string. `error_kind` is unchanged
+  (`git`), and no consumer keys on the message text (`interface/git.py`). Serves backlog
+  row T15a.
+
 ## [0.5.0] - 2026-07-25
 
 ### Added

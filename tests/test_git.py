@@ -157,3 +157,61 @@ def test_reset_to_base_raises_git_error_on_a_real_failure(tmp_path: Path) -> Non
 
     with pytest.raises(GitError):
         git.reset_to_base('does-not-exist-base', [])
+
+
+# --- what a GitError says ---------------------------------------------------------------
+#
+# The driver shells a dozen git commands per PR, so stderr alone ("pathspec did not
+# match...") leaves the reader guessing which one asked. The message names the command.
+
+
+def test_git_error_names_the_failing_command(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+
+    with pytest.raises(GitError) as excinfo:
+        Git(repo).checkout(_BASE, create=True)  # already exists
+
+    message = str(excinfo.value)
+    # Anchored at the start, so this also pins the hermetic ``-c`` flags being left out:
+    # they ride on every command, and naming them would re-bury the subcommand.
+    assert message.startswith(f'git checkout -b {_BASE}: ')
+    # git's own diagnosis survives intact after the colon.
+    assert 'already exists' in message.split(': ', 1)[1]
+
+
+def test_git_error_quotes_an_argument_carrying_whitespace(tmp_path: Path) -> None:
+    """Otherwise a commit message reads as further operands."""
+    repo = _init_repo(tmp_path)
+    git = Git(repo)
+    (repo / 'f.txt').write_text('x\n', encoding='utf-8')
+    _git(repo, 'config', 'user.email', '')  # break commit: an empty identity is fatal
+    _git(repo, 'config', 'user.name', '')
+
+    with pytest.raises(GitError) as excinfo:
+        git.commit_all('two words')
+
+    assert "git commit -m 'two words': " in str(excinfo.value)
+
+
+def test_git_error_falls_back_to_the_exit_code_when_git_said_nothing(tmp_path: Path) -> None:
+    """``git commit`` reports "nothing to commit" on stdout with stderr empty.
+
+    Reached through a silent ``rev-parse --verify --quiet``, which fails the same way: the
+    message used to be the empty string, which reads as a convoy bug rather than a git one.
+    """
+    repo = _init_repo(tmp_path)
+
+    with pytest.raises(GitError) as excinfo:
+        Git(repo)._run_checked('rev-parse', '--verify', '--quiet', 'refs/heads/nope')
+
+    assert str(excinfo.value) == 'git rev-parse --verify --quiet refs/heads/nope: exited 1'
+
+
+def test_delete_branch_failure_also_names_its_command(tmp_path: Path) -> None:
+    """It raises outside ``_run_checked`` (a missing branch is a no-op), so it is its own path."""
+    repo = _init_repo(tmp_path)
+
+    with pytest.raises(GitError) as excinfo:
+        Git(repo).delete_branch(_BASE)  # cannot delete the checked-out branch
+
+    assert str(excinfo.value).startswith(f'git branch -D {_BASE}: ')
