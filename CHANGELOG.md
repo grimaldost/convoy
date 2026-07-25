@@ -13,6 +13,37 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The release checklist's two unmechanized steps now have mechanisms.** No behaviour
+  change to convoy itself; this is repo discipline. `test_versions_are_locked` gated the
+  three hand-edited version fields agreeing, and that half always held — the halves that
+  failed were the ones nothing checked.
+
+  **The lockfile.** `uv.lock` is a fourth place the version lives, named nowhere in the
+  documented cut, and it recorded `convoy-engine 0.1.1` through the whole of `0.2.0`. CI
+  now runs **`uv lock --check`** before any step that would rewrite it, and `AGENTS.md`
+  lists it first among the gates with the reason the order is load-bearing: `--check`
+  reports a stale lockfile, while `uv sync` and every later `uv run` silently repair one.
+  That is also why this is not a test — an assertion in `test_versions_are_locked` was
+  written and then deliberately removed, because `uv run` re-locks before pytest reads the
+  file, so it could never have gone red. A test that cannot fail is worse than no test.
+
+  **The tag.** The marketplace serves tags, so an untagged release is invisible to every
+  installed consumer however correct the merge was: `0.2.0` was bumped, changelogged and
+  merged while consumers went on being served `0.1.2` for ten days. A new **`release-tag`**
+  workflow checks daily that `main`'s `pyproject.toml` version has a matching `v<version>`
+  tag. Scheduled (plus `workflow_dispatch`) rather than push-triggered on purpose: the tag
+  is created *after* the release PR merges, so a push gate would fail every release by
+  construction and leave that commit permanently red even once tagged — an alarm that is
+  always wrong at first is one people learn to ignore. A scheduled run re-evaluates, so it
+  clears itself.
+
+  `CONTRIBUTING.md` now names four version locations rather than three, says to tag the
+  release PR's **merge commit** rather than `main`'s tip, and states why the tag is the
+  step that matters. Serves backlog row T24a — the second occurrence of this family, the
+  first having been answered with documentation, which is exactly why it recurred.
+
 ## [0.6.0] - 2026-07-25
 
 ### Added

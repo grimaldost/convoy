@@ -32,6 +32,15 @@ def test_plugin_has_an_author() -> None:
 
 
 def test_versions_are_locked() -> None:
+    """The three hand-edited version fields agree.
+
+    ``uv.lock`` is a fourth place the version lives — it recorded ``0.1.1`` through the
+    whole of ``0.2.0`` — but it is deliberately NOT asserted here. ``uv run`` re-locks
+    before it runs anything, so by the time pytest reads that file it has already been
+    repaired: an assertion here could never go red, which is worse than no assertion at
+    all. ``uv lock --check`` is the mechanism that catches it, and CI runs it ahead of
+    every step that would rewrite the lock.
+    """
     plugin_version = _plugin()['version']
     pyproject = tomllib.loads((_ROOT / 'pyproject.toml').read_text(encoding='utf-8'))
     assert plugin_version == pyproject['project']['version'] == convoy.__version__
