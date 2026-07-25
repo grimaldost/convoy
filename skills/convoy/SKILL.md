@@ -41,8 +41,8 @@ then drop it for the real run.
   the integration branch are created in this repo. It must be an existing git repo
   whose current/base branch matches the series' `[branches].base`.
 - `dry_run` (default `false`) — when `true`, only pre-flight the series (structure,
-  model resolution, paths, gate isolation) and return `{ok, outcome, problems}`. No
-  git mutation, no agent spawn, no spend. Do this before every real run.
+  model resolution, paths, gate isolation) and return `{ok, outcome, problems,
+  advisories}`. No git mutation, no agent spawn, no spend. Do this before every real run.
 - `config_isolation` (default `true`) — run the scored agent under a credential-only
   `CLAUDE_CONFIG_DIR` so the operator's settings, hooks, plugins, and memory never
   leak into the run. Internally convoy makes a fresh temp config dir per run, copies
@@ -62,8 +62,15 @@ files (note: absoluteness itself is not checked — a relative path resolves aga
 engine's working directory, so use absolute paths); an `outputs` dir
 **inside** the workspace (telemetry writes would dirty the git tree and abort a
 checkout — keep it out-of-tree); a blocking independent check whose `asset` is
-in-tree (isolation fails closed); and a governance block that resolves to neither a
+in-tree (isolation fails closed); a `[[checks]].phases` tag that no PR declares (the
+check would gate nothing); and a governance block that resolves to neither a
 `model` nor a known `tier`.
+
+The dry run also returns **`advisories`** — located `{kind, where, message}` remarks
+that do **not** make the series invalid, so they never change `ok` or `outcome` (and on
+the CLI, `convoy validate` prints them to stderr and still exits `0`). Today the one
+advisory is a PR that no blocking check gates, which therefore integrates unverified.
+Read them; they are the things that are legal and probably not what you meant.
 
 ### `convoy_init`
 
@@ -116,11 +123,13 @@ Every tool returns a single JSON object.
 - `truncated` — `{ any, prs }`: how many PRs the `prs` list dropped past its cap. If
   `any` is `true`, read `telemetry_path` for the full set.
 
-**`convoy_run`, `dry_run: true`** — `{ ok, outcome, series_id, problems }`, where
-`outcome` is `validated` (clean, `ok: true`) or `usage` (problems found, `ok:
+**`convoy_run`, `dry_run: true`** — `{ ok, outcome, series_id, problems, advisories }`,
+where `outcome` is `validated` (clean, `ok: true`) or `usage` (problems found, `ok:
 false`), and `problems` is a list of `{ kind, where, message }` (empty when clean; `kind`
-is one of `governance`, `dag`, `paths`, `prompt`, `isolation`, and `where` locates the
-offending section or entry, e.g. `[[prs]] 'pr-2'`).
+is one of `governance`, `dag`, `paths`, `prompt`, `isolation`, `phases`, and `where`
+locates the offending section or entry, e.g. `[[prs]] 'pr-2'`). `advisories` is a list of
+the same shape, always present and often empty; it is **non-blocking** and never affects
+`ok` or `outcome` (`kind` is `gate` today).
 
 **`convoy_run`, could-not-start** — a real run returns this same `outcome: "usage"`
 (`ok: false`) shape if it cannot start, never a raised exception. It carries `problems` (a
@@ -151,7 +160,7 @@ least one entry.
 | `[governance.budgets]` | `implementation`, `review`, `fix` (USD numbers) | all three required; each must be **> 0** (a `0` budget is rejected — it would disable the spend cap) |
 | `[governance.tools]` | `implementation`, `review`, `fix` (arrays of tool names) | all three required; the per-role tool allow-list |
 | `[review]` | `blocking` (bool, optional, default `false`), `max_fix_attempts` (int) | `max_fix_attempts` bounds the repair loop (`0` = a blocking red halts immediately); `blocking` is reserved and optional — see "What blocks a merge" below |
-| `[[checks]]` | `name`, `run` (shell command), `blocking` (bool), `independent` (bool, default `false`), `asset` (optional path), `repair_hint` (optional string) | the gate; the same checks run after **every** PR (series-global) |
+| `[[checks]]` | `name`, `run` (shell command), `blocking` (bool), `independent` (bool, default `false`), `asset` (optional path), `repair_hint` (optional string), `phases` (optional array of phase tags) | the gate; a check runs after **every** PR unless `phases` scopes it — see "Scoping checks by phase" |
 | `[[prs]]` | `id`, `branch`, `prompt` (file under `[paths].prompts`), `phase` (tag), `depends_on` (array of PR ids, default `[]`), `model` / `tier` / `effort` (optional, inherit `[governance]`) | the PR DAG |
 
 - **`model` vs `tier`.** Set an explicit `model` (e.g. `claude-haiku-4-5`) or a `tier`
@@ -167,11 +176,11 @@ least one entry.
   passes it through but never *forces* an auto-approve mode.
 - **`effort`** is required (no convoy-side default) and is passed through to the spawn
   (e.g. `low`, `medium`, `high`).
-- **Required vs optional.** Every field in the table is required except eight, which
+- **Required vs optional.** Every field in the table is required except nine, which
   default: `[[checks]].independent` (`false`), `[[checks]].asset` (`''`, unused),
-  `[[checks]].repair_hint` (`''`, no hint), `[[prs]].depends_on` (`[]`),
-  `[[prs]].model` / `.tier` / `.effort` (unset, inherit `[governance]`), and
-  `[review].blocking` (`false`, reserved).
+  `[[checks]].repair_hint` (`''`, no hint), `[[checks]].phases` (`[]`, gates every PR),
+  `[[prs]].depends_on` (`[]`), `[[prs]].model` / `.tier` / `.effort` (unset, inherit
+  `[governance]`), and `[review].blocking` (`false`, reserved).
   `[[checks]].name`/`run`/`blocking` are all required.
   `[series].version` is any string (the example uses `"1"`); PR `id`s must be unique (they
   are what `depends_on` references). The exhaustive per-field types and the full telemetry
@@ -208,6 +217,32 @@ least one entry.
   lane becomes a backstop against a spawn that skips them rather than a quality lever.
   Measured strongest at weak model tiers and null at the default tier — see
   `docs/design/01-gate.md`.
+- **Scoping checks by phase.** By default every check runs after every PR, which makes
+  an *incremental* series impossible: if PR1 lands a core slice and PR4 completes it,
+  the full suite is red until PR4, so PR1 cannot pass its own gate. Give a check
+  `phases` to scope it to the PRs carrying those `[[prs]].phase` tags:
+
+  ```toml
+  [[checks]]
+  name = "core-suite"
+  run = "python -m pytest tests/core -q"
+  blocking = true
+  phases = ["core"]        # gates only PRs whose phase is "core"
+
+  [[checks]]
+  name = "full-suite"
+  run = "python -m pytest -q"
+  blocking = true
+  phases = ["extras"]      # the whole suite is only expected to pass by the last phase
+  ```
+
+  Omit `phases` and the check gates everything, exactly as before. Scoping changes
+  which checks run, never what a red means — a blocking red still blocks, and a fix
+  re-gate reuses that PR's own checks. Two things to know: a `phases` tag that no PR
+  declares is a **pre-flight error** (a typo would silently make the check gate
+  nothing), and a PR that ends up with no blocking check is **allowed but advised** —
+  `convoy validate` prints an advisory naming it and still exits `0`, because that PR
+  integrates unverified.
 - **What blocks a merge.** The deterministic `[[checks]]` gate is the sole arbiter: a
   check with `blocking = true` that goes red blocks the merge and drives the bounded fix
   loop. `[review].blocking` is a reserved switch for an optional blocking LLM self-review

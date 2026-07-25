@@ -174,12 +174,16 @@ def _run_impl(
 
     ws = Path(workspace)
     if dry_run:
-        problems = preflight(series, ws)
+        # ``advisories`` is always present (empty when there is nothing to say) so a
+        # consumer can read the key unconditionally. It never affects ``ok``/``outcome``:
+        # advice describes an unusual series, not an invalid one.
+        report = preflight(series, ws)
         return {
-            'ok': not problems,
-            'outcome': 'validated' if not problems else 'usage',
+            'ok': report.clean,
+            'outcome': 'validated' if report.clean else 'usage',
             'series_id': series.id,
-            'problems': [asdict(p) for p in problems],
+            'problems': [asdict(p) for p in report.problems],
+            'advisories': [asdict(a) for a in report.advisories],
         }
 
     run_id = make_run_id()

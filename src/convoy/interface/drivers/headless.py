@@ -34,9 +34,9 @@ from pathlib import Path
 from secrets import token_hex
 
 from convoy.core.dag import order
-from convoy.core.gate import GateVerdict, decide
+from convoy.core.gate import GateVerdict, checks_for, decide
 from convoy.core.governance import effective_governance, resolve_spawn
-from convoy.core.preflight import Problem
+from convoy.core.preflight import Advisory, Problem
 from convoy.core.spec import PR, Series
 from convoy.core.telemetry import (
     GateCheckLine,
@@ -64,6 +64,15 @@ def format_problems(problems: Sequence[Problem]) -> str:
     """A human-readable summary of pre-flight problems: a count plus one located line each."""
     lines = [f'{len(problems)} problem(s) found:']
     lines += [f'  - {problem.where} [{problem.kind}] {problem.message}' for problem in problems]
+    return '\n'.join(lines)
+
+
+def format_advisories(advisories: Sequence[Advisory]) -> str:
+    """The same located shape as ``format_problems``, labelled so advice never reads as failure."""
+    lines = [f'{len(advisories)} advisory(ies):']
+    lines += [
+        f'  - {advisory.where} [{advisory.kind}] {advisory.message}' for advisory in advisories
+    ]
     return '\n'.join(lines)
 
 
@@ -289,7 +298,12 @@ def run_series(
         # attempting a fix never makes things worse and green is never emitted while
         # the gate is still red. Bounded by ``series.review.max_fix_attempts`` — zero
         # means a blocking red halts immediately with no fix spawn.
-        verdict = decide(gate_runner.run(workspace, series.checks))
+        #
+        # Resolved ONCE per PR and reused by the re-gate below, so a repair is judged by
+        # exactly the checks that failed it. A check with no ``phases`` gates every PR, so
+        # a series that scopes nothing selects the whole tuple here, as it always did.
+        pr_checks = checks_for(series.checks, pr)
+        verdict = decide(gate_runner.run(workspace, pr_checks))
         telemetry.write(_gate_event(run_id, pr.id, 0, verdict))
         reporter.gate_result(pr.id, 0, verdict)
         attempts = 0
@@ -329,7 +343,7 @@ def run_series(
                 return RunOutcome('budget', False, EXIT_BUDGET)
 
             git.commit_all(f'{pr.id}-fix-{attempts}')
-            verdict = decide(gate_runner.run(workspace, series.checks))
+            verdict = decide(gate_runner.run(workspace, pr_checks))
             telemetry.write(_gate_event(run_id, pr.id, attempts, verdict))
             reporter.gate_result(pr.id, attempts, verdict)
 

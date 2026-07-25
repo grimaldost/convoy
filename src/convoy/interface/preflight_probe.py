@@ -6,11 +6,14 @@ independent check's asset is isolated (reusing ``fs_probe.isolation_result``) â€
 list of :class:`~convoy.core.preflight.Problem`. Used by ``convoy validate`` and by
 ``convoy run`` before any git mutation, so a misconfigured series fails fast and whole
 rather than half-executing and leaving a partially-branched tree behind.
+
+The result is a :class:`~convoy.core.preflight.PreflightReport`: the blocking problems that
+decide runnability, plus the non-blocking advisories that do not.
 """
 
 from pathlib import Path
 
-from convoy.core.preflight import Problem, structural_problems
+from convoy.core.preflight import PreflightReport, Problem, structural_problems, ungated_prs
 from convoy.core.spec import Series
 from convoy.interface.fs_probe import isolation_result
 
@@ -82,11 +85,19 @@ def check_isolation(series: Series, workspace: Path) -> list[Problem]:
     return problems
 
 
-def preflight(series: Series, workspace: Path) -> list[Problem]:
-    """Every pre-flight Problem for ``series`` run in ``workspace`` â€” structural then filesystem."""
-    return [
-        *structural_problems(series),
-        *check_prompts(series),
-        *check_outputs(series, workspace),
-        *check_isolation(series, workspace),
-    ]
+def preflight(series: Series, workspace: Path) -> PreflightReport:
+    """The full pre-flight report for ``series`` run in ``workspace``.
+
+    Problems are collected structural-then-filesystem, in a stable order, so a caller can
+    surface every issue at once. Advisories are collected alongside and never affect
+    :attr:`~convoy.core.preflight.PreflightReport.clean`.
+    """
+    return PreflightReport(
+        problems=(
+            *structural_problems(series),
+            *check_prompts(series),
+            *check_outputs(series, workspace),
+            *check_isolation(series, workspace),
+        ),
+        advisories=tuple(ungated_prs(series)),
+    )

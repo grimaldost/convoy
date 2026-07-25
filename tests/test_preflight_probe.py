@@ -64,8 +64,12 @@ def test_all_clean_has_no_problems(tmp_path: Path) -> None:
         prompts=prompts,
         outputs=outputs,
         prs=(PR(id='pr-1', branch='pr-1', prompt='pr1.md', phase='p'),),
+        checks=(Check(name='suite', run='true', blocking=True),),
     )
-    assert preflight(series, workspace) == []
+    report = preflight(series, workspace)
+    assert report.problems == ()
+    assert report.advisories == ()
+    assert report.clean
 
 
 def test_missing_prompts_dir_is_one_paths_problem(tmp_path: Path) -> None:
@@ -176,6 +180,7 @@ def test_preflight_collects_across_categories(tmp_path: Path) -> None:
         outputs=inside_outputs,
         prs=(PR(id='pr-1', branch='pr-1', prompt='a.md', phase='p'),),
     )
-    problems = preflight(series, workspace)
-    assert len(problems) >= 2
-    assert all(problem.kind == 'paths' for problem in problems)
+    report = preflight(series, workspace)
+    assert len(report.problems) >= 2
+    assert all(problem.kind == 'paths' for problem in report.problems)
+    assert not report.clean

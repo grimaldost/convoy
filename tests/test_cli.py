@@ -109,6 +109,54 @@ def test_validate_reports_problems(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert 'problem(s) found' in result.output
 
 
+def test_validate_rejects_a_phase_tag_no_pr_declares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typo'd phase would silently gate nothing, so it fails loud — a Problem, not advice."""
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(
+        _series_toml(prompts, outputs).replace('blocking = true', 'blocking = true\nphases = ["x"]')
+    )
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_USAGE
+    assert 'problem(s) found' in result.output
+    assert 'phases' in result.output
+
+
+def test_validate_advisory_on_a_pr_no_check_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    (prompts / 'pr2.md').write_text('docs only')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(
+        _series_toml(prompts, outputs)
+        # Scope the blocking check to 'core', then add a second PR in a 'docs' phase that
+        # nothing gates. Both phases are declared, so there is no phases problem.
+        .replace('blocking = true', 'blocking = true\nphases = ["core"]')
+        + """
+[[prs]]
+id = "pr-2"
+branch = "pr-2"
+prompt = "pr2.md"
+phase = "docs"
+depends_on = []
+"""
+    )
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert 'advisory(ies)' in result.output
+    assert 'pr-2' in result.output
+    assert 'ok' in result.output
+
+
 def test_validate_bad_toml_is_usage(tmp_path: Path) -> None:
     series_file = tmp_path / 'bad.toml'
     series_file.write_text('this is = = not valid toml')

@@ -9,7 +9,12 @@ import typer
 from convoy import __version__
 from convoy.core.governance import GovernanceError
 from convoy.core.spec import Series, SpecError, load_series
-from convoy.interface.drivers.headless import EXIT_USAGE, format_problems, make_run_id
+from convoy.interface.drivers.headless import (
+    EXIT_USAGE,
+    format_advisories,
+    format_problems,
+    make_run_id,
+)
 from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
@@ -62,11 +67,17 @@ def validate(series_file: Path) -> None:
     The filesystem checks — ``[paths]`` existence, ``outputs`` out-of-tree, and
     independent-check asset isolation — are evaluated against the CURRENT directory as the
     workspace, so run ``validate`` from the same directory you will ``run`` from.
+
+    Advisories (a PR that phase-scoped checks leave ungated) print to stderr and do NOT
+    change the exit code: stdout stays ``ok`` and the exit stays 0, because an advisory
+    describes an unusual series, not an invalid one.
     """
     series = _load_or_exit(series_file)
-    problems = preflight(series, Path.cwd())
-    if problems:
-        typer.echo(format_problems(problems), err=True)
+    report = preflight(series, Path.cwd())
+    if report.advisories:
+        typer.echo(format_advisories(report.advisories), err=True)
+    if not report.clean:
+        typer.echo(format_problems(report.problems), err=True)
         raise typer.Exit(EXIT_USAGE)
     typer.echo('ok')
 

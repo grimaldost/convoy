@@ -129,6 +129,39 @@ def test_convoy_run_dry_run_validates_a_clean_series(tmp_path: Path) -> None:
     assert result['ok'] is True
     assert result['outcome'] == 'validated'
     assert result['problems'] == []
+    # Always present, so a consumer can read the key unconditionally.
+    assert result['advisories'] == []
+
+
+def test_convoy_run_dry_run_carries_advisories_without_failing(tmp_path: Path) -> None:
+    """An ungated PR is reported as advice: the key fills, ok/outcome are untouched."""
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+    prompts = tmp_path / 'prompts'
+    prompts.mkdir()
+    (prompts / 'pr1.md').write_text('do it')
+    (prompts / 'pr2.md').write_text('docs only')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(
+        _series_toml(prompts, tmp_path / 'outputs').replace(
+            'blocking = true', 'blocking = true\nphases = ["core"]'
+        )
+        + """
+[[prs]]
+id = "pr-2"
+branch = "pr-2"
+prompt = "pr2.md"
+phase = "docs"
+depends_on = []
+"""
+    )
+
+    result = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws), dry_run=True))
+    assert result['ok'] is True
+    assert result['outcome'] == 'validated'
+    assert result['problems'] == []
+    assert [a['where'] for a in result['advisories']] == ["[[prs]] 'pr-2'"]
+    assert result['advisories'][0]['kind'] == 'gate'
 
 
 def test_convoy_run_dry_run_reports_problems(tmp_path: Path) -> None:

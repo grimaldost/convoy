@@ -73,9 +73,9 @@ def run_series_headless(
     workspace raises :class:`~convoy.interface.workspace_lock.WorkspaceBusyError` instead of
     interleaving git operations. Released on both normal return and exception.
     """
-    problems = preflight(series, workspace)
-    if problems:
-        raise PreflightError(problems)
+    report = preflight(series, workspace)
+    if not report.clean:
+        raise PreflightError(list(report.problems))
 
     with workspace_lock(workspace):
         reporter = reporter if reporter is not None else NullReporter()
