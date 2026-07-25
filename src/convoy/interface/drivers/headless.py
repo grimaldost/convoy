@@ -41,6 +41,7 @@ from convoy.core.spec import PR, Series
 from convoy.core.telemetry import (
     GateCheckLine,
     GateComplete,
+    HaltDetail,
     PRSkipped,
     RunComplete,
     RunStart,
@@ -202,8 +203,26 @@ def _record_spawn(
                 cost_usd=result.economy.cost_usd,
                 effective_model=result.economy.effective_model,
                 output_tail=output_tail,
+                classification=result.classification,
             )
         )
+    )
+
+
+def _halt(pr: PR, role: str, result: SpawnResult, cap_usd: float | None = None) -> HaltDetail:
+    """The located halt record for a spawn that stopped the run.
+
+    ``cap_usd`` is supplied only for a ``budget`` classification — the ceiling that spawn
+    actually ran under. For any other halt no ceiling caused it, so both money fields stay
+    ``None`` rather than reporting a cap that would send the reader after the wrong fix.
+    """
+    is_budget = result.classification == 'budget'
+    return HaltDetail(
+        pr_id=pr.id,
+        phase=pr.phase,
+        role=role,
+        spend_usd=result.economy.cost_usd if is_budget else None,
+        cap_usd=cap_usd if is_budget else None,
     )
 
 
@@ -316,7 +335,14 @@ def run_series(
         if result.classification == 'infrastructure':
             reason = f'series halted at {pr.id} (infrastructure) before this PR started'
             _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
-            telemetry.write(RunComplete(run_id=run_id, outcome='infrastructure', integrated=False))
+            telemetry.write(
+                RunComplete(
+                    run_id=run_id,
+                    outcome='infrastructure',
+                    integrated=False,
+                    halt=_halt(pr, 'implementation', result),
+                )
+            )
             reporter.run_done('infrastructure', False)
             return RunOutcome('infrastructure', False, EXIT_INFRASTRUCTURE)
 
@@ -325,7 +351,14 @@ def run_series(
             # committing, gating, or integrating it. Distinct outcome/exit for an observer.
             reason = f'series halted at {pr.id} (budget) before this PR started'
             _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
-            telemetry.write(RunComplete(run_id=run_id, outcome='budget', integrated=False))
+            telemetry.write(
+                RunComplete(
+                    run_id=run_id,
+                    outcome='budget',
+                    integrated=False,
+                    halt=_halt(pr, 'implementation', result, governed.budget_usd),
+                )
+            )
             reporter.run_done('budget', False)
             return RunOutcome('budget', False, EXIT_BUDGET)
 
@@ -368,7 +401,12 @@ def run_series(
                 reason = f'series halted at {pr.id} (infrastructure) before this PR started'
                 _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
                 telemetry.write(
-                    RunComplete(run_id=run_id, outcome='infrastructure', integrated=False)
+                    RunComplete(
+                        run_id=run_id,
+                        outcome='infrastructure',
+                        integrated=False,
+                        halt=_halt(pr, 'fix', fix_result),
+                    )
                 )
                 reporter.run_done('infrastructure', False)
                 return RunOutcome('infrastructure', False, EXIT_INFRASTRUCTURE)
@@ -376,7 +414,16 @@ def run_series(
             if fix_result.classification == 'budget':
                 reason = f'series halted at {pr.id} (budget) before this PR started'
                 _skip_remaining(telemetry, reporter, run_id, ordered, pr.id, reason)
-                telemetry.write(RunComplete(run_id=run_id, outcome='budget', integrated=False))
+                telemetry.write(
+                    RunComplete(
+                        run_id=run_id,
+                        outcome='budget',
+                        integrated=False,
+                        # The FIX role's ceiling, not the implementation's — a repair
+                        # exhausting its own smaller cap is a different diagnosis.
+                        halt=_halt(pr, 'fix', fix_result, governed.budget_usd),
+                    )
+                )
                 reporter.run_done('budget', False)
                 return RunOutcome('budget', False, EXIT_BUDGET)
 
@@ -394,7 +441,16 @@ def run_series(
                 pr.id,
                 f'series halted at {pr.id} (blocked) before this PR started',
             )
-            telemetry.write(RunComplete(run_id=run_id, outcome='blocked', integrated=False))
+            telemetry.write(
+                RunComplete(
+                    run_id=run_id,
+                    outcome='blocked',
+                    integrated=False,
+                    # No spawn hit a ceiling here: the gate stayed red after the bounded
+                    # fix loop, so the halt belongs to the gate, not to a role's budget.
+                    halt=HaltDetail(pr_id=pr.id, phase=pr.phase, role='gate'),
+                )
+            )
             reporter.run_done('blocked', False)
             return RunOutcome('blocked', False, EXIT_BLOCKED)
 

@@ -133,7 +133,9 @@ spawn's `effective_model`, the *latest* gate verdict with the names of its
 failing blocking checks, any skip reason). `effective_model` is keyed on the
 `implementation` role rather than append order — a fix spawn's model never
 overwrites it — and is `null` for a PR that never ran an implementation spawn.
-The per-PR list is
+The envelope also carries **`halt`** — `null` on a clean run, else the located reason the
+run stopped, read from the `run_complete` line rather than threaded through `RunOutcome`
+so the envelope stays reconstructible from the ledger alone. The per-PR list is
 capped at 50 with a `truncated` report; the complete per-line trace stays on
 disk at the returned `telemetry_path`, referenced and never inlined. `ok` is
 true exactly when `outcome` is `completed`, and the envelope carries the same

@@ -126,9 +126,17 @@ Every tool returns a single JSON object.
   a PR's folded `effective_model`, for one. Each line is a JSON object tagged with
   `schema_version` and `event` (`run_start` / `spawn_complete` / `gate_complete` /
   `pr_skipped` / `run_complete`). A `spawn_complete` line carries `run_id`, `pr_id`, `role`
-  (`implementation` / `fix`), `exit_code`, `input_tokens`, `output_tokens`, `num_turns`,
+  (`implementation` / `fix`), `exit_code`, `classification` (`ok` / `infrastructure` /
+  `budget`), `input_tokens`, `output_tokens`, `num_turns`,
   `duration_s`, `cost_usd`, `effective_model`, `cost_estimated`; the full telemetry contract
   is in `docs/design/02-formats.md`.
+- `halt` — `null` on a clean run; on any halt, `{ pr_id, phase, role, spend_usd, cap_usd }`
+  saying where the run stopped. `role` is the spawn role that hit it (`implementation` /
+  `fix`) or `gate` when the bounded fix loop was exhausted. `spend_usd` / `cap_usd` are
+  populated **only** for `outcome: "budget"` — the spawn's cost against the ceiling it hit;
+  they are `null` for `blocked` and `infrastructure`, where no ceiling caused the halt.
+  Read this first on a non-`completed` run: it answers which PR and how close to which cap
+  without opening the trace.
 - `truncated` — `{ any, prs }`: how many PRs the `prs` list dropped past its cap. If
   `any` is `true`, read `telemetry_path` for the full set.
 

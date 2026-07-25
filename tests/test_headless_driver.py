@@ -1380,3 +1380,166 @@ def test_resume_discards_a_failed_attempts_branch_rather_than_building_on_it(
     assert outcome == RunOutcome('blocked', False, EXIT_BLOCKED)  # still red, but it RAN
     assert len(spawn.calls) == 1
     assert _skips(harness.outputs, 'run-2') == []
+
+
+# --- self-describing halts ---------------------------------------------------
+#
+# Before this, run_complete said only THAT a run stopped. "Which PR, in which phase, and
+# how close to which cap" -- the first question a halted run raises -- meant hand-reading
+# the ledger. These assert the terminal record answers it on its own.
+
+
+def _budget_result(cost_usd: float) -> SpawnResult:
+    return SpawnResult(
+        exit_code=1,
+        classification='budget',
+        output='error_max_budget_usd',
+        economy=SpawnEconomy(
+            input_tokens=100,
+            output_tokens=10,
+            num_turns=2,
+            duration_s=3.0,
+            cost_usd=cost_usd,
+            effective_model='test-model',
+        ),
+    )
+
+
+def _run_complete(outputs: Path, run_id: str) -> dict[str, object]:
+    (event,) = [
+        e for e in _events_of(_read_events(outputs), 'run_complete') if e['run_id'] == run_id
+    ]
+    return event
+
+
+def test_a_budget_halt_names_the_pr_phase_and_spend_against_the_cap(harness: Harness) -> None:
+    series = replace(
+        harness.series,
+        checks=(Check(name='green', run=_PASS_CMD, blocking=True),),
+        prs=(PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),),
+    )
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([_budget_result(1.07)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-budget',
+    )
+    assert outcome == RunOutcome('budget', False, EXIT_BUDGET)
+
+    halt = _run_complete(harness.outputs, 'run-budget')['halt']
+    assert halt['pr_id'] == 'pr-1'
+    assert halt['phase'] == 'core'
+    assert halt['role'] == 'implementation'
+    assert halt['spend_usd'] == 1.07
+    # The implementation ceiling from the harness series, not a fix or review one.
+    assert halt['cap_usd'] == series.governance.budgets.implementation
+
+
+def test_a_fix_budget_halt_reports_the_fix_ceiling_not_the_implementation_one(
+    harness: Harness,
+) -> None:
+    """A repair exhausting its own smaller cap is a different diagnosis, so it must not
+    be reported against the implementation budget."""
+    series = replace(
+        harness.series,
+        review=Review(blocking=True, max_fix_attempts=1),
+        checks=(Check(name='red', run=_FAIL_CMD, blocking=True),),
+        governance=replace(
+            harness.series.governance,
+            budgets=Budgets(implementation=9.0, review=1.0, fix=0.25),
+        ),
+        prs=(PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),),
+    )
+    outcome = run_series(
+        series,
+        harness.repo,
+        # implementation ok, then the FIX spawn is budget-cut
+        spawn=FakeSpawn([ok_result(), _budget_result(0.26)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-fixbudget',
+    )
+    assert outcome == RunOutcome('budget', False, EXIT_BUDGET)
+
+    halt = _run_complete(harness.outputs, 'run-fixbudget')['halt']
+    assert halt['role'] == 'fix'
+    assert halt['cap_usd'] == 0.25
+    assert halt['cap_usd'] != 9.0
+
+
+def test_a_blocked_halt_reports_the_gate_and_no_money(harness: Harness) -> None:
+    """No ceiling caused it, so reporting one would send the reader after the wrong fix."""
+    series = replace(
+        harness.series,
+        review=Review(blocking=True, max_fix_attempts=0),
+        checks=(Check(name='red', run=_FAIL_CMD, blocking=True),),
+        prs=(PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),),
+    )
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-blocked',
+    )
+    assert outcome == RunOutcome('blocked', False, EXIT_BLOCKED)
+
+    halt = _run_complete(harness.outputs, 'run-blocked')['halt']
+    assert halt['pr_id'] == 'pr-1'
+    assert halt['phase'] == 'core'
+    assert halt['role'] == 'gate'
+    assert halt['spend_usd'] is None
+    assert halt['cap_usd'] is None
+
+
+def test_a_clean_run_carries_no_halt(harness: Harness) -> None:
+    series = replace(
+        harness.series,
+        checks=(Check(name='green', run=_PASS_CMD, blocking=True),),
+        prs=(PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),),
+    )
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-clean',
+    )
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert _run_complete(harness.outputs, 'run-clean')['halt'] is None
+
+
+def test_every_spawn_line_records_its_classification(harness: Harness) -> None:
+    """The verdict that drove control flow is now on the line, not inferred from exit_code.
+
+    A budget cut and an auth failure can both exit 1, so the inference a consumer had to
+    make was wrong exactly when it mattered.
+    """
+    series = replace(
+        harness.series,
+        checks=(Check(name='green', run=_PASS_CMD, blocking=True),),
+        prs=(PR(id='pr-1', branch='pr-1', prompt='impl.md', phase='core'),),
+    )
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([_budget_result(0.5)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-class',
+    )
+    spawns = [
+        e
+        for e in _events_of(_read_events(harness.outputs), 'spawn_complete')
+        if e['run_id'] == 'run-class'
+    ]
+    assert [e['classification'] for e in spawns] == ['budget']
