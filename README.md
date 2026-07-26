@@ -1,23 +1,67 @@
-# convoy
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/convoy-hero-dark.svg">
+  <img alt="convoy" src="assets/convoy-hero-light.svg" width="100%">
+</picture>
 
-[![CI](https://github.com/grimaldost/convoy/actions/workflows/ci.yml/badge.svg)](https://github.com/grimaldost/convoy/actions/workflows/ci.yml)
+[![ci](https://img.shields.io/github/actions/workflow/status/grimaldost/convoy/ci.yml?style=flat-square&labelColor=2A3238&label=ci)](https://github.com/grimaldost/convoy/actions/workflows/ci.yml)
+[![version](https://img.shields.io/github/v/tag/grimaldost/convoy?style=flat-square&labelColor=2A3238&color=7F4400&label=version)](CHANGELOG.md)
+[![python](https://img.shields.io/badge/python-3.14%2B-7F4400?style=flat-square&labelColor=2A3238)](pyproject.toml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-7F4400?style=flat-square&labelColor=2A3238)](LICENSE)
 
-Governed, measurable multi-PR execution: decompose work into a series of
-PR-sized tasks, drive a coding agent to implement each one, gate every result
-against deterministic checks, integrate the green branches, and record what
-each step cost.
+**convoy** decomposes work into a series of PR-sized tasks, drives a coding
+agent to implement each one, gates every result against deterministic checks,
+integrates the green branches, and records what each step cost.
 
-- **Governed** — model, effort, permission mode, per-phase budgets and tool
-  allow-lists are pinned once per series, so every spawn runs under the same
-  audited rules.
-- **Gated** — deterministic checks (lint, types, tests, your own oracles) are
-  the sole merge arbiter; a blocking red triggers a bounded fix loop, never a
-  silent merge.
-- **Measurable** — an append-only telemetry ledger records per-spawn cost,
-  tokens, turns, and per-check gate outcomes, so a run can be audited and
-  reconstructed after the fact.
+## Quick start
 
-## How a run works
+Requirements: git, [uv](https://docs.astral.sh/uv/), and a co-located
+authenticated Claude Code seat — convoy spawns `claude -p` per PR, so a real
+run spends real money (`validate` and `dry_run` are free).
+
+```sh
+uv tool install git+https://github.com/grimaldost/convoy
+
+convoy init demo                 # scaffold a runnable starter series
+cd demo/workspace
+convoy validate ../series.toml   # free preflight: spec, DAG, paths, assets
+convoy run ../series.toml        # the real thing: spawns one agent, gates, integrates
+```
+
+The starter series implements one trivial PR under a $1 budget with one
+blocking check, so the first run costs cents. Afterwards, look at
+`demo/outputs/spawns.jsonl` — the telemetry ledger (economy + gate events) —
+and the workspace's `integration` branch, the merged result.
+
+`convoy run` and `convoy validate` use the current directory as the scored
+workspace — run them from the workspace, pointing at the series file — or name
+it explicitly with `--workspace <dir>` (`-w`) to drive a tree your shell is not
+sitting in.
+
+To drive convoy from an agent instead, install it as a **Claude Code plugin**:
+
+```sh
+claude plugin marketplace add grimaldost/convoy
+claude plugin install convoy@convoy
+```
+
+Either CLI route installs the `convoy` command, aliased `cvy` (clone and
+`uv sync` for development); the plugin route installs only the MCP tools.
+
+## How it works
+
+**Governed** — model, effort, permission mode, per-phase budgets and tool
+allow-lists are pinned once per series, so every spawn runs under the same
+audited rules.
+
+**Gated** — deterministic checks (lint, types, tests, your own oracles) are
+the sole merge arbiter; a blocking red triggers a bounded fix loop, never a
+silent merge.
+
+**Measurable** — an append-only telemetry ledger records per-spawn cost,
+tokens, turns, and per-check gate outcomes, so a run can be audited and
+reconstructed after the fact.
+
+A run, step by step:
 
 1. **Preflight.** The series file, DAG, paths, and check assets are validated
    (free); a real run then probes that the agent seat is authenticated — a
@@ -38,49 +82,6 @@ each step cost.
 
 Everything the run did — spawns, costs, gate verdicts, skips, outcome — is in
 `outputs/spawns.jsonl`.
-
-**Requirements:** git, [uv](https://docs.astral.sh/uv/), and a co-located
-authenticated Claude Code seat (convoy spawns `claude -p` per PR; a real run
-spends real money — `validate` and `dry_run` are free).
-
-## Install
-
-As a **Claude Code plugin** (MCP tools, for driving convoy from an agent):
-
-```
-claude plugin marketplace add grimaldost/convoy
-claude plugin install convoy@convoy
-```
-
-As a **CLI**:
-
-```
-uv tool install git+https://github.com/grimaldost/convoy
-```
-
-(or clone and `uv sync` for development). Either CLI route installs the
-`convoy` command, aliased `cvy`; the plugin route installs only the two MCP
-tools.
-
-## Quickstart (CLI)
-
-```
-convoy init demo          # scaffold a runnable starter series
-cd demo/workspace
-convoy validate ../series.toml   # free preflight: spec, DAG, paths, assets
-convoy run ../series.toml        # the real thing: spawns one agent, gates, integrates
-```
-
-The starter series implements one trivial PR under a $1 budget with one
-blocking check, so the first run costs cents. Afterwards, look at:
-
-- `demo/outputs/spawns.jsonl` — the telemetry ledger (economy + gate events);
-- the workspace's `integration` branch — the merged result.
-
-`convoy run` and `convoy validate` use the current directory as the scored
-workspace — run them from the workspace, pointing at the series file — or name
-it explicitly with `--workspace <dir>` (`-w`) to drive a tree your shell is not
-sitting in.
 
 ## The series file
 
@@ -200,14 +201,19 @@ gate verdict, governance, telemetry model, pricing) and imports nothing from
 plus the CLI and the MCP server — both thin surfaces over one shared run
 service.
 
-Design docs: [docs/design/](docs/design/) (overview, gate, formats, serving).
-Decision records: [docs/adr/](docs/adr/README.md). Invariants:
-[docs/GUARDRAILS.md](docs/GUARDRAILS.md). Docs map:
-[docs/README.md](docs/README.md).
+## Documentation
+
+- [docs/README.md](docs/README.md) — docs map and reading order.
+- [docs/design/](docs/design/) — design docs: overview, gate, formats, serving.
+- [docs/adr/](docs/adr/README.md) — decision records.
+- [docs/GUARDRAILS.md](docs/GUARDRAILS.md) — non-negotiable invariants.
+- [skills/convoy/SKILL.md](skills/convoy/SKILL.md) — driving convoy from an
+  agent: tools, series.toml schema, result envelope.
+- [assets/README.md](assets/README.md) — brand assets and usage.
 
 ## Development
 
-```
+```sh
 uv sync
 uv run ruff check src tests && uv run ruff format --check src tests
 uv run ty check src

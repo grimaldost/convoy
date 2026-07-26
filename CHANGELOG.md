@@ -35,6 +35,11 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   consumer that has been reading `advisories[0]` since 0.3.0 still finds that one there
   (`core/preflight.py`, `interface/preflight_probe.py`). Serves backlog row T26a.
 
+- **A visual identity.** `assets/` now carries the brand kit — mark, wordmark, lockup,
+  README hero, and social-preview card, in light and dark — as self-contained SVGs:
+  every shape is a drawn path, so nothing depends on an installed font or a network
+  fetch. Tokens, embedding, and usage rules live in `assets/README.md`.
+
 ### Changed
 
 - **The release-tag workflow now gates the release page too.** No behaviour change to
@@ -49,6 +54,13 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   in. `CONTRIBUTING.md` gains publishing the release as step 4, and names which artifact
   carries which weight: the tag is what the marketplace serves, the release is what the
   front page advertises.
+
+- **The README opens with the front door.** Hero banner and badge row first, the pitch
+  in one paragraph, and the quick start — install, scaffold, validate, run — within the
+  first screenful, ahead of the concept walkthrough; the reference sections are
+  unchanged in substance, and the docs links consolidate under one Documentation
+  heading. Also fixes the plugin-install note that still counted two MCP tools while
+  the agent-surface section on the same page listed three.
 
 ## [0.7.0] - 2026-07-25
 
