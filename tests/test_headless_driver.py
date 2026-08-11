@@ -1122,6 +1122,48 @@ def test_a_spawn_that_ran_close_to_its_cap_is_flagged_on_its_telemetry_line(
     assert spawns[0]['budget_nearing'] is True
 
 
+def test_every_spawn_line_records_the_effort_it_was_requested_at(harness: Harness) -> None:
+    """The CLI reports nothing back about effort and only warns on a value it does not know.
+
+    So without this the series file and the ledger could agree on a level the spawn never
+    ran at — the exact comparison the ledger exists to support, quietly wrong.
+    """
+    series = _marker_series(harness, max_fix_attempts=1)
+    series = replace(series, governance=replace(series.governance, effort='xhigh'))
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-effort',
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert [line['effort'] for line in spawns] == ['xhigh', 'xhigh']
+
+
+def test_a_prs_own_effort_is_what_its_spawn_line_records(harness: Harness) -> None:
+    """The recorded value is the RESOLVED one, so a per-PR override is visible in the ledger."""
+    series = _one_pr_series(harness.series)
+    series = replace(series, prs=(replace(series.prs[0], effort='max'),))
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-effort-pr',
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawns[0]['effort'] == 'max'
+
+
 def test_an_ordinary_spawn_carries_its_cap_and_is_not_flagged(harness: Harness) -> None:
     """Every line carries the ceiling it ran under; only a hot one is flagged."""
     series = _one_pr_series(harness.series)

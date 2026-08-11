@@ -16,7 +16,22 @@ from typing import Any, cast
 
 import tomli_w
 
-PERMISSION_MODES = frozenset({'default', 'acceptEdits', 'plan', 'bypassPermissions'})
+# The permission modes the agent CLI accepts. ``default`` is legacy — absent from the CLI's
+# own advertised choice list but still accepted — and is kept because existing series files
+# set it. The other six are the advertised set; convoy's earlier four-value list rejected
+# three modes the CLI supports, which is a spec that refuses valid input.
+PERMISSION_MODES = frozenset(
+    {'default', 'acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan'}
+)
+
+# The effort levels the agent CLI accepts. Allow-listed for a sharper reason than
+# ``permission_mode``: the CLI REJECTS an unknown permission mode, so a typo there fails
+# loudly on its own. An unknown ``--effort`` value only prints a warning and runs at the
+# CLI's default — so an unvalidated typo produces a run whose series file and whose ledger
+# both claim a level the spawn never used. For a tool whose product is comparable
+# measurement that is the worst failure shape available: silent, undetectable downstream,
+# and it corrupts exactly the comparison the ledger exists to support.
+EFFORT_LEVELS = frozenset({'low', 'medium', 'high', 'xhigh', 'max'})
 
 # Budgets are PER-ROLE (``Budgets(implementation, review, fix)``, read via
 # ``getattr(governance.budgets, role)``), so a per-PR scalar ``budget`` has no role to
@@ -221,6 +236,27 @@ def _optional_nonempty_str(data: Mapping[str, Any], key: str, where: str) -> str
     return value
 
 
+def _in_choices(value: str, key: str, where: str, allowed: frozenset[str]) -> str:
+    """``value`` if it is in ``allowed``, else a located :class:`SpecError` naming the set."""
+    if value not in allowed:
+        choices = ', '.join(sorted(allowed))
+        raise SpecError(f'{where}: {key} {value!r} not in {{{choices}}}')
+    return value
+
+
+def _require_choice(data: Mapping[str, Any], key: str, where: str, allowed: frozenset[str]) -> str:
+    """A required string field constrained to ``allowed``."""
+    return _in_choices(_require_str(data, key, where), key, where, allowed)
+
+
+def _optional_choice(
+    data: Mapping[str, Any], key: str, where: str, allowed: frozenset[str]
+) -> str | None:
+    """An optional string field constrained to ``allowed`` when present."""
+    value = _optional_nonempty_str(data, key, where)
+    return None if value is None else _in_choices(value, key, where, allowed)
+
+
 def _require_str_tuple(data: Mapping[str, Any], key: str, where: str) -> tuple[str, ...]:
     if key not in data:
         raise SpecError(f'{where}: missing required field {key!r}')
@@ -286,13 +322,9 @@ def _parse_tools(data: Mapping[str, Any]) -> Tools:
 
 def _parse_governance(data: Mapping[str, Any]) -> Governance:
     where = '[governance]'
-    permission_mode = _require_str(data, 'permission_mode', where)
-    if permission_mode not in PERMISSION_MODES:
-        allowed = ', '.join(sorted(PERMISSION_MODES))
-        raise SpecError(f'{where}: permission_mode {permission_mode!r} not in {{{allowed}}}')
     return Governance(
-        effort=_require_str(data, 'effort', where),
-        permission_mode=permission_mode,
+        effort=_require_choice(data, 'effort', where, EFFORT_LEVELS),
+        permission_mode=_require_choice(data, 'permission_mode', where, PERMISSION_MODES),
         timeout_seconds=_require_int(data, 'timeout_seconds', where),
         budgets=_parse_budgets(_require_table(data, 'budgets', where)),
         tools=_parse_tools(_require_table(data, 'tools', where)),
@@ -369,7 +401,7 @@ def _parse_pr(data: Mapping[str, Any], index: int) -> PR:
         depends_on=_optional_str_tuple(data, 'depends_on', where),
         model=_optional_nonempty_str(data, 'model', where),
         tier=_optional_nonempty_str(data, 'tier', where),
-        effort=_optional_nonempty_str(data, 'effort', where),
+        effort=_optional_choice(data, 'effort', where, EFFORT_LEVELS),
     )
 
 

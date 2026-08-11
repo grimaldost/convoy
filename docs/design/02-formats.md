@@ -23,10 +23,21 @@ PR-sized tasks plus the governance and gate that apply to them.
 | `[[checks]]` | `name`, `run`, `blocking`, `independent`, `asset`, `repair_hint`, `phases` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)); `asset` is an optional absolute out-of-tree path to a blocking independent check's oracle; `repair_hint` is an optional one-line repair recipe (a command or instruction) appended verbatim to the fix brief when THAT check fails; `phases` is an optional list of `[[prs]].phase` tags this check gates, empty (the default) meaning every PR |
 | `[[prs]]` | `id`, `branch`, `prompt`, `phase`, `depends_on`, `model`, `tier`, `effort` | The PR decomposition as a DAG; `model`/`tier`/`effort` are optional per-PR overrides |
 
-`permission_mode` ∈ {`default`, `acceptEdits`, `plan`, `bypassPermissions`};
-convoy never *forces* `bypassPermissions` (a caller may set it; the field is
-required and passed through unchanged — convoy supplies no permission mode of
-its own). Per-PR governance follows four rules:
+`permission_mode` ∈ {`acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`,
+`plan`} plus the legacy `default`; convoy never *forces* `bypassPermissions` (a caller
+may set it; the field is required and passed through unchanged — convoy supplies no
+permission mode of its own).
+
+`effort` ∈ {`low`, `medium`, `high`, `xhigh`, `max`}, allow-listed at load like
+`permission_mode` and for a sharper reason. The agent CLI *rejects* an unknown permission
+mode, so a typo there fails loudly on its own; it only *warns* on an unknown effort and
+then runs at its own default. An unvalidated typo therefore produced a run whose series
+file and whose ledger both named a level the spawn never used — silent, undetectable
+downstream, and corrupting exactly the comparison the ledger exists to support. The
+resolved value is now also recorded on each `spawn_complete` line as `effort`, so a
+divergence is at least visible after the fact.
+
+Per-PR governance follows four rules:
 
 1. A `[[prs]]` `model`/`tier`/`effort` key wins for that PR; `[governance]` is the
    fallback when the key is absent.
@@ -176,7 +187,7 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 |---|---|---|
 | `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id`, `advisories` (list of `{kind, where, message}`; `[]` when pre-flight had nothing to say) |
 | `spawn_start` | once per agent spawn, immediately before it launches | `schema_version`, `event`, `run_id`, `pr_id`, `role` |
-| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `classification`, `budget_cap_usd`, `budget_nearing` |
+| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `effort`, `classification`, `budget_cap_usd`, `budget_nearing` |
 | `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
 | `pr_skipped` | for each PR the run never processed because an earlier PR halted the series | `schema_version`, `event`, `run_id`, `pr_id`, `reason` |
 | `run_complete` | once per `convoy run` | `schema_version`, `event`, `run_id`, `outcome`, `integrated`, `halt` |

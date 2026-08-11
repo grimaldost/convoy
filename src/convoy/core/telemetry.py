@@ -107,6 +107,12 @@ class SpawnComplete:
     duration_s: float
     cost_usd: float
     effective_model: str
+    # The effort level this spawn was REQUESTED at. Unlike the model, the CLI reports
+    # nothing back about effort, so there is no effective counterpart to record — which is
+    # exactly why the requested value belongs here. It was previously written down only in
+    # the series file, so a run and its ledger could both agree on a level the spawn never
+    # ran at. Empty for a caller that does not supply one.
+    effort: str = ''
     cost_estimated: bool = False
     output_tail: str = ''
     # The ceiling this spawn ran under — the resolved ``[governance.budgets].<role>`` value,

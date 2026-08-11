@@ -116,6 +116,25 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- **`effort` is validated at load, and recorded on every spawn line.** It was an
+  unvalidated free-form string. Verified against the installed agent CLI: an unknown
+  `--effort` value prints a warning on stderr, then runs at the CLI's own default and exits
+  `0`. So a typo produced a run whose series file and whose ledger both claimed a level the
+  spawn never used — silent, undetectable downstream, and corrupting exactly the comparison
+  the ledger exists to support. `effort` now gets the allow-list treatment `permission_mode`
+  already had (`low`, `medium`, `high`, `xhigh`, `max`), on `[governance]` and on a per-PR
+  override alike, and the resolved value is written on each `spawn_complete` line as
+  `effort` so a divergence is at least visible after the fact.
+
+  `PERMISSION_MODES` is refreshed against the same CLI in the same change: it accepts
+  `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk` and `plan`, plus the
+  legacy `default`. convoy's four-value list was rejecting three modes the CLI supports
+  (`core/spec.py`, `core/telemetry.py`, `interface/drivers/headless.py`).
+  **(consumer-affecting: a new `effort` telemetry field; `[governance].effort` and
+  `[[prs]].effort` are now allow-listed, so a series carrying an unknown level — which
+  never ran at that level anyway — now fails pre-flight instead of running silently
+  mis-labelled)** Serves backlog row CONV-B06.
+
 - **A failing check's `detail` is now chosen by content rather than by stream, and cut at a
   line boundary.** `_red_detail` was `stderr.strip() or stdout.strip()`, so *any* content on
   stderr meant stdout was never read at all. The case that proves it: a subset-scoped pytest

@@ -248,6 +248,12 @@ escalates it on a measurement-integrity argument triage did not make, and adds t
 recording half. Ordered here on the review's reasoning; if the recording half proves
 awkward, the validation half alone still closes the silent case.
 
+**Status.** **Shipped** in `[Unreleased]`, both halves. `effort` is allow-listed at load
+(`low`/`medium`/`high`/`xhigh`/`max`) on `[governance]` and per PR, `PERMISSION_MODES` is
+refreshed to the CLI's six plus legacy `default`, and the resolved `effort` is recorded on
+`spawn_complete`. The accepted sets were read from the installed CLI's own flag help, not
+inferred.
+
 **Effort** S · **Source** [review] · **Row** T35b, escalated
 
 ### CONV-B07 — A spawn the agent CLI refuses at argument parse is scored as a clean result with zero economy, and the seat probe passes it.

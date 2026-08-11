@@ -7,6 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from convoy.core.spec import (
+    EFFORT_LEVELS,
     PERMISSION_MODES,
     PR,
     Branches,
@@ -163,6 +164,44 @@ def test_rule1_bool_is_not_int_for_timeout() -> None:
 def test_rule2_bad_permission_mode_raises() -> None:
     text = VALID_TOML.replace('permission_mode = "default"', 'permission_mode = "yolo"')
     with pytest.raises(SpecError):
+        load_series(text)
+
+
+@pytest.mark.parametrize('mode', sorted(PERMISSION_MODES))
+def test_every_mode_the_agent_cli_accepts_is_accepted_here(mode: str) -> None:
+    """The allow-list rejected three modes the CLI supports; a spec must not refuse valid input."""
+    text = VALID_TOML.replace('permission_mode = "default"', f'permission_mode = "{mode}"')
+    assert load_series(text).governance.permission_mode == mode
+
+
+@pytest.mark.parametrize('level', sorted(EFFORT_LEVELS))
+def test_every_effort_level_the_agent_cli_accepts_is_accepted_here(level: str) -> None:
+    text = VALID_TOML.replace('effort = "medium"', f'effort = "{level}"')
+    assert load_series(text).governance.effort == level
+
+
+def test_an_unknown_effort_is_rejected_at_load() -> None:
+    """The CLI only WARNS on an unknown effort and runs at its default.
+
+    So an unvalidated typo produces a run whose series file and whose ledger both claim a
+    level the spawn never ran at — silent, and undetectable downstream. Caught here instead,
+    the same treatment permission_mode already got.
+    """
+    text = VALID_TOML.replace('effort = "medium"', 'effort = "lo"')
+    with pytest.raises(SpecError, match='effort'):
+        load_series(text)
+
+
+def test_an_unknown_effort_names_the_levels_that_would_work() -> None:
+    text = VALID_TOML.replace('effort = "medium"', 'effort = "lo"')
+    with pytest.raises(SpecError, match='xhigh'):
+        load_series(text)
+
+
+def test_an_unknown_per_pr_effort_is_rejected_too() -> None:
+    """A per-PR typo is the same silent failure, one table further down."""
+    text = VALID_TOML.replace('id = "pr-1-lexer"', 'id = "pr-1-lexer"\neffort = "hgih"')
+    with pytest.raises(SpecError, match='effort'):
         load_series(text)
 
 
@@ -346,7 +385,7 @@ _MONEY = st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infin
 @st.composite
 def _series(draw: st.DrawFn) -> Series:
     governance = Governance(
-        effort=draw(_TEXT),
+        effort=draw(st.sampled_from(sorted(EFFORT_LEVELS))),
         permission_mode=draw(st.sampled_from(sorted(PERMISSION_MODES))),
         timeout_seconds=draw(st.integers(min_value=0, max_value=86_400)),
         budgets=Budgets(implementation=draw(_MONEY), review=draw(_MONEY), fix=draw(_MONEY)),
@@ -396,7 +435,7 @@ def _series(draw: st.DrawFn) -> Series:
                 depends_on=tuple(depends_on),
                 model=draw(st.none() | _TEXT),
                 tier=draw(st.none() | _TEXT),
-                effort=draw(st.none() | _TEXT),
+                effort=draw(st.none() | st.sampled_from(sorted(EFFORT_LEVELS))),
             )
         )
 

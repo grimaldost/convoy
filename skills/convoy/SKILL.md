@@ -252,10 +252,14 @@ least one entry.
   same value. A per-PR `budget` / `budgets` key is still rejected at load, because budgets
   are **per-role** (`implementation` / `review` / `fix`) and a per-PR scalar has no role
   to bind to.
-- **`permission_mode`** ∈ `default`, `acceptEdits`, `plan`, `bypassPermissions`. convoy
-  passes it through but never *forces* an auto-approve mode.
-- **`effort`** is required (no convoy-side default) and is passed through to the spawn
-  (e.g. `low`, `medium`, `high`).
+- **`permission_mode`** ∈ `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`,
+  `plan`, plus the legacy `default`. convoy passes it through but never *forces* an
+  auto-approve mode.
+- **`effort`** ∈ `low`, `medium`, `high`, `xhigh`, `max`. Required (no convoy-side default),
+  passed through to the spawn, and rejected at load if it is not one of those — the agent
+  CLI only *warns* on a level it does not know and then runs at its own default, so an
+  unchecked typo would leave the series file and the ledger both naming a level nothing ran
+  at. The resolved value is recorded on each `spawn_complete` line.
 - **Required vs optional.** Every field in the table is required except nine, which
   default: `[[checks]].independent` (`false`), `[[checks]].asset` (`''`, unused),
   `[[checks]].repair_hint` (`''`, no hint), `[[checks]].phases` (`[]`, gates every PR),
