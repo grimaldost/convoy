@@ -11,8 +11,10 @@ demonstrate. It drives git only — never a spawn.
 """
 
 import json
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1198,6 +1200,94 @@ def test_a_reused_run_id_is_refused_before_anything_runs(
     payload = json.loads(result.stdout.strip())
     assert payload['outcome'] == 'usage'
     assert [p['kind'] for p in payload['problems']] == ['run_id']
+
+
+# --- status of a run whose driver is gone --------------------------------------------------
+#
+# The ledger records only completions, so "running" was derived from the absence of a
+# terminal line -- exactly what a killed driver leaves behind. The lock has always named its
+# owner; reading it back is what separates the two.
+
+
+def _dead_pid() -> int:
+    """A pid that named a real process and no longer does."""
+    child = subprocess.Popen([sys.executable, '-c', 'pass'], stdin=subprocess.DEVNULL)
+    pid = child.pid
+    child.wait()
+    return pid
+
+
+def _locked_workspace(tmp_path: Path, pid: int) -> Path:
+    """A workspace holding a run lock owned by ``pid``."""
+    workspace = tmp_path / 'ws'
+    (workspace / '.git').mkdir(parents=True, exist_ok=True)
+    lock_path(workspace).write_text(str(pid), encoding='utf-8')
+    return workspace
+
+
+def _unfinished_ledger(outputs: Path) -> None:
+    _ledger(
+        outputs,
+        [
+            {'schema_version': 1, 'event': 'run_start', 'run_id': 'r1', 'series_id': 'cli-test'},
+            _spawn_line('r1', 'pr-1', 0.4),
+        ],
+    )
+
+
+def test_status_reports_dead_when_the_lock_owner_is_gone(tmp_path: Path) -> None:
+    series_file, outputs = _status_series(tmp_path)
+    _unfinished_ledger(outputs)
+    workspace = _locked_workspace(tmp_path, _dead_pid())
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '-w', str(workspace), '--json'])
+    assert result.exit_code == EXIT_OK
+
+    payload = json.loads(result.stdout.strip())
+    assert payload['state'] == 'dead'
+    # The terminal fields stay null -- dead is not an outcome, it is the absence of one.
+    assert payload['outcome'] is None
+    assert payload['ok'] is False
+    # The economy is final rather than partial, and the message says how to recover.
+    assert payload['economy']['total_cost_usd'] == 0.4
+    assert 'resume' in payload['message']
+
+
+def test_status_stays_running_while_the_lock_owner_lives(tmp_path: Path) -> None:
+    series_file, outputs = _status_series(tmp_path)
+    _unfinished_ledger(outputs)
+    workspace = _locked_workspace(tmp_path, os.getpid())
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '-w', str(workspace), '--json'])
+
+    assert json.loads(result.stdout.strip())['state'] == 'running'
+
+
+def test_status_stays_running_when_no_lock_is_there_to_read(tmp_path: Path) -> None:
+    """Asking from a directory that holds no lock is the commonest way to be wrong.
+
+    A false ``dead`` sends an operator to restart a run that is still spending, so the
+    claim is made only on positive evidence: a lock naming a process that is gone.
+    """
+    series_file, outputs = _status_series(tmp_path)
+    _unfinished_ledger(outputs)
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '-w', str(elsewhere), '--json'])
+
+    assert json.loads(result.stdout.strip())['state'] == 'running'
+
+
+def test_status_human_output_says_how_to_recover_a_dead_run(tmp_path: Path) -> None:
+    series_file, outputs = _status_series(tmp_path)
+    _unfinished_ledger(outputs)
+    workspace = _locked_workspace(tmp_path, _dead_pid())
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '-w', str(workspace)])
+
+    assert 'dead' in result.stdout
+    assert 'convoy clean' in result.stdout
 
 
 # --- status of a detached run that never reached the ledger -------------------------------

@@ -71,6 +71,13 @@ _WORKSPACE_HELP = (
 )
 
 
+_STATUS_WORKSPACE_HELP = (
+    'The git repository the run operates on. Read for one thing: the run lock names its '
+    'owner, which is what separates a run still going from one whose driver is gone. '
+    'Defaults to the current directory; nothing is written to it.'
+)
+
+
 def _workspace_or_exit(workspace: Path | None) -> Path:
     """Resolve the workspace — ``--workspace`` when given, else the cwd — or exit ``EXIT_USAGE``.
 
@@ -371,25 +378,29 @@ def status(
             help='Which run to report. Defaults to the most recent one in the ledger.',
         ),
     ] = '',
+    workspace: Annotated[
+        Path | None, typer.Option('--workspace', '-w', help=_STATUS_WORKSPACE_HELP)
+    ] = None,
     json_summary: Annotated[
         bool, typer.Option('--json', help='Print the envelope as one JSON object.')
     ] = False,
 ) -> None:
     """Report a run's state and economy so far — including a run still in progress.
 
-    Reads only the append-only ledger under ``[paths].outputs``, so it works for a run this
+    Reads the append-only ledger under ``[paths].outputs``, so it works for a run this
     process never started: the supported long-run pattern is ``convoy run`` in a background
-    shell, and this is how you ask that run how it is doing. It spends nothing and never
-    touches the workspace, so polling is cheap and safe.
+    shell, and this is how you ask that run how it is doing. It spends nothing and writes
+    nothing, so polling is cheap and safe.
 
     ``state`` is the field to read first — ``running`` (no terminal record yet; the economy
-    is a partial running total), ``finished`` (the outcome fields are meaningful), or
+    is a partial running total), ``dead`` (no terminal record and the process that would
+    have written one is gone), ``finished`` (the outcome fields are meaningful), or
     ``unknown`` (nothing recorded under that id yet, which is not an error). The exit code
     is ``0`` whenever the status could be read, whatever the run's own outcome was: this
     verb reports, it does not adopt the run's verdict.
     """
     series = _load_or_exit(series_file)
-    envelope = status_of(series, run_id=run_id)
+    envelope = status_of(series, run_id=run_id, workspace=_workspace_or_exit(workspace))
     if json_summary:
         typer.echo(json.dumps(envelope))
         return
@@ -403,6 +414,8 @@ def status(
         f'  spawns {economy["spawn_count"]}, turns {economy["num_turns"]}, '
         f'${economy["total_cost_usd"]:.2f}{" (estimated)" if economy["cost_estimated"] else ""}'
     )
+    if state == 'dead':
+        typer.echo(f'  {envelope["message"]}')
     if state == 'finished':
         typer.echo(f'  outcome {envelope["outcome"]}, integrated {envelope["integrated"]}')
         halt = envelope['halt']

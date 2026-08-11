@@ -15,6 +15,30 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **A run whose driver is gone now reads `dead` instead of `running` forever.** The ledger
+  records only completions, so `convoy_status` derived `running` from the *absence* of a
+  terminal line — which is precisely what a hard-killed driver leaves behind. Two runs on
+  disk (9 spawns, about $47) have no terminal record at all and reported `running`
+  indefinitely, and every driver death in the last campaign was diagnosed by hand with an
+  OS process query.
+
+  The fact was already on disk and unused: a run takes the workspace lock before its first
+  ledger line and holds it to the end, and that lock has always recorded its owner's pid.
+  `convoy status` and `convoy_status` now accept a `--workspace` / `workspace` argument and
+  read it — nothing else, nothing written — so a run with ledger lines, no `run_complete`,
+  and a lock naming a process that no longer exists is reported `dead`, with a `message`
+  naming the recovery. The terminal fields stay `null`, because `dead` is the absence of an
+  outcome rather than one of them, and the economy is final rather than partial.
+
+  Deliberately one-sided: `dead` is claimed only on the positive evidence of a lock whose
+  owner is gone. No lock, or no `workspace` argument, reads `running` exactly as before —
+  the commonest way to see no lock is asking from the wrong directory, and a false `dead`
+  would send an operator to restart a run that is still spending
+  (`interface/workspace_lock.py`, `interface/proc.py`, `interface/run_summary.py`,
+  `interface/cli.py`, `interface/mcp/server.py`). **(consumer-affecting: `state` gains the
+  value `dead`; a consumer branching on `running` / `finished` / `unknown` must add it
+  rather than fall through)** Serves backlog row CONV-B02 (a).
+
 - **A spawn that runs close to its cap now says so, while there is still a run to save.**
   `spawn_complete` carries two new fields: `budget_cap_usd`, the ceiling that spawn ran
   under, and `budget_nearing`, true once the spend reaches 90% of it. The same moment is

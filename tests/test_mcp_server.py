@@ -6,6 +6,8 @@ plugin is needed.
 
 import asyncio
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +23,7 @@ from convoy.interface.mcp.server import (
     convoy_run,
     summarize_run,
 )
-from convoy.interface.workspace_lock import WorkspaceBusyError
+from convoy.interface.workspace_lock import WorkspaceBusyError, lock_path
 
 
 def _tools() -> dict[str, Any]:
@@ -112,7 +114,7 @@ def test_every_tool_schema_documents_every_parameter() -> None:
             'detach',
         },
         'convoy_init': {'directory'},
-        'convoy_status': {'series_file', 'run_id'},
+        'convoy_status': {'series_file', 'run_id', 'workspace'},
     }
     for name, params in expected.items():
         props = tools[name].inputSchema['properties']
@@ -795,3 +797,49 @@ def test_an_advisory_from_another_run_does_not_leak_in(tmp_path: Path) -> None:
     envelope = summarize_run(telem, run_id='r', series_id='s', outcome=None)
 
     assert envelope['advisories'] == []
+
+
+# --- convoy_status: the workspace is what makes "dead" answerable --------------------------
+
+
+def test_status_reports_dead_when_the_given_workspace_lock_owner_is_gone(tmp_path: Path) -> None:
+    prompts, outputs = tmp_path / 'prompts', tmp_path / 'outputs'
+    prompts.mkdir()
+    outputs.mkdir()
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    _write_jsonl(
+        outputs / 'spawns.jsonl',
+        [{'schema_version': 1, 'event': 'run_start', 'run_id': 'r', 'series_id': 'mcp-test'}],
+    )
+    workspace = tmp_path / 'ws'
+    (workspace / '.git').mkdir(parents=True)
+    child = subprocess.Popen([sys.executable, '-c', 'pass'], stdin=subprocess.DEVNULL)
+    dead_pid = child.pid
+    child.wait()
+    lock_path(workspace).write_text(str(dead_pid), encoding='utf-8')
+
+    envelope = asyncio.run(
+        srv.convoy_status(str(series_file), run_id='r', workspace=str(workspace))
+    )
+
+    assert envelope['state'] == 'dead'
+
+
+def test_status_without_a_workspace_answers_exactly_as_before(tmp_path: Path) -> None:
+    """The server's cwd is not the caller's, so an absent workspace is never guessed at."""
+    prompts, outputs = tmp_path / 'prompts', tmp_path / 'outputs'
+    prompts.mkdir()
+    outputs.mkdir()
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    _write_jsonl(
+        outputs / 'spawns.jsonl',
+        [{'schema_version': 1, 'event': 'run_start', 'run_id': 'r', 'series_id': 'mcp-test'}],
+    )
+
+    envelope = asyncio.run(srv.convoy_status(str(series_file), run_id='r'))
+
+    assert envelope['state'] == 'running'

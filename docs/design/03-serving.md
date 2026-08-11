@@ -123,10 +123,11 @@ console text (`interface/mcp/server.py`):
 - **`convoy_init(directory)`** — scaffold the runnable starter series and
   return `{ok, created, series_file, workspace, next}`, naming the paths to
   hand straight to `convoy_run`.
-- **`convoy_status(series_file, run_id='')`** — report a run's state and
-  economy so far from the ledger alone, including a run still in progress and a
-  run this server never started. Spends nothing, holds no state between calls,
-  never touches the workspace.
+- **`convoy_status(series_file, run_id='', workspace='')`** — report a run's state
+  and economy so far from the ledger, including a run still in progress and a run
+  this server never started. Spends nothing, holds no state between calls, writes
+  nothing. `workspace` is optional and read for exactly one thing: the run lock
+  there names its owner process, which is what tells `dead` apart from `running`.
 
 Each tool offloads its blocking work with `asyncio.to_thread`, which keeps the
 server's event loop responsive — but `convoy_run` itself still blocks until the
@@ -174,6 +175,26 @@ exits. Convoy does not attempt `CREATE_BREAKAWAY_FROM_JOB` — that limit is usu
 a deliberate host policy, and breaking out of it silently would be worse than
 honouring it. A run killed that way stops advancing, which is what `convoy_status`
 reports.
+
+### A run whose driver is gone
+
+The ledger records only completions, so `running` was derived from the *absence* of a
+terminal line — which is exactly what a killed driver leaves behind. Every correct
+long-run integration therefore reimplemented an OS process query on the side.
+
+The lock supplies the missing fact. A run acquires the workspace lock before it writes its
+first ledger line and holds it until it returns, and the lock has always recorded its
+owner's pid; nothing read it back. `convoy_status`, given a `workspace`, does: a run with
+ledger lines, no `run_complete`, and a lock naming a process that no longer exists is
+`dead`. The terminal fields stay `null` — `dead` is the absence of an outcome, not one of
+them — and the economy is final rather than partial.
+
+Two limits are deliberate. **`dead` is claimed only on positive evidence**: no lock file at
+all reads `running`, because the commonest way to see that is asking from the wrong
+directory, and a false `dead` sends an operator to restart a run that is still spending.
+And **a pid is reusable** once its process is gone, so a live check cannot answer for a run
+that died last week and whose lock has since been cleared; repairing that history needs a
+terminal line written down at the moment the lock is cleared, not a query afterwards.
 
 **The result envelope** is built by `summarize_run`: it reads the on-disk
 `spawns.jsonl`, keeps only the lines tagged with this run's `run_id` (the file

@@ -360,13 +360,18 @@ async def convoy_init(
     return await asyncio.to_thread(_init_impl, directory)
 
 
-def _status_impl(series_file: str, run_id: str) -> dict[str, Any]:
-    """Load the series and read its ledger for the run's state (sync)."""
+def _status_impl(series_file: str, run_id: str, workspace: str) -> dict[str, Any]:
+    """Load the series and read its ledger for the run's state (sync).
+
+    An empty ``workspace`` is not guessed at: the server's working directory is not the
+    caller's, so a cwd fallback would read a lock belonging to some other tree. Without one,
+    the answer is what it always was — a run with no terminal record reads ``running``.
+    """
     try:
         series = load_series(Path(series_file).read_text(encoding='utf-8'))
     except (OSError, UnicodeDecodeError, SpecError) as exc:
         return {'ok': False, 'outcome': 'usage', 'error_kind': error_kind(exc), 'error': str(exc)}
-    return status_of(series, run_id=run_id)
+    return status_of(series, run_id=run_id, workspace=Path(workspace) if workspace else None)
 
 
 async def convoy_status(
@@ -390,19 +395,35 @@ async def convoy_status(
             )
         ),
     ] = '',
+    workspace: Annotated[
+        str,
+        Field(
+            description=(
+                'Absolute path to the git repository the run operates on. Optional, and read '
+                'for exactly one thing: the run lock there names its owner process, which is '
+                'what separates a run still going from one whose driver died. Nothing is '
+                'written. Omit it and a run with no terminal record reads "running", as '
+                'before — so pass it whenever you want "dead" to be answerable.'
+            )
+        ),
+    ] = '',
 ) -> dict[str, Any]:
     """Report a convoy run's state and economy so far — including one still in progress.
 
-    Reads only the append-only ledger, so it works for a run **this server never started**:
+    Reads the append-only ledger, so it works for a run **this server never started**:
     the supported long-run pattern is ``convoy run`` in a background shell, and this is how
     you ask that run how it is doing. It spends nothing, holds no state between calls, and
-    never touches the workspace, so polling is cheap and safe.
+    writes nothing, so polling is cheap and safe.
 
     Returns the same envelope ``convoy_run`` does, plus a **``state``** to branch on first:
 
       - ``running`` — no ``run_complete`` line yet. ``outcome`` / ``integrated`` /
         ``exit_code`` are ``null`` and the ``economy`` is a partial running total (what it
         has spent so far), which is the useful thing to watch.
+      - ``dead`` — no ``run_complete`` line and the process that would have written one is
+        gone (the workspace lock names a pid that no longer exists). The terminal fields are
+        ``null`` and will stay that way; the economy is final, not partial. Only reachable
+        when ``workspace`` is passed. ``message`` says how to recover.
       - ``finished`` — the terminal fields are meaningful, exactly as from ``convoy_run``,
         including ``halt`` on a non-completed run.
       - ``unknown`` — nothing recorded under that id (or an empty/absent ledger). Not an
@@ -411,8 +432,10 @@ async def convoy_status(
     Parameters:
       - ``series_file`` — absolute path to the series.toml whose outputs hold the ledger.
       - ``run_id`` — the run to report; defaults to the most recent one recorded.
+      - ``workspace`` — absolute path to the run's git repo; pass it to make ``dead``
+        answerable. Optional, read-only, never guessed.
     """
-    return await asyncio.to_thread(_status_impl, series_file, run_id)
+    return await asyncio.to_thread(_status_impl, series_file, run_id, workspace)
 
 
 def build_server() -> FastMCP:

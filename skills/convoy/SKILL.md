@@ -199,10 +199,18 @@ this call returns. A failed launch is the ordinary `outcome: "usage"` shape abov
 **`convoy_status`** — the same envelope `convoy_run` returns, plus a **`state`** to
 branch on first: `running` (no `run_complete` line yet, so `outcome` / `integrated` /
 `exit_code` are `null` and `economy` is a partial running total — the useful thing to
-watch), `finished` (the terminal fields are meaningful, `halt` included), or `unknown`
-(nothing recorded under that id — not an error, just a run that has not written its first
-line). A detached run that died before writing to the ledger reports `finished` with its
-own could-not-start envelope, read from `result_path`.
+watch), `dead` (the same null terminal fields, plus the fact that the process which would
+have filled them is gone, so the economy is final rather than partial; `message` says how
+to recover), `finished` (the terminal fields are meaningful, `halt` included), or
+`unknown` (nothing recorded under that id — not an error, just a run that has not written
+its first line). A detached run that died before writing to the ledger reports `finished`
+with its own could-not-start envelope, read from `result_path`.
+
+`dead` needs the optional `workspace` argument: the run lock in that repo names the
+process that owns the run, and that pid is the only thing separating a run still going
+from one that was killed. Without it a run with no terminal record reads `running`, as it
+always did. The claim is made only on positive evidence — a lock naming a process that no
+longer exists — so asking from a tree that holds no lock never yields a false `dead`.
 
 **`convoy_init`** — `{ ok, created, series_file, workspace, next }`: the paths
 written, and the `series_file` / `workspace` to hand straight to `convoy_run`.
