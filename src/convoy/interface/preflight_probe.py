@@ -11,6 +11,7 @@ The result is a :class:`~convoy.core.preflight.PreflightReport`: the blocking pr
 decide runnability, plus the non-blocking advisories that do not.
 """
 
+import hashlib
 from pathlib import Path
 
 from convoy.core.preflight import (
@@ -217,6 +218,54 @@ def gate_scope(series: Series, workspace: Path) -> list[Advisory]:
     ]
 
 
+def check_spec_pin(series: Series, workspace: Path) -> list[Problem]:
+    """A Problem when the pinned spec is missing, or has moved since decomposition.
+
+    A series records nowhere which spec it was decomposed from, so afterwards nobody can
+    answer "which version of which spec produced this run" — the same silent shape as an
+    unvalidated ``effort``: nothing fails at run time, and the comparison the ledger exists
+    to support is simply unavailable later. The pin closes it, and this is the half that
+    makes it load-bearing rather than decorative.
+
+    **Blocking, and before the first spawn is purchased**, which is what "before any paid
+    run" means: the point is that no paid run executes against a spec that has moved since
+    it was decomposed. Unlike a path detector this needs no heuristic and has no
+    false-positive budget — a hash matches or it does not.
+
+    Silent for a series with no pin, which is every series written before the key existed.
+    """
+    if not series.spec_path:
+        return []
+    resolved = workspace / series.spec_path
+    where = '[series]'
+    try:
+        actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    except OSError as exc:
+        return [
+            Problem(
+                kind='spec_pin',
+                where=where,
+                message=(
+                    f'the pinned spec cannot be read at {resolved}: {exc}. '
+                    'spec_path is resolved against the workspace and is repo-relative.'
+                ),
+            )
+        ]
+    if actual == series.spec_sha256:
+        return []
+    return [
+        Problem(
+            kind='spec_pin',
+            where=where,
+            message=(
+                f'the spec at {series.spec_path} has changed since this series was '
+                f'decomposed from it: pinned {series.spec_sha256}, found {actual}. '
+                'Re-decompose against the current spec, or update the pin deliberately.'
+            ),
+        )
+    ]
+
+
 def check_isolation(series: Series, workspace: Path) -> list[Problem]:
     """A Problem for each blocking independent check whose asset isolation fails closed."""
     problems: list[Problem] = []
@@ -241,6 +290,7 @@ def preflight(series: Series, workspace: Path) -> PreflightReport:
             *structural_problems(series),
             *check_prompts(series),
             *check_outputs(series, workspace),
+            *check_spec_pin(series, workspace),
             *check_isolation(series, workspace),
         ),
         # Appended after the existing producers, so a consumer that has been reading

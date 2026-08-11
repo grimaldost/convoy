@@ -1954,3 +1954,45 @@ def test_a_quiet_run_does_not_fire_the_advisory_hook(harness: Harness) -> None:
     )
 
     assert 'advisories' not in rec.names()
+
+
+# ---------------------------------------------------------------------------
+# The spec pin reaches the run record
+# ---------------------------------------------------------------------------
+
+
+def test_the_run_start_line_carries_the_series_spec_pin(harness: Harness) -> None:
+    """Without this the pin stops at the series file and no run can be joined to a spec."""
+    series = _one_pr_series(harness.series)
+    series = replace(series, spec_path='docs/specs/thing.md', spec_sha256='e' * 64)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-spec-pin',
+    )
+
+    (start,) = _events_of(_read_events(harness.outputs), 'run_start')
+    assert start['spec_path'] == 'docs/specs/thing.md'
+    assert start['spec_sha256'] == 'e' * 64
+
+
+def test_an_unpinned_series_records_empty_pin_fields(harness: Harness) -> None:
+    """Present and empty, so a consumer reads the keys unconditionally."""
+    run_series(
+        _one_pr_series(harness.series),
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-no-pin',
+    )
+
+    (start,) = _events_of(_read_events(harness.outputs), 'run_start')
+    assert start['spec_path'] == ''
+    assert start['spec_sha256'] == ''

@@ -498,3 +498,71 @@ def test_empty_tier_is_rejected() -> None:
     toml = VALID_TOML.replace('model = "claude-sonnet-5"', 'model = "claude-sonnet-5"\ntier = ""')
     with pytest.raises(SpecError, match='non-empty'):
         load_series(toml)
+
+
+# --- the spec pin: which spec this series was decomposed from -------------------------------
+
+_PIN_HASH = 'a' * 64
+
+
+def _with_pin(path: str = 'docs/specs/comparison-ops.md', digest: str = _PIN_HASH) -> str:
+    return VALID_TOML.replace(
+        'version = "1"',
+        f'version = "1"\nspec_path = "{path}"\nspec_sha256 = "{digest}"',
+        1,
+    )
+
+
+def test_a_series_carries_the_spec_it_was_decomposed_from() -> None:
+    series = load_series(_with_pin())
+    assert series.spec_path == 'docs/specs/comparison-ops.md'
+    assert series.spec_sha256 == _PIN_HASH
+
+
+def test_a_series_without_a_pin_parses_exactly_as_before() -> None:
+    series = load_series(VALID_TOML)
+    assert series.spec_path == ''
+    assert series.spec_sha256 == ''
+
+
+@pytest.mark.parametrize('key', ['spec_path', 'spec_sha256'])
+def test_half_a_pin_is_rejected(key: str) -> None:
+    """A path with no hash pins nothing; a hash with no path cannot be resolved."""
+    value = 'docs/spec.md' if key == 'spec_path' else _PIN_HASH
+    text = VALID_TOML.replace('version = "1"', f'version = "1"\n{key} = "{value}"', 1)
+    with pytest.raises(SpecError, match='together'):
+        load_series(text)
+
+
+@pytest.mark.parametrize('path', ['/abs/docs/spec.md', 'C:/abs/docs/spec.md'])
+def test_an_absolute_spec_path_is_rejected(path: str) -> None:
+    """A series directory travels by copy, so an absolute path is wrong on arrival.
+
+    A drive-letter path is rejected on every platform, not only on Windows: the series file
+    is what travels, so the machine that reads it is not the one that wrote it.
+    """
+    with pytest.raises(SpecError, match='repo-relative'):
+        load_series(_with_pin(path=path))
+
+
+@pytest.mark.parametrize('digest', ['abc', 'a' * 63, 'z' * 64, ''])
+def test_a_hash_that_is_not_a_sha256_digest_is_rejected(digest: str) -> None:
+    """A truncated hash would fail the pre-flight for a reason that looks like spec drift."""
+    with pytest.raises(SpecError):
+        load_series(_with_pin(digest=digest))
+
+
+def test_an_uppercase_digest_is_normalised() -> None:
+    """A hex digest is the same value in either case; the comparison must not care."""
+    assert load_series(_with_pin(digest='A' * 64)).spec_sha256 == 'a' * 64
+
+
+def test_a_pinned_series_round_trips() -> None:
+    original = load_series(_with_pin())
+    assert load_series(dump_series(original)) == original
+
+
+def test_an_unpinned_series_dumps_no_pin_keys() -> None:
+    dumped = tomllib.loads(dump_series(load_series(VALID_TOML)))
+    assert 'spec_path' not in dumped['series']
+    assert 'spec_sha256' not in dumped['series']

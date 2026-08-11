@@ -13,7 +13,7 @@ PR-sized tasks plus the governance and gate that apply to them.
 
 | Section | Fields | Meaning |
 |---|---|---|
-| `[series]` | `id`, `version` | Series identity |
+| `[series]` | `id`, `version`, `spec_path`, `spec_sha256` | Series identity, plus an optional pin naming the spec it was decomposed from |
 | `[branches]` | `base`, `integration` | Fixture staged on `base`; integrated result on `integration` |
 | `[paths]` | `prompts` (dir), `outputs` (dir) | Asset locations; **absolute paths accepted** so assets can live outside the scored workspace |
 | `[governance]` | `model` (or `tier`), `effort`, `permission_mode`, `timeout_seconds` | The default per-spawn governance; a `[[prs]]` table may override `model`/`tier`/`effort` for itself |
@@ -22,6 +22,18 @@ PR-sized tasks plus the governance and gate that apply to them.
 | `[review]` | `blocking` (optional), `max_fix_attempts` | `max_fix_attempts` bounds the fix loop; `blocking` is **reserved** for an optional blocking LLM self-review the v1 headless driver does not run — optional, default `false` (the deterministic `[[checks]]` gate is the sole merge arbiter) |
 | `[[checks]]` | `name`, `run`, `blocking`, `independent`, `asset`, `repair_hint`, `phases` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)); `asset` is an optional absolute out-of-tree path to a blocking independent check's oracle; `repair_hint` is an optional one-line repair recipe (a command or instruction) appended verbatim to the fix brief when THAT check fails; `phases` is an optional list of `[[prs]].phase` tags this check gates, empty (the default) meaning every PR |
 | `[[prs]]` | `id`, `branch`, `prompt`, `phase`, `depends_on`, `model`, `tier`, `effort` | The PR decomposition as a DAG; `model`/`tier`/`effort` are optional per-PR overrides |
+
+`spec_path` / `spec_sha256` are the **spec pin**: the repo-relative path of the spec this
+series was decomposed from, and the SHA-256 of its contents at that moment. Optional, and
+set together — a path with no hash pins nothing, a hash with no path cannot be resolved.
+Repo-relative is enforced: an absolute path is rejected at load, because a series directory
+travels by copy and a machine-absolute path in it is wrong on arrival. Pre-flight resolves
+the path against the workspace and compares the hash, and **fails the run before the first
+spawn is purchased** — the point is that no paid run executes against a spec that has moved
+since decomposition. A matching pin is then recorded on the `run_start` line, so the join
+key reaches the run record rather than stopping at the series file, and "which version of
+which spec produced this run" stays answerable afterwards. A series with no pin behaves
+exactly as before the keys existed.
 
 `permission_mode` ∈ {`acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`,
 `plan`} plus the legacy `default`; convoy never *forces* `bypassPermissions` (a caller
@@ -185,7 +197,7 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 
 | `event` | Emitted | Required fields |
 |---|---|---|
-| `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id`, `advisories` (list of `{kind, where, message}`; `[]` when pre-flight had nothing to say) |
+| `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id`, `advisories` (list of `{kind, where, message}`; `[]` when pre-flight had nothing to say), `spec_path`, `spec_sha256` |
 | `spawn_start` | once per agent spawn, immediately before it launches | `schema_version`, `event`, `run_id`, `pr_id`, `role` |
 | `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `effort`, `classification`, `budget_cap_usd`, `budget_nearing` |
 | `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
@@ -239,6 +251,7 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   forfeiting five downstream PRs between them. A monitor tailing the ledger can now raise
   the cap or stage recovery on the spawn before the busting one; the same moment is
   narrated on stderr as a `near cap` line.
+- **`run_start.spec_path` / `spec_sha256`** (additive) — the spec pin from `[series]`, `""` when the series carries none. A pin that reaches the ledger is a **verified** one: pre-flight resolved the path and matched the hash before the run was allowed to start, so a consumer joining a run to a spec version is reading a checked fact rather than an authoring claim.
 - **`spawn_start`** (additive) — written immediately before a spawn launches, carrying no
   economy because nothing has been spent yet. The ledger recorded only completions, so a PR
   in progress was indistinguishable from one the run had not reached, and "which PR is it

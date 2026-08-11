@@ -55,6 +55,8 @@ def test_run_start_json_line_has_schema_tag_and_all_fields() -> None:
         # Always emitted, empty on the ordinary run, so a consumer reads the key
         # unconditionally rather than branching on its presence.
         'advisories': [],
+        'spec_path': '',
+        'spec_sha256': '',
     }
     assert parsed['schema_version'] == 1
 
@@ -324,3 +326,16 @@ def test_spawn_complete_carries_the_cap_and_the_nearing_flag() -> None:
     parsed = json.loads(to_json_line(event))
     assert parsed['budget_cap_usd'] == 20.0
     assert parsed['budget_nearing'] is True
+
+
+def test_run_start_carries_the_spec_the_series_was_decomposed_from() -> None:
+    """The pin has to reach the RUN record; stopping at the series file answers nobody."""
+    event = RunStart(
+        run_id='r',
+        series_id='s',
+        spec_path='docs/specs/comparison-ops.md',
+        spec_sha256='a' * 64,
+    )
+    parsed = json.loads(to_json_line(event))
+    assert parsed['spec_path'] == 'docs/specs/comparison-ops.md'
+    assert parsed['spec_sha256'] == 'a' * 64

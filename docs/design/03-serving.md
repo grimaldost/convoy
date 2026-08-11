@@ -32,7 +32,8 @@ init` and `convoy_init` both call `scaffold` (`interface/scaffold.py`).
 A real run passes these stages, in this order (`run_series_headless`):
 
 1. **Pre-flight** — the pure structural checks plus the filesystem probes
-   (prompts exist, `outputs` out-of-tree, asset isolation). A `PreflightError`
+   (prompts exist, `outputs` out-of-tree, the spec pin resolves and matches, asset
+   isolation). A `PreflightError`
    here precedes any side effect: no lock, no spawn, no git mutation. Pre-flight
    returns a `PreflightReport` carrying two lists: the blocking `problems` that
    decide runnability, and non-blocking `advisories` that do not — today: a PR that

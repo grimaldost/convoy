@@ -1,5 +1,7 @@
 """Tests for the filesystem pre-flight probes (interface/preflight_probe.py)."""
 
+import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 from convoy.core.spec import (
@@ -17,6 +19,7 @@ from convoy.interface.preflight_probe import (
     check_isolation,
     check_outputs,
     check_prompts,
+    check_spec_pin,
     gate_scope,
     preflight,
 )
@@ -343,3 +346,81 @@ def test_the_advisory_reaches_the_preflight_report(tmp_path: Path) -> None:
 
     assert report.clean  # advice, never a problem
     assert [a.where for a in report.advisories] == ['[[checks]]']
+
+
+# --- the spec pin: resolved and matched before any paid run --------------------------------
+
+
+def _pinned(tmp_path: Path, *, path: str, digest: str) -> tuple[Series, Path]:
+    workspace, prompts, outputs = _dirs(tmp_path)
+    series = _series(prompts=prompts, outputs=outputs)
+    return replace(series, spec_path=path, spec_sha256=digest), workspace
+
+
+def _write_spec(workspace: Path, relative: str, body: str) -> str:
+    path = workspace / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body.encode('utf-8'))
+    return hashlib.sha256(body.encode('utf-8')).hexdigest()
+
+
+def test_a_matching_pin_is_no_problem(tmp_path: Path) -> None:
+    workspace, prompts, outputs = _dirs(tmp_path)
+    digest = _write_spec(workspace, 'docs/spec.md', '# the spec\n')
+    series = replace(
+        _series(prompts=prompts, outputs=outputs), spec_path='docs/spec.md', spec_sha256=digest
+    )
+
+    assert check_spec_pin(series, workspace) == []
+
+
+def test_a_spec_that_moved_since_decomposition_blocks_the_run(tmp_path: Path) -> None:
+    """Blocking, not advisory: no paid run executes against a spec that has changed."""
+    workspace, prompts, outputs = _dirs(tmp_path)
+    _write_spec(workspace, 'docs/spec.md', '# the spec, edited since\n')
+    stale = hashlib.sha256(b'# the spec\n').hexdigest()
+    series = replace(
+        _series(prompts=prompts, outputs=outputs), spec_path='docs/spec.md', spec_sha256=stale
+    )
+
+    (problem,) = check_spec_pin(series, workspace)
+
+    assert problem.kind == 'spec_pin'
+    assert problem.where == '[series]'
+    assert stale in problem.message  # both hashes, so the reader can see which is which
+
+
+def test_a_pinned_spec_that_is_not_there_blocks_the_run(tmp_path: Path) -> None:
+    series, workspace = _pinned(tmp_path, path='docs/gone.md', digest='b' * 64)
+
+    (problem,) = check_spec_pin(series, workspace)
+
+    assert problem.kind == 'spec_pin'
+    assert 'gone.md' in problem.message
+
+
+def test_an_unpinned_series_is_never_asked_about_a_spec(tmp_path: Path) -> None:
+    workspace, prompts, outputs = _dirs(tmp_path)
+
+    assert check_spec_pin(_series(prompts=prompts, outputs=outputs), workspace) == []
+
+
+def test_a_stale_pin_reaches_the_preflight_report(tmp_path: Path) -> None:
+    """It has to be on the blocking list, or it is decoration."""
+    workspace, prompts, outputs = _dirs(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    _write_spec(workspace, 'docs/spec.md', '# edited\n')
+    series = replace(
+        _series(
+            prompts=prompts,
+            outputs=outputs,
+            prs=(PR(id='pr-1', branch='pr-1', prompt='pr1.md', phase='p'),),
+        ),
+        spec_path='docs/spec.md',
+        spec_sha256='c' * 64,
+    )
+
+    report = preflight(series, workspace)
+
+    assert not report.clean
+    assert [p.kind for p in report.problems] == ['spec_pin']

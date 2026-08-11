@@ -62,6 +62,15 @@ class RunStart:
     run_id: str
     series_id: str
     advisories: tuple[AdvisoryLine, ...] = ()
+    # The spec this run's series was decomposed from — repo-relative path and the SHA-256
+    # of its contents, carried from ``[series]``. Empty when the series pins nothing.
+    # Recorded here for the same reason ``advisories`` is: a pin that stops at the series
+    # file leaves the run record unable to answer "which version of which spec produced
+    # this", which is the one question a later comparison always needs and the ledger is
+    # otherwise the only place to look. Pre-flight has already resolved and matched it, so
+    # a recorded pin is a verified one, not a claim.
+    spec_path: str = ''
+    spec_sha256: str = ''
 
 
 @dataclass(frozen=True)

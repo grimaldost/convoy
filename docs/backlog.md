@@ -559,6 +559,13 @@ reintroduce the machine-absolute problem CONV-B11 removes. `core/spec.py`,
 `core/preflight.py`, `core/telemetry.py`, `interface/drivers/headless.py`.
 **(consumer-affecting: a new series.toml key and new `run_start` fields)**
 
+**Status.** **Shipped** in `[Unreleased]`, both halves. `[series]` takes optional
+`spec_path` + `spec_sha256` (set together, path rejected if absolute, hash validated as a
+SHA-256 digest at load); a blocking `kind='spec_pin'` pre-flight check resolves and compares
+before any spawn; and the matched pin is recorded on `run_start`. Deliberately **not** added
+to the run envelope: the row asks for the ledger's `run_start` line, and the envelope has an
+external consumer, so widening it is a separate decision.
+
 **Effort** M · **Source** [cross-review] · **Receives** KEEL-B16
 
 ### CONV-B37 — A verification directive is a standing rule with no carrier, and its measured lift is discipline-dependent rather than general.

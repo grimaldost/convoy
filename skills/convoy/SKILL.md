@@ -245,7 +245,7 @@ least one entry.
 
 | Section | Fields | Notes |
 |---|---|---|
-| `[series]` | `id`, `version` (strings) | series identity |
+| `[series]` | `id`, `version` (strings), and optionally `spec_path` + `spec_sha256` | series identity, plus the spec pin |
 | `[branches]` | `base`, `integration` (strings) | the workspace is staged on `base`; the integrated result lands on `integration` |
 | `[paths]` | `prompts`, `outputs` (dir paths) | use **absolute** paths; `outputs` must be **out-of-tree** (outside the workspace) |
 | `[governance]` | `model` **or** `tier`, `effort`, `permission_mode`, `timeout_seconds` | one of `model`/`tier` required; `effort`, `permission_mode`, `timeout_seconds` all required (no defaults); see below |
@@ -264,6 +264,15 @@ least one entry.
   same value. A per-PR `budget` / `budgets` key is still rejected at load, because budgets
   are **per-role** (`implementation` / `review` / `fix`) and a per-PR scalar has no role
   to bind to.
+- **`spec_path` / `spec_sha256`** (optional, set together) — the **spec pin**: the
+  repo-relative path of the spec this series was decomposed from, and the SHA-256 of its
+  contents at that moment. Pre-flight resolves the path against the workspace and compares
+  the hash, and refuses the run if it does not match, so no paid run executes against a spec
+  that has moved since decomposition. A matching pin is recorded on the `run_start` telemetry
+  line, which is what makes "which version of which spec produced this run" answerable
+  afterwards. The path must be relative — a series directory travels by copy, so an absolute
+  path is wrong on arrival, and it is rejected at load. Omit both for a series with no spec
+  behind it; nothing changes.
 - **`permission_mode`** ∈ `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`,
   `plan`, plus the legacy `default`. convoy passes it through but never *forces* an
   auto-approve mode.

@@ -12,6 +12,7 @@ check's asset out-of-tree) lives elsewhere.
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, cast
 
 import tomli_w
@@ -134,6 +135,15 @@ class Series:
     review: Review
     checks: tuple[Check, ...]
     prs: tuple[PR, ...]
+    # The spec this series was decomposed from: its repo-relative path in the scored
+    # workspace, and the SHA-256 of its contents at decomposition time. Optional and set
+    # together — a path without a hash pins nothing, a hash without a path cannot be
+    # resolved. Empty for a series that carries no pin, which is every series written
+    # before the key existed. Repo-relative by construction: an absolute path is rejected
+    # at load, because a series directory travels by copy and a machine-absolute path in
+    # it is wrong on arrival.
+    spec_path: str = ''
+    spec_sha256: str = ''
 
 
 # --- validation helpers ------------------------------------------------------
@@ -405,6 +415,48 @@ def _parse_pr(data: Mapping[str, Any], index: int) -> PR:
     )
 
 
+_SHA256_HEX_LENGTH = 64
+
+
+def _parse_spec_pin(data: Mapping[str, Any]) -> tuple[str, str]:
+    """``(spec_path, spec_sha256)`` from ``[series]`` — both set, or both empty.
+
+    Validated here rather than left to the pre-flight so a malformed pin is a located
+    ``SpecError`` at load, on every surface, before anything reads the filesystem:
+
+    - **Set together.** A path with no hash pins nothing; a hash with no path cannot be
+      resolved. One without the other is an author mid-edit, not a pin.
+    - **Relative, never absolute.** A series directory travels by copy — it is untracked by
+      the consuming project — so a machine-absolute path is wrong the moment it arrives on
+      another machine. Repo-relative is what makes the pin portable.
+    - **A real SHA-256 digest.** 64 hex characters. A truncated or half-pasted hash would
+      otherwise fail the pre-flight comparison for a reason that looks like spec drift,
+      which is the wrong diagnosis to hand someone.
+    """
+    where = '[series]'
+    spec_path = _optional_nonempty_str(data, 'spec_path', where)
+    spec_sha256 = _optional_nonempty_str(data, 'spec_sha256', where)
+    if (spec_path is None) != (spec_sha256 is None):
+        raise SpecError(
+            f'{where}: spec_path and spec_sha256 must be set together '
+            '(a path with no hash pins nothing; a hash with no path cannot be resolved)'
+        )
+    if spec_path is None or spec_sha256 is None:
+        return '', ''
+    if PurePosixPath(spec_path).is_absolute() or PureWindowsPath(spec_path).is_absolute():
+        raise SpecError(
+            f'{where}: spec_path {spec_path!r} must be repo-relative, not absolute — '
+            'a series directory travels by copy, so an absolute path is wrong on arrival'
+        )
+    digest = spec_sha256.lower()
+    if len(digest) != _SHA256_HEX_LENGTH or any(c not in '0123456789abcdef' for c in digest):
+        raise SpecError(
+            f'{where}: spec_sha256 must be a {_SHA256_HEX_LENGTH}-character SHA-256 hex '
+            f'digest, got {spec_sha256!r}'
+        )
+    return spec_path, digest
+
+
 # --- public API --------------------------------------------------------------
 
 
@@ -439,9 +491,12 @@ def load_series(text: str) -> Series:
                     f'[[prs]] {pr.id!r}: depends_on {dependency!r} is not a defined PR id'
                 )
 
+    spec_path, spec_sha256 = _parse_spec_pin(series_table)
     return Series(
         id=_require_str(series_table, 'id', '[series]'),
         version=_require_str(series_table, 'version', '[series]'),
+        spec_path=spec_path,
+        spec_sha256=spec_sha256,
         branches=branches,
         paths=paths,
         governance=governance,
@@ -523,8 +578,15 @@ def dump_series(series: Series) -> str:
         'fix': list(series.governance.tools.fix),
     }
 
+    # ``spec_path`` / ``spec_sha256`` are omitted when unset (each re-parses as its empty
+    # default), so a series that carries no pin round-trips to the same minimal table.
+    series_table: dict[str, Any] = {'id': series.id, 'version': series.version}
+    if series.spec_path:
+        series_table['spec_path'] = series.spec_path
+        series_table['spec_sha256'] = series.spec_sha256
+
     document: dict[str, Any] = {
-        'series': {'id': series.id, 'version': series.version},
+        'series': series_table,
         'branches': {'base': series.branches.base, 'integration': series.branches.integration},
         'paths': {'prompts': series.paths.prompts, 'outputs': series.paths.outputs},
         'governance': governance,

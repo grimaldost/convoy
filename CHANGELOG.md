@@ -15,6 +15,27 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **A series can now pin the spec it was decomposed from, and a run refuses to start against
+  a spec that has moved.** `[series]` accepts two optional keys, set together: `spec_path`,
+  the spec's repo-relative path in the workspace, and `spec_sha256`, its content hash at
+  decomposition time. Pre-flight resolves the path and compares the hash **before the first
+  spawn is purchased**, which is what "before any paid run" means — blocking, not advisory,
+  because the point is that no paid run executes against a spec that has changed since it
+  was decomposed. A matching pin is then recorded on the `run_start` line, so the join key
+  reaches the run record rather than stopping at the series file.
+
+  Without it a run recorded nowhere which spec produced it, so "which version of which spec
+  produced this run" was simply unanswerable afterwards — the same silent shape as an
+  unvalidated `effort`: nothing fails at run time, and the comparison the ledger exists to
+  support is missing when someone finally needs it. Like a hash comparison generally, this
+  needs no heuristic and has no false-positive budget. The path must be relative and an
+  absolute one is rejected at load, because a series directory travels by copy and a
+  machine-absolute path in it is wrong on arrival. A series with no pin behaves exactly as
+  before the keys existed (`core/spec.py`, `interface/preflight_probe.py`,
+  `core/telemetry.py`, `interface/drivers/headless.py`). **(consumer-affecting: two new
+  series.toml keys, two new `run_start` fields, and a new `spec_pin` pre-flight problem
+  kind)** Serves backlog row CONV-B36.
+
 - **Pre-flight now says what the blocking gate will not run.** Phase scoping made subset
   gates possible and convoy said nothing about how to scope one. The quiet failure is the
   expensive one: a subtree-scoped suite cannot see the repository-wide guards a PR mutates,

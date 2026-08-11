@@ -348,6 +348,8 @@ def run_series(
             advisories=tuple(
                 AdvisoryLine(kind=a.kind, where=a.where, message=a.message) for a in advisories
             ),
+            spec_path=series.spec_path,
+            spec_sha256=series.spec_sha256,
         )
     )
     reporter.run_start(series.id, run_id, len(series.prs))
