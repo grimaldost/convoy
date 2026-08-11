@@ -385,22 +385,33 @@ depends_on = []
 
 ## Limits and re-runs
 
-v1 is headless and sequential: PRs run one at a time in dependency order, and there is
-no resume — a halted run does not check-point-and-continue. Start each run from a clean
-`base` branch in the workspace (a leftover `integration` or PR branch from a prior run
-can collide). The prompts named in `[[prs]].prompt` must exist under `[paths].prompts`
-before the run; `dry_run` reports any that are missing.
+v1 is headless and sequential: PRs run one at a time in dependency order. Start each run
+from a clean `base` branch in the workspace (a leftover `integration` or PR branch from a
+prior run can collide). The prompts named in `[[prs]].prompt` must exist under
+`[paths].prompts` before the run; `dry_run` reports any that are missing.
 
-To re-run cleanly, pass `reset: true` (CLI: `convoy run --fresh`): before staging, convoy
-checks out `base` and deletes the `integration` branch and every PR branch the series
-names — then runs as normal. The reset touches **branches only**: it does not discard
-uncommitted changes or remove untracked files, and a `budget` or `infrastructure` halt
-returns *before* the truncated spawn's work is committed, leaving exactly that kind of
-debris behind. After such a halt, restore a clean tree by hand (discard modifications,
-remove untracked leftovers) before re-running — a dirty tree can abort the reset's own
-checkout. A re-run
-starts the series from scratch and re-spends it in full (there is no partial credit for
-a prior attempt). `outputs/spawns.jsonl` is
+After a halt there are two ways forward, and they are not interchangeable.
+
+**`resume: true` (CLI: `convoy run --resume`) is the cheap one.** It continues the existing
+`integration` branch and skips every PR whose work that branch already contains, so the PRs
+that gated green are not paid for twice. A PR branch that exists but never merged is a
+partial or gate-failed attempt: it is **deleted** and re-attempted from the current
+integration state rather than built on. Resuming when no `integration` branch exists is a
+pre-flight problem, not a silent full run.
+
+**`reset: true` (CLI: `convoy run --fresh`) starts over.** Before staging, convoy checks out
+`base` and deletes the `integration` branch and every PR branch the series names, then runs
+as normal — re-spending the whole series, with no partial credit for a prior attempt. The
+reset touches **branches only**: it does not discard uncommitted changes or remove untracked
+files, and a `budget` or `infrastructure` halt returns *before* the truncated spawn's work is
+committed, leaving exactly that kind of debris behind. So run **`convoy clean <series.toml>`**
+first, which is the recovery verb: it discards uncommitted changes, removes untracked files,
+checks out `base`, deletes the series' branches, and clears a stale run lock. Use
+`convoy clean --dry-run` first to see exactly what that means for your tree — it is
+destructive and unrecoverable. Deleting a halted PR's branch by hand is not necessary;
+`--resume` already does it.
+
+`outputs/spawns.jsonl` is
 append-only **across** runs — each run's lines carry a unique `run_id` (a sortable
 `%Y%m%dT%H%M%SZ` stamp plus a short random suffix, e.g. `20260705T140000Z-a1b2c3d4`, so
 two runs in the same second stay distinct), so a reader selects the latest `run_id`; a `convoy_run` summary
@@ -422,13 +433,14 @@ count. The gate checks themselves are local commands (near-free).
   to a few minutes at low effort / small tasks, longer at higher effort or larger
   tasks. v1 runs PRs **sequentially** in dependency order (no parallelism), so
   wall-clock is roughly the sum of the spawns plus the gate commands.
-- **Long or autonomous runs:** `convoy_run` is synchronous — the tool call blocks for
-  the entire series (minutes to hours) and cannot be polled. For a long run, the
-  supported pattern is the CLI in a background shell: `convoy run <series.toml>` from
-  the workspace directory (the CLI uses the current directory as the workspace) with
-  output redirected, reading progress from the telemetry file — `outputs/spawns.jsonl`
-  is appended line by line as the run proceeds. The CLI and the MCP tool drive the same
-  engine, so the run and its telemetry are identical.
+- **Long or autonomous runs:** `convoy_run` blocks for the entire series (minutes to
+  hours) unless you pass `detach: true`, which is what to do. Detached, it returns a
+  handle at once and you poll `convoy_status` with the returned `run_id`. The other
+  supported pattern is the CLI in a background shell: `convoy run <series.toml>` from the
+  workspace directory (the CLI uses the current directory as the workspace) with output
+  redirected — `convoy status <series.toml>` reports on that run too, since it reads only
+  the ledger. `outputs/spawns.jsonl` is appended line by line as the run proceeds. The CLI
+  and the MCP tool drive the same engine, so the run and its telemetry are identical.
 - **Seat probe (per real run):** before any git mutation, convoy runs one minimal,
   tool-less, budget-capped ($0.05) probe spawn per distinct model the run can spawn on
   — the `[governance]` model plus any per-PR override, usually 1-3 in total — so an

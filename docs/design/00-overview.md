@@ -258,8 +258,12 @@ second surface, is v2.
   thesis validation is an external, blind, interleaved replication, not convoy's
   own fixture.
 - **Drivers** — the fake `AgentSpawn` makes the headless loop fully deterministic.
-- **Dogfood** — convoy's CI gate includes at least one independent check over
-  convoy itself.
+- **Dogfood** — convoy's own CI gate is the four commands in `AGENTS.md` (lint,
+  format, type-check, pytest) behind a lockfile check. It does **not** include an
+  independent check over convoy itself: this section claimed one for four releases
+  and `ci.yml` never had it. Recorded as unbuilt rather than deleted, because the
+  intent still stands — see the measured null result for the independent lane at
+  the strong tier in [01-gate.md](01-gate.md) before building it.
 
 ## 8. Cut / deferred
 

@@ -116,6 +116,30 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- **The shipped documents no longer contradict the shipped engine, and a test now fails
+  when they do.** Corrected: the manual's claim that "there is no resume — a halted run does
+  not check-point-and-continue" (`--resume` shipped in 0.4.0 and was documented 300 lines
+  above it) and that a re-run "re-spends it in full"; the §Cost & latency claim that
+  `convoy_run` is synchronous and cannot be polled (false since `convoy_status` in 0.5.0 and
+  `detach` in 0.6.0); the absence of `convoy clean` from the manual entirely, which cost two
+  operators a hand-deleted branch that `--resume` already deletes; "two tools" in the MCP
+  server docstring and in `docs/design/03-serving.md` while three are registered;
+  `marketplace.json` advertising only `convoy_run` and `convoy_init`, so `convoy_status`
+  shipped unadvertised for three releases; and `docs/design/00-overview.md` §7's claim that
+  convoy's CI gate includes an independent check over convoy itself, which `ci.yml` has
+  never had.
+
+  The mechanism is `tests/test_doc_claims.py`, in the shape of `test_versions_are_locked`:
+  every registered MCP tool name appears where the tools are listed, every CLI verb appears
+  where the verbs are listed, every `convoy_run` argument is documented in the manual, and a
+  stated tool count matches the registered one. Deliberately narrow — it pins the claims
+  that have actually drifted and reads no prose for meaning — and it carries a non-vacuity
+  guard, since the whole module is a set difference against two registries and would pass
+  silently if either stopped answering. This is the third occurrence of the class and the
+  first two fixes were both prose, which is the escalation trigger; `AGENTS.md` already
+  carried the right rule, and what was missing was something that fails. Recorded in
+  `docs/GUARDRAILS.md` with its enforcer. Serves backlog row CONV-B04.
+
 - **A spawn the agent CLI refuses is no longer scored as a clean result with zero economy.**
   `_classify` matched the CLI's prose on stderr and returned `'ok'` for any non-success spawn
   carrying no auth, usage or retry signature. So a spawn refused at argument parse — a flag

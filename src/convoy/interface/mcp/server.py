@@ -1,8 +1,8 @@
-"""MCP stdio server exposing convoy's ``convoy_run`` and ``convoy_init`` tools.
+"""MCP stdio server exposing convoy's ``convoy_run``, ``convoy_init`` and ``convoy_status``.
 
-The agent-facing surface: two tools an agent discovers and calls to drive a governed
-multi-PR series, mirroring the ``convoy run`` / ``convoy init`` CLI verbs but returning
-structured dicts instead of exit codes and console text.
+The agent-facing surface: three tools an agent discovers and calls to drive a governed
+multi-PR series, mirroring the ``convoy run`` / ``convoy init`` / ``convoy status`` CLI
+verbs but returning structured dicts instead of exit codes and console text.
 
 Local-first: ``convoy_run`` spawns a subprocess ``claude -p`` per PR, so run it co-located
 with an authenticated ``claude`` CLI seat. The tools offload their blocking work via

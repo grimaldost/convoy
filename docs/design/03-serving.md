@@ -112,7 +112,7 @@ the tool argument states it *positively*.
 ## The MCP stdio server
 
 `src/convoy/interface/mcp/` is the agent-facing surface: a stdio server
-(`python -m convoy.interface.mcp`, in-process Python) exposing two tools that
+(`python -m convoy.interface.mcp`, in-process Python) exposing three tools that
 mirror the CLI verbs but return structured dicts instead of exit codes and
 console text (`interface/mcp/server.py`):
 
@@ -279,7 +279,8 @@ The two surfaces expose one engine; the mapping is mechanical.
 | `--run-id ID` | — | pins the run id instead of minting one; the tool mints its own, and only needs the flag to pin a *detached* child's. An id already in the ledger is refused either way |
 | a background shell | `detach=true` | the CLI's answer is the operator's shell; the tool's is a detached child of the same CLI, returning `outcome: "started"` plus the `run_id` to poll |
 | `--quiet` | — | an MCP run is always silent (null reporter); the CLI narrates to stderr by default |
-| `convoy status SERIES [--run-id ID]` | `convoy_status(series_file, run_id)` | the same ledger read; `--json` gives the CLI the tool's envelope verbatim |
+| `convoy status SERIES [--run-id ID] [--workspace DIR]` | `convoy_status(series_file, run_id, workspace)` | the same ledger read; `--json` gives the CLI the tool's envelope verbatim. The CLI defaults the workspace to its working directory, the tool never guesses one |
+| `convoy clean SERIES [--workspace DIR] [--dry-run]` | — | the recovery verb: no tool equivalent, because it is destructive and takes no run. It restores the tree `--fresh` cannot (uncommitted changes, untracked files) and closes a killed run's ledger entry |
 | `convoy init [DIR]` | `convoy_init(directory)` | the same scaffold; the tool result names the follow-up `convoy_run` arguments |
 
 | CLI exit code | MCP result |

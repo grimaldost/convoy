@@ -194,6 +194,15 @@ actually drifted — the MCP tool count, the CLI verb list, and the presence of
 `resume`/`clean` — against the code providing them (T30b). Deliberately narrow, not a
 prose linter.
 
+**Status.** **Shipped** in `[Unreleased]`, both halves. (a) The false resume/synchronous
+claims are gone, `clean` is named as the recovery verb and `--resume`'s branch handling is
+stated, the tool count is corrected in the server docstring, `03-serving.md` and
+`marketplace.json`, and `00-overview.md` §7 now records the CI claim as unbuilt rather than
+repeating it. (b) `tests/test_doc_claims.py` pins tool names, a stated tool count, CLI verbs
+and the `convoy_run` arguments against the registries that provide them, with a non-vacuity
+guard; the guardrail names it as the enforcer. CONV-B25's restamp is untouched — only the
+false CI claim rode along, as that row says.
+
 **Effort** S for (a), M for (b) · **Source** [triage] + [review] · **Rows** T30a, T30b
 
 ### CONV-B05 — Phase scoping made subset gates possible and convoy says nothing about how to scope one; a wave can gate 16/16 green with repository-wide guards red.
