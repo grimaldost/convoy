@@ -24,7 +24,8 @@ from convoy.interface.drivers.headless import (
     RunOutcome,
 )
 from convoy.interface.git import GitError
-from convoy.interface.workspace_lock import WorkspaceBusyError
+from convoy.interface.proc import process_is_alive
+from convoy.interface.workspace_lock import WorkspaceBusyError, lock_owner_pid
 
 # Cap the per-PR list projected inline; the full trace always stays on disk (§ telemetry_path).
 _PR_CAP = 50
@@ -32,12 +33,21 @@ _PR_CAP = 50
 # outcome → the process exit code convoy would have returned for it. The mapping is the
 # published contract (02-formats.md § Exit codes), which is what lets a terminal outcome be
 # rebuilt from a ``run_complete`` line alone — no live ``RunOutcome`` needed.
+#
+# ``abandoned`` is the one entry no process ever actually returned: the run was killed, so
+# there was no exit. It maps to the infrastructure code because that is the class it belongs
+# to — the run stopped for a reason outside the work, and ``--resume`` is the recovery — and
+# because a consumer branching on the exit code should treat it the same way.
 _EXIT_BY_OUTCOME: dict[str, int] = {
     'completed': EXIT_OK,
     'blocked': EXIT_BLOCKED,
     'infrastructure': EXIT_INFRASTRUCTURE,
     'budget': EXIT_BUDGET,
+    'abandoned': EXIT_INFRASTRUCTURE,
 }
+
+# The reason recorded on a ``run_abandoned`` line written by the recovery path.
+ABANDONED_BY_CLEAN_REASON = 'workspace lock cleared by convoy clean; the run never returned'
 
 
 def _run_lines(telemetry_path: Path, run_id: str | None = None) -> list[dict[str, Any]]:
@@ -91,6 +101,11 @@ def reconstruct_outcome(telemetry_path: Path, run_id: str) -> RunOutcome | None:
     An unknown ``outcome`` value (a newer engine wrote the ledger) maps to the usage exit
     code rather than raising: a poller reading a ledger it half-understands should degrade,
     not crash.
+
+    A ``run_abandoned`` line is terminal in the same sense and is read the same way: the run
+    is over and will record nothing further. It reports ``outcome: 'abandoned'`` and
+    ``integrated: False`` — whoever wrote it was not there for the run, so the only honest
+    claim is that this run did not reach a completed integration.
     """
     for entry in _run_lines(telemetry_path, run_id):
         if entry.get('event') == 'run_complete':
@@ -100,7 +115,50 @@ def reconstruct_outcome(telemetry_path: Path, run_id: str) -> RunOutcome | None:
                 integrated=entry['integrated'],
                 exit_code=_EXIT_BY_OUTCOME.get(outcome, EXIT_USAGE),
             )
+        if entry.get('event') == 'run_abandoned':
+            return RunOutcome(
+                outcome='abandoned',
+                integrated=False,
+                exit_code=_EXIT_BY_OUTCOME['abandoned'],
+            )
     return None
+
+
+def orphaned_run_id(telemetry_path: Path) -> str | None:
+    """The most recent run in ``telemetry_path`` that recorded no terminal line.
+
+    ``None`` when the ledger is empty or its latest run finished. Only the latest run is
+    considered: a run that leaves the workspace lock behind blocks every later run until
+    someone clears it, so the run that left it IS the latest one to have started.
+    """
+    run_id = latest_run_id(telemetry_path)
+    if run_id is None or reconstruct_outcome(telemetry_path, run_id) is not None:
+        return None
+    return run_id
+
+
+def unfinished_state(workspace: Path | None) -> str:
+    """``'running'`` or ``'dead'`` for a run that has written no terminal record.
+
+    A run acquires ``workspace``'s lock before it writes its first ledger line and holds it
+    until it returns, so a run with ledger lines and no ``run_complete`` is either still
+    holding that lock or was killed hard enough that no ``finally`` ran. The lock has always
+    named its owner; reading it back is what separates the two.
+
+    Deliberately conservative, and in one direction: ``dead`` is claimed **only** when the
+    lock exists and names a process that does not. No lock file at all stays ``running``,
+    because the commonest way to see that is asking from the wrong directory — and a false
+    ``dead`` sends an operator to restart a run that is still spending. The other gap it
+    leaves is a run that died and whose lock has since been cleared: a pid is reusable once
+    its process is gone, so no live check can answer for it — repairing that history needs a
+    terminal line written when the lock is cleared, not a query afterwards.
+    """
+    if workspace is None:
+        return 'running'
+    pid = lock_owner_pid(workspace)
+    if pid is None:
+        return 'running'
+    return 'running' if process_is_alive(pid) else 'dead'
 
 
 def summarize_run(
@@ -109,6 +167,7 @@ def summarize_run(
     run_id: str,
     series_id: str,
     outcome: RunOutcome | None,
+    workspace: Path | None = None,
     pr_cap: int = _PR_CAP,
 ) -> dict[str, Any]:
     """Fold this run's telemetry lines into an agent-facing summary.
@@ -150,6 +209,10 @@ def summarize_run(
                 'gate': None,
                 'skipped': False,
                 'skip_reason': None,
+                # The role of a spawn that started and has not completed, else ``None``.
+                # On a live run this is "what convoy is doing right now"; on a run whose
+                # driver was killed it is the PR the money was being spent on.
+                'in_flight': None,
             },
         )
 
@@ -161,7 +224,12 @@ def summarize_run(
             if entry.get('run_id') != run_id:
                 continue
             event = entry.get('event')
-            if event == 'spawn_complete':
+            if event == 'spawn_start':
+                # Set on start and cleared on the matching completion, in append order —
+                # the ledger is written in that order by construction, so what survives the
+                # walk is exactly the spawn that never finished.
+                _pr(entry['pr_id'])['in_flight'] = entry['role']
+            elif event == 'spawn_complete':
                 economy['total_cost_usd'] += entry['cost_usd']
                 economy['input_tokens'] += entry['input_tokens']
                 economy['output_tokens'] += entry['output_tokens']
@@ -172,6 +240,7 @@ def summarize_run(
                 )
                 pr = _pr(entry['pr_id'])
                 pr['spawns'] += 1
+                pr['in_flight'] = None
                 # effective_model is the implementation spawn's model: the spawn the tier
                 # decision governed and the one the gate judged. Keyed on role, not append
                 # order — a fix spawn's model never overwrites it, whatever the line order.
@@ -203,12 +272,16 @@ def summarize_run(
                 halt = entry.get('halt')
 
     pr_list = list(prs.values())
-    return {
+    state = 'finished' if outcome is not None else unfinished_state(workspace)
+    envelope: dict[str, Any] = {
         # ``state`` is the field to branch on first. ``finished`` means the terminal fields
         # below are meaningful; ``running`` means the run has not written ``run_complete``
         # yet, so they are ``null`` and the economy is a partial running total — genuinely
-        # useful (what has it spent so far) but not a result.
-        'state': 'running' if outcome is None else 'finished',
+        # useful (what has it spent so far) but not a result. ``dead`` is ``running`` with
+        # the additional fact that the process which would have finished it is gone: the
+        # terminal fields are null and will stay that way, and the economy is final rather
+        # than partial.
+        'state': state,
         'ok': outcome is not None and outcome.outcome == 'completed',
         'outcome': None if outcome is None else outcome.outcome,
         'integrated': None if outcome is None else outcome.integrated,
@@ -227,20 +300,42 @@ def summarize_run(
         'telemetry_path': str(telemetry_path),
         'truncated': {'any': len(pr_list) > pr_cap, 'prs': max(0, len(pr_list) - pr_cap)},
     }
+    if state == 'dead':
+        # Same shape as the ``unknown`` envelope's message: the state is the thing to branch
+        # on, and the prose says what to do about it. Named here rather than left to the
+        # reader because "dead" is the one state whose recovery is not obvious.
+        envelope['message'] = (
+            f'the process that was running {run_id} is gone and it recorded no outcome; '
+            'run `convoy clean` to release the workspace, then re-run with --resume to '
+            'continue from the PRs that already integrated'
+        )
+    return envelope
 
 
-def status_of(series: Series, *, run_id: str = '', pr_cap: int = _PR_CAP) -> dict[str, Any]:
+def status_of(
+    series: Series,
+    *,
+    run_id: str = '',
+    workspace: Path | None = None,
+    pr_cap: int = _PR_CAP,
+) -> dict[str, Any]:
     """The envelope for a run recorded in ``series``' outputs — finished or still going.
 
-    The request-level status operation both surfaces share. It reads only the ledger, so
-    it works for a run this process never started: the supported long-run pattern is
-    ``convoy run`` in a background shell, and until now nothing could ask that run how it
-    was doing. It holds no state between calls and never touches the workspace.
+    The request-level status operation both surfaces share. It reads the ledger, so it works
+    for a run this process never started: the supported long-run pattern is ``convoy run``
+    in a background shell, and until now nothing could ask that run how it was doing. It
+    holds no state between calls.
 
     ``run_id`` defaults to the most recent run in the ledger, which is the question a
     poller usually means. An empty ledger — no file yet, or a run that has not written its
     first line — returns ``state: "unknown"`` rather than an error: "no run has recorded
     anything here" is information, not a failure.
+
+    ``workspace``, when given, is read for one thing and one thing only: the run lock's
+    owner pid, which distinguishes a run still going from a run whose driver is gone (see
+    :func:`unfinished_state`). Nothing is written and no git command runs. Omitted, the
+    answer is exactly what it was before — a run with no terminal record reads ``running``
+    — so a caller that cannot name the workspace is no worse off.
 
     A **detached** run can fail before it writes its first ledger line — an expired seat, a
     busy workspace, a git failure — and reporting that as ``running`` forever would be the
@@ -268,6 +363,7 @@ def status_of(series: Series, *, run_id: str = '', pr_cap: int = _PR_CAP) -> dic
         run_id=target,
         series_id=series.id,
         outcome=reconstruct_outcome(telemetry_path, target),
+        workspace=workspace,
         pr_cap=pr_cap,
     )
 

@@ -55,12 +55,16 @@ with the `run_id` it returns.
   **only** your Claude credential into it (so auth still works), and removes it when the
   run ends. Turn it off only to deliberately run under your full operator config dir
   unchanged.
-- `reset` (default `false`) — opt-in workspace reset before staging: check out `base` and
-  delete the `integration` branch and every PR branch the series names — so a completed or
-  halted run can be re-run without a "branch already exists" failure. The reset touches
-  branches only; it does **not** discard uncommitted changes or untracked files (see
-  "Limits and re-runs"). Off by default: a leftover branch still fails loud exactly as
-  without the flag. CLI equivalent: `convoy run --fresh`.
+- `reset` (default `false`) — **DESTRUCTIVE**, opt-in workspace restore before staging:
+  discard uncommitted changes to tracked files, delete untracked files and directories,
+  check out `base`, and delete the `integration` branch and every PR branch the series
+  names — so a completed or halted run can be re-run without a "branch already exists"
+  failure. These are the same steps `convoy clean` performs, deliberately: a `budget` or
+  `infrastructure` halt returns *before* the truncated spawn's work is committed, so it
+  leaves exactly the debris branch deletion cannot clear, which then aborts the reset's own
+  checkout. Off by default, and with it off nothing in the tree is touched — a leftover
+  branch fails loud exactly as without the flag. Run `convoy clean --dry-run` first if you
+  want to see what it will remove. CLI equivalent: `convoy run --fresh`.
 - `resume` (default `false`) — **the cheap way to recover a halted run.** Continue the
   existing `integration` branch instead of creating one, skipping every PR whose work it
   already contains and re-attempting the rest. After a halt that branch holds every PR
@@ -89,6 +93,11 @@ with the `run_id` it returns.
 - `run_id` (default `""`) — which run to report. Defaults to the most recent run in the
   ledger, which is usually what a poller means; pass an explicit id to follow one run in
   an outputs dir that accumulates several — including the id a `detach` launch returned.
+- `workspace` (default `""`) — absolute path to the run's git repository. Optional, and
+  read for exactly one thing: the run lock there names the process that owns the run,
+  which is what tells `dead` apart from `running`. Nothing is written. Omit it and a run
+  with no terminal record reads `running`, as before — so pass it whenever you want to
+  know that a run has died.
 
 Traps the pre-flight catches (so `dry_run` reports them instead of a half-run):
 `[paths]` that don't resolve to an existing prompts dir or that name missing prompt
@@ -102,9 +111,12 @@ check would gate nothing); and a governance block that resolves to neither a
 
 The dry run also returns **`advisories`** — located `{kind, where, message}` remarks
 that do **not** make the series invalid, so they never change `ok` or `outcome` (and on
-the CLI, `convoy validate` prints them to stderr and still exits `0`). Today the one
-advisory is a PR that no blocking check gates, which therefore integrates unverified.
-Read them; they are the things that are legal and probably not what you meant.
+the CLI, `convoy validate` prints them to stderr and still exits `0`). Today there are
+three: a PR that no blocking check gates, which therefore integrates unverified; a check
+declaring an `asset` on a lane that will never read it; and a blocking gate that is
+path-scoped away from test files present in the workspace, so a green gate is a narrower
+claim than the tree warrants. Read them; they are the things that are legal and probably
+not what you meant.
 
 ### `convoy_init`
 
@@ -134,7 +146,9 @@ Every tool returns a single JSON object.
   making `total_cost_usd` approximate. Per-spawn `duration` is not summarized here — it is
   in the telemetry trace.
 - `prs` — one entry per PR, in processing order: `{ pr_id, spawns, effective_model, gate,
-  skipped, skip_reason }`. `gate` is `null` if the PR never gated, else `{ attempt,
+  skipped, skip_reason, in_flight }`. `in_flight` names the role of a spawn that started and
+  has not completed (`null` otherwise) — on a live run, what convoy is doing right now; on a
+  killed run, the PR the money was going into. `gate` is `null` if the PR never gated, else `{ attempt,
   blocking_red, independent_red, failing_checks }` for the **latest** attempt
   (`failing_checks` lists the names of the blocking checks that were red). `attempt` is
   `0` for the initial gate and `1..N` after each fix re-gate; `blocking_red` and
@@ -199,10 +213,24 @@ this call returns. A failed launch is the ordinary `outcome: "usage"` shape abov
 **`convoy_status`** — the same envelope `convoy_run` returns, plus a **`state`** to
 branch on first: `running` (no `run_complete` line yet, so `outcome` / `integrated` /
 `exit_code` are `null` and `economy` is a partial running total — the useful thing to
-watch), `finished` (the terminal fields are meaningful, `halt` included), or `unknown`
-(nothing recorded under that id — not an error, just a run that has not written its first
-line). A detached run that died before writing to the ledger reports `finished` with its
-own could-not-start envelope, read from `result_path`.
+watch), `dead` (the same null terminal fields, plus the fact that the process which would
+have filled them is gone, so the economy is final rather than partial; `message` says how
+to recover), `finished` (the terminal fields are meaningful, `halt` included), or
+`unknown` (nothing recorded under that id — not an error, just a run that has not written
+its first line). A detached run that died before writing to the ledger reports `finished`
+with its own could-not-start envelope, read from `result_path`.
+
+`dead` needs the optional `workspace` argument: the run lock in that repo names the
+process that owns the run, and that pid is the only thing separating a run still going
+from one that was killed. Without it a run with no terminal record reads `running`, as it
+always did. The claim is made only on positive evidence — a lock naming a process that no
+longer exists — so asking from a tree that holds no lock never yields a false `dead`.
+
+Once `convoy clean` has cleared that lock the run reads `finished` with a fifth `outcome`,
+`abandoned`, carrying the infrastructure exit code — `clean` closes the killed run's ledger
+entry on its way past, because a pid is reusable and the fact stops being establishable
+after that. `integrated` is `false` and `halt` is `null`: the process that recorded it was
+not there for the run.
 
 **`convoy_init`** — `{ ok, created, series_file, workspace, next }`: the paths
 written, and the `series_file` / `workspace` to hand straight to `convoy_run`.
@@ -217,7 +245,7 @@ least one entry.
 
 | Section | Fields | Notes |
 |---|---|---|
-| `[series]` | `id`, `version` (strings) | series identity |
+| `[series]` | `id`, `version` (strings), and optionally `spec_path` + `spec_sha256` | series identity, plus the spec pin |
 | `[branches]` | `base`, `integration` (strings) | the workspace is staged on `base`; the integrated result lands on `integration` |
 | `[paths]` | `prompts`, `outputs` (dir paths) | use **absolute** paths; `outputs` must be **out-of-tree** (outside the workspace) |
 | `[governance]` | `model` **or** `tier`, `effort`, `permission_mode`, `timeout_seconds` | one of `model`/`tier` required; `effort`, `permission_mode`, `timeout_seconds` all required (no defaults); see below |
@@ -236,10 +264,23 @@ least one entry.
   same value. A per-PR `budget` / `budgets` key is still rejected at load, because budgets
   are **per-role** (`implementation` / `review` / `fix`) and a per-PR scalar has no role
   to bind to.
-- **`permission_mode`** ∈ `default`, `acceptEdits`, `plan`, `bypassPermissions`. convoy
-  passes it through but never *forces* an auto-approve mode.
-- **`effort`** is required (no convoy-side default) and is passed through to the spawn
-  (e.g. `low`, `medium`, `high`).
+- **`spec_path` / `spec_sha256`** (optional, set together) — the **spec pin**: the
+  repo-relative path of the spec this series was decomposed from, and the SHA-256 of its
+  contents at that moment. Pre-flight resolves the path against the workspace and compares
+  the hash, and refuses the run if it does not match, so no paid run executes against a spec
+  that has moved since decomposition. A matching pin is recorded on the `run_start` telemetry
+  line, which is what makes "which version of which spec produced this run" answerable
+  afterwards. The path must be relative — a series directory travels by copy, so an absolute
+  path is wrong on arrival, and it is rejected at load. Omit both for a series with no spec
+  behind it; nothing changes.
+- **`permission_mode`** ∈ `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`,
+  `plan`, plus the legacy `default`. convoy passes it through but never *forces* an
+  auto-approve mode.
+- **`effort`** ∈ `low`, `medium`, `high`, `xhigh`, `max`. Required (no convoy-side default),
+  passed through to the spawn, and rejected at load if it is not one of those — the agent
+  CLI only *warns* on a level it does not know and then runs at its own default, so an
+  unchecked typo would leave the series file and the ledger both naming a level nothing ran
+  at. The resolved value is recorded on each `spawn_complete` line.
 - **Required vs optional.** Every field in the table is required except nine, which
   default: `[[checks]].independent` (`false`), `[[checks]].asset` (`''`, unused),
   `[[checks]].repair_hint` (`''`, no hint), `[[checks]].phases` (`[]`, gates every PR),
@@ -365,22 +406,34 @@ depends_on = []
 
 ## Limits and re-runs
 
-v1 is headless and sequential: PRs run one at a time in dependency order, and there is
-no resume — a halted run does not check-point-and-continue. Start each run from a clean
-`base` branch in the workspace (a leftover `integration` or PR branch from a prior run
-can collide). The prompts named in `[[prs]].prompt` must exist under `[paths].prompts`
-before the run; `dry_run` reports any that are missing.
+v1 is headless and sequential: PRs run one at a time in dependency order. Start each run
+from a clean `base` branch in the workspace (a leftover `integration` or PR branch from a
+prior run can collide). The prompts named in `[[prs]].prompt` must exist under
+`[paths].prompts` before the run; `dry_run` reports any that are missing.
 
-To re-run cleanly, pass `reset: true` (CLI: `convoy run --fresh`): before staging, convoy
-checks out `base` and deletes the `integration` branch and every PR branch the series
-names — then runs as normal. The reset touches **branches only**: it does not discard
-uncommitted changes or remove untracked files, and a `budget` or `infrastructure` halt
-returns *before* the truncated spawn's work is committed, leaving exactly that kind of
-debris behind. After such a halt, restore a clean tree by hand (discard modifications,
-remove untracked leftovers) before re-running — a dirty tree can abort the reset's own
-checkout. A re-run
-starts the series from scratch and re-spends it in full (there is no partial credit for
-a prior attempt). `outputs/spawns.jsonl` is
+After a halt there are two ways forward, and they are not interchangeable.
+
+**`resume: true` (CLI: `convoy run --resume`) is the cheap one.** It continues the existing
+`integration` branch and skips every PR whose work that branch already contains, so the PRs
+that gated green are not paid for twice. A PR branch that exists but never merged is a
+partial or gate-failed attempt: it is **deleted** and re-attempted from the current
+integration state rather than built on. Resuming when no `integration` branch exists is a
+pre-flight problem, not a silent full run.
+
+**`reset: true` (CLI: `convoy run --fresh`) starts over, and is DESTRUCTIVE.** Before
+staging, convoy discards uncommitted changes to tracked files, deletes untracked files and
+directories, checks out `base`, and deletes the `integration` branch and every PR branch the
+series names — then runs as normal, re-spending the whole series with no partial credit for a
+prior attempt. Those are the same steps **`convoy clean <series.toml>`** performs, and they
+are here because a `budget` or `infrastructure` halt returns *before* the truncated spawn's
+work is committed: branch deletion alone cannot clear that debris, and the debris aborts the
+reset's own checkout. So one destructive path, one mental model. `convoy clean` remains the
+verb for restoring a workspace **without** starting a run (it takes no lock, pays for no seat
+probe, and closes the killed run's ledger entry); run `convoy clean --dry-run` first to see
+exactly what either will remove. Deleting a halted PR's branch by hand is not necessary;
+`--resume` already does it.
+
+`outputs/spawns.jsonl` is
 append-only **across** runs — each run's lines carry a unique `run_id` (a sortable
 `%Y%m%dT%H%M%SZ` stamp plus a short random suffix, e.g. `20260705T140000Z-a1b2c3d4`, so
 two runs in the same second stay distinct), so a reader selects the latest `run_id`; a `convoy_run` summary
@@ -402,13 +455,14 @@ count. The gate checks themselves are local commands (near-free).
   to a few minutes at low effort / small tasks, longer at higher effort or larger
   tasks. v1 runs PRs **sequentially** in dependency order (no parallelism), so
   wall-clock is roughly the sum of the spawns plus the gate commands.
-- **Long or autonomous runs:** `convoy_run` is synchronous — the tool call blocks for
-  the entire series (minutes to hours) and cannot be polled. For a long run, the
-  supported pattern is the CLI in a background shell: `convoy run <series.toml>` from
-  the workspace directory (the CLI uses the current directory as the workspace) with
-  output redirected, reading progress from the telemetry file — `outputs/spawns.jsonl`
-  is appended line by line as the run proceeds. The CLI and the MCP tool drive the same
-  engine, so the run and its telemetry are identical.
+- **Long or autonomous runs:** `convoy_run` blocks for the entire series (minutes to
+  hours) unless you pass `detach: true`, which is what to do. Detached, it returns a
+  handle at once and you poll `convoy_status` with the returned `run_id`. The other
+  supported pattern is the CLI in a background shell: `convoy run <series.toml>` from the
+  workspace directory (the CLI uses the current directory as the workspace) with output
+  redirected — `convoy status <series.toml>` reports on that run too, since it reads only
+  the ledger. `outputs/spawns.jsonl` is appended line by line as the run proceeds. The CLI
+  and the MCP tool drive the same engine, so the run and its telemetry are identical.
 - **Seat probe (per real run):** before any git mutation, convoy runs one minimal,
   tool-less, budget-capped ($0.05) probe spawn per distinct model the run can spawn on
   — the `[governance]` model plus any per-PR override, usually 1-3 in total — so an

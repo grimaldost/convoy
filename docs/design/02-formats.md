@@ -13,7 +13,7 @@ PR-sized tasks plus the governance and gate that apply to them.
 
 | Section | Fields | Meaning |
 |---|---|---|
-| `[series]` | `id`, `version` | Series identity |
+| `[series]` | `id`, `version`, `spec_path`, `spec_sha256` | Series identity, plus an optional pin naming the spec it was decomposed from |
 | `[branches]` | `base`, `integration` | Fixture staged on `base`; integrated result on `integration` |
 | `[paths]` | `prompts` (dir), `outputs` (dir) | Asset locations; **absolute paths accepted** so assets can live outside the scored workspace |
 | `[governance]` | `model` (or `tier`), `effort`, `permission_mode`, `timeout_seconds` | The default per-spawn governance; a `[[prs]]` table may override `model`/`tier`/`effort` for itself |
@@ -23,10 +23,33 @@ PR-sized tasks plus the governance and gate that apply to them.
 | `[[checks]]` | `name`, `run`, `blocking`, `independent`, `asset`, `repair_hint`, `phases` | The gate — shell checks; `independent = true` marks an author-supplied, implementer-unreachable check (see [01-gate.md](01-gate.md)); `asset` is an optional absolute out-of-tree path to a blocking independent check's oracle; `repair_hint` is an optional one-line repair recipe (a command or instruction) appended verbatim to the fix brief when THAT check fails; `phases` is an optional list of `[[prs]].phase` tags this check gates, empty (the default) meaning every PR |
 | `[[prs]]` | `id`, `branch`, `prompt`, `phase`, `depends_on`, `model`, `tier`, `effort` | The PR decomposition as a DAG; `model`/`tier`/`effort` are optional per-PR overrides |
 
-`permission_mode` ∈ {`default`, `acceptEdits`, `plan`, `bypassPermissions`};
-convoy never *forces* `bypassPermissions` (a caller may set it; the field is
-required and passed through unchanged — convoy supplies no permission mode of
-its own). Per-PR governance follows four rules:
+`spec_path` / `spec_sha256` are the **spec pin**: the repo-relative path of the spec this
+series was decomposed from, and the SHA-256 of its contents at that moment. Optional, and
+set together — a path with no hash pins nothing, a hash with no path cannot be resolved.
+Repo-relative is enforced: an absolute path is rejected at load, because a series directory
+travels by copy and a machine-absolute path in it is wrong on arrival. Pre-flight resolves
+the path against the workspace and compares the hash, and **fails the run before the first
+spawn is purchased** — the point is that no paid run executes against a spec that has moved
+since decomposition. A matching pin is then recorded on the `run_start` line, so the join
+key reaches the run record rather than stopping at the series file, and "which version of
+which spec produced this run" stays answerable afterwards. A series with no pin behaves
+exactly as before the keys existed.
+
+`permission_mode` ∈ {`acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`,
+`plan`} plus the legacy `default`; convoy never *forces* `bypassPermissions` (a caller
+may set it; the field is required and passed through unchanged — convoy supplies no
+permission mode of its own).
+
+`effort` ∈ {`low`, `medium`, `high`, `xhigh`, `max`}, allow-listed at load like
+`permission_mode` and for a sharper reason. The agent CLI *rejects* an unknown permission
+mode, so a typo there fails loudly on its own; it only *warns* on an unknown effort and
+then runs at its own default. An unvalidated typo therefore produced a run whose series
+file and whose ledger both named a level the spawn never used — silent, undetectable
+downstream, and corrupting exactly the comparison the ledger exists to support. The
+resolved value is now also recorded on each `spawn_complete` line as `effort`, so a
+divergence is at least visible after the fact.
+
+Per-PR governance follows four rules:
 
 1. A `[[prs]]` `model`/`tier`/`effort` key wins for that PR; `[governance]` is the
    fallback when the key is absent.
@@ -174,11 +197,13 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 
 | `event` | Emitted | Required fields |
 |---|---|---|
-| `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id`, `advisories` (list of `{kind, where, message}`; `[]` when pre-flight had nothing to say) |
-| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `classification` |
+| `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id`, `advisories` (list of `{kind, where, message}`; `[]` when pre-flight had nothing to say), `spec_path`, `spec_sha256` |
+| `spawn_start` | once per agent spawn, immediately before it launches | `schema_version`, `event`, `run_id`, `pr_id`, `role` |
+| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `effort`, `classification`, `budget_cap_usd`, `budget_nearing` |
 | `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
 | `pr_skipped` | for each PR the run never processed because an earlier PR halted the series | `schema_version`, `event`, `run_id`, `pr_id`, `reason` |
 | `run_complete` | once per `convoy run` | `schema_version`, `event`, `run_id`, `outcome`, `integrated`, `halt` |
+| `run_abandoned` | by the recovery path, for a killed run that recorded no outcome | `schema_version`, `event`, `run_id`, `reason` |
 
 - **`run_id`** — a lexicographically-sortable stamp (`%Y%m%dT%H%M%SZ` + short
   suffix) grouping one invocation's events; a reused `outputs` dir stays safe
@@ -215,14 +240,47 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   populated only on a non-`ok` classification (`''` on ok lines), so an infrastructure
   or budget halt is diagnosable from telemetry alone (an expired seat's
   `Not logged in`, a usage-limit message) instead of demanding a manual re-run.
+- **`budget_cap_usd` / `budget_nearing`** (additive) — the ceiling this spawn ran under
+  (the resolved `[governance.budgets].<role>` value, so a `fix` line reports the fix cap,
+  not the implementation cap it repairs) and whether the spend reached 90% of it.
+  `budget_cap_usd` is `null` only for an uncapped spawn, and `budget_nearing` is then
+  always `false`. The hard cap is unchanged — a bust still truncates the spawn and halts
+  the PR, which is the feature. What moves is *when* the ceiling becomes visible: before
+  this, the halt was the first thing that mentioned a cap, and by then the run was already
+  forfeit. Two of ten terminal runs on disk halted on overshoots of 0.3% and 0.4%,
+  forfeiting five downstream PRs between them. A monitor tailing the ledger can now raise
+  the cap or stage recovery on the spawn before the busting one; the same moment is
+  narrated on stderr as a `near cap` line.
+- **`run_start.spec_path` / `spec_sha256`** (additive) — the spec pin from `[series]`, `""` when the series carries none. A pin that reaches the ledger is a **verified** one: pre-flight resolved the path and matched the hash before the run was allowed to start, so a consumer joining a run to a spec version is reading a checked fact rather than an authoring claim.
+- **`spawn_start`** (additive) — written immediately before a spawn launches, carrying no
+  economy because nothing has been spent yet. The ledger recorded only completions, so a PR
+  in progress was indistinguishable from one the run had not reached, and "which PR is it
+  working on" was unanswerable for the 30–90 minutes a spawn takes. Pair it with
+  `spawn_complete` on `(run_id, pr_id, role)`: a start with no completion is a spawn in
+  flight, which is also what tells a driver that is alive but stuck from one that is gone.
+  The result envelope folds this into a per-PR `in_flight` field (the role in flight, else
+  `null`).
+- **`run_abandoned`** (additive) — the one event a run does not write about itself. A hard
+  kill leaves no terminal line, so the ledger reported the run `running` for ever; the
+  recovery path (`convoy clean`, when it clears a stale workspace lock) closes the entry
+  instead. It has to be written *then*: the lock names the process that owned the run, and
+  a pid is reusable once that process is gone, so the fact stops being establishable the
+  moment the lock is cleared. `reason` is free-form provenance about how the abandonment
+  was established. There is deliberately no `halt` and no `integrated` — the writer was not
+  there for the run. A consumer reconstructing the outcome reads it as
+  `outcome: "abandoned"`, `integrated: false`, and the infrastructure exit code: outside
+  the work, and re-runnable with `--resume`.
 - **These two events are additive.** `schema_version` stays `1`; a consumer keys on
   `event` + `schema_version` and ignores unknown events, so an older reader that
   only knows `run_start` / `spawn_complete` / `run_complete` skips `gate_complete`
   and `pr_skipped` lines without breaking.
-- **`outcome`** ∈ {`completed`, `blocked`, `infrastructure`, `budget`} — task
-  success, a gate-blocked merge, an infra halt (auth/quota/retry) that is
+- **`outcome`** ∈ {`completed`, `blocked`, `infrastructure`, `budget`} on a `run_complete`
+  line — task success, a gate-blocked merge, an infra halt (auth/quota/retry) that is
   re-runnable, or a spend-cap truncation. On `budget` the PR is halted and its
-  partial work is **not** integrated.
+  partial work is **not** integrated. A reconstructed outcome adds `abandoned`, which no
+  `run_complete` line ever carries: it comes from a `run_abandoned` line, and the
+  distinction is that the engine reported the first four about its own run while the fifth
+  is a third party's account of a run that never reported anything.
 - **Per-spawn granularity is mandatory.** A run-total-only file cannot be joined
   per spawn and is useless for economy analysis. Each spawn is one line.
 - **`cost_usd` fallback.** When the provider reports `0.0` under a subscription

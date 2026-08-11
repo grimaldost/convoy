@@ -16,7 +16,9 @@ import sys
 import time
 from pathlib import Path
 
-from convoy.interface.headless_spawn import HeadlessSpawn
+import pytest
+
+from convoy.interface.headless_spawn import _RESULT_SUBTYPES, HeadlessSpawn
 from convoy.interface.spawn import SpawnRequest, SpawnResult
 
 
@@ -284,7 +286,9 @@ def test_usage_limit_signature_is_infrastructure(tmp_path: Path) -> None:
 def test_auth_error_result_is_infrastructure(tmp_path: Path) -> None:
     """An auth failure carried on a non-success result event → infrastructure."""
     result = _result_line(
-        is_error=True, subtype='error', result='Authentication failed: not logged in'
+        is_error=True,
+        subtype='error_during_execution',
+        result='Authentication failed: not logged in',
     )
     body = f'print({result!r})\nsys.exit(1)\n'
     spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
@@ -322,7 +326,9 @@ def test_successful_result_mentioning_limit_is_ok(tmp_path: Path) -> None:
 
 def test_plain_task_failure_is_ok_classified(tmp_path: Path) -> None:
     """A non-zero exit with no infrastructure signature is a task outcome, not infrastructure."""
-    result = _result_line(is_error=True, subtype='error', result='The tests failed: 2 assertions.')
+    result = _result_line(
+        is_error=True, subtype='error_during_execution', result='The tests failed: 2 assertions.'
+    )
     body = f'print({result!r})\nsys.exit(1)\n'
     spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
 
@@ -463,8 +469,8 @@ def test_success_subtype_is_ok(tmp_path: Path) -> None:
 
 
 def test_task_failure_with_error_subtype_stays_ok(tmp_path: Path) -> None:
-    """A non-budget error subtype (exit 1, is_error) is a task failure, classified 'ok'."""
-    result = _result_line(subtype='error', is_error=True)
+    """A recorded non-budget error subtype (exit 1, is_error) is a task failure: 'ok'."""
+    result = _result_line(subtype='error_during_execution', is_error=True)
     body = f'print({result!r})\nsys.exit(1)\n'
     spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
 
@@ -507,7 +513,9 @@ def test_diagnosis_quotes_the_stderr_that_decided_it(tmp_path: Path) -> None:
 
 def test_diagnosis_quotes_the_result_text_when_that_decided_it(tmp_path: Path) -> None:
     result = _result_line(
-        is_error=True, subtype='error', result='Authentication failed: not logged in'
+        is_error=True,
+        subtype='error_during_execution',
+        result='Authentication failed: not logged in',
     )
     body = f'print({result!r})\nsys.exit(1)\n'
     spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
@@ -584,3 +592,91 @@ def test_a_timeout_diagnoses_itself(tmp_path: Path) -> None:
 
     assert got.classification == 'infrastructure'
     assert got.diagnosis == 'no result within the 1s timeout'
+
+
+# ---------------------------------------------------------------------------
+# Structured signals over prose: a refused invocation is not a clean result
+# ---------------------------------------------------------------------------
+#
+# `_classify` matched the vendor CLI's prose on stderr and returned 'ok' for any non-success
+# spawn carrying no auth / usage / retry signature. So a spawn the CLI refused at argument
+# parse -- a flag renamed upstream, a value dropped from a choice list -- was scored as a
+# clean task result with $0 economy, and the seat probe, which blocks only on
+# 'infrastructure', passed it. The operator then saw a blocked run with $0 spend and no
+# diagnosis.
+
+
+def test_a_spawn_refused_at_argument_parse_is_infrastructure(tmp_path: Path) -> None:
+    """No result event at all: the CLI never got as far as running the task."""
+    body = (
+        "sys.stderr.write(\"error: option '--effort <level>' argument 'lo' is invalid.\")\n"
+        'sys.exit(1)\n'
+    )
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'infrastructure'
+    assert got.economy.cost_usd == 0.0
+    # And it says why, so the operator is not left with a blocked run and no diagnosis.
+    assert '--effort' in got.diagnosis
+
+
+def test_a_silent_refusal_still_names_the_finding(tmp_path: Path) -> None:
+    """Nothing on stderr either -- 'the CLI never ran the task' is itself the diagnosis."""
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, 'sys.exit(2)\n'))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'infrastructure'
+    assert 'result event' in got.diagnosis
+
+
+def test_a_clean_exit_with_no_result_event_is_left_alone(tmp_path: Path) -> None:
+    """The rule is narrow on purpose: it fires on a NON-SUCCESS spawn, not on a quiet one."""
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, 'sys.exit(0)\n'))
+
+    assert spawn.spawn(_request(), cwd=tmp_path).classification == 'ok'
+
+
+@pytest.mark.parametrize(
+    ('subtype', 'expected'), sorted((k, v) for k, v in _RESULT_SUBTYPES.items())
+)
+def test_every_subtype_convoy_has_a_decision_for_classifies_as_recorded(
+    tmp_path: Path, subtype: str, expected: str
+) -> None:
+    """The table in the source IS the decision; this asserts the classifier implements it."""
+    failed = expected != 'ok'
+    result = _result_line(subtype=subtype, is_error=failed)
+    body = f'print({result!r})\nsys.exit({1 if failed else 0})\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    assert spawn.spawn(_request(), cwd=tmp_path).classification == expected
+
+
+def test_an_unrecognised_subtype_on_a_failed_spawn_is_not_scored_as_clean(
+    tmp_path: Path,
+) -> None:
+    """A subtype convoy has no decision for is a reason it does not understand.
+
+    Scoring it 'ok' with zero economy is the one guess that is wrong silently. The recovery
+    when the CLI ships a new subtype is to record a decision for it in `_RESULT_SUBTYPES`,
+    not to widen the guess.
+    """
+    result = _result_line(subtype='error_something_new', is_error=True, result='what happened')
+    body = f'print({result!r})\nsys.exit(1)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    got = spawn.spawn(_request(), cwd=tmp_path)
+
+    assert got.classification == 'infrastructure'
+    assert got.diagnosis
+
+
+def test_an_unrecognised_subtype_on_a_successful_spawn_stays_ok(tmp_path: Path) -> None:
+    """A spawn that exited clean produced a task result, whatever the outcome is named."""
+    result = _result_line(subtype='error_something_new')
+    body = f'print({result!r})\nsys.exit(0)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    assert spawn.spawn(_request(), cwd=tmp_path).classification == 'ok'

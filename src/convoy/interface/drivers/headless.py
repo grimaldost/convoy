@@ -35,7 +35,7 @@ from secrets import token_hex
 
 from convoy.core.dag import order
 from convoy.core.gate import GateVerdict, checks_for, decide
-from convoy.core.governance import effective_governance, resolve_spawn
+from convoy.core.governance import ResolvedSpawn, effective_governance, resolve_spawn
 from convoy.core.preflight import Advisory, Problem
 from convoy.core.spec import PR, Series
 from convoy.core.telemetry import (
@@ -47,7 +47,9 @@ from convoy.core.telemetry import (
     RunComplete,
     RunStart,
     SpawnComplete,
+    SpawnStart,
     apply_cost_fallback,
+    budget_is_nearing,
 )
 from convoy.interface.gate_runner import GateRunner
 from convoy.interface.git import Git
@@ -220,15 +222,38 @@ _RESUME_DONE_REASON = 'already integrated before this resume'
 
 
 def _record_spawn(
-    telemetry: TelemetryWriter, run_id: str, pr_id: str, role: str, result: SpawnResult
+    telemetry: TelemetryWriter,
+    reporter: Reporter,
+    run_id: str,
+    pr_id: str,
+    role: str,
+    result: SpawnResult,
+    governed: ResolvedSpawn,
 ) -> None:
-    """Write a ``spawn_complete`` line for ``result`` under ``role`` (with cost fallback).
+    """Write a ``spawn_complete`` line for ``result`` under ``role``, and narrate it.
 
     A non-``ok`` classification carries the tail of the spawn's output on the line
     (``output_tail``), so an infrastructure or budget halt is diagnosable without
     re-running the spawn by hand; an ok spawn's stream stays out of telemetry.
+
+    ``governed`` supplies what the spawn was *asked* for, which the result cannot report
+    back. Its budget is the ceiling this role's spawn ran under: recorded on every line —
+    a reader could previously see what a spawn cost but not how close that was to halting
+    the series — and when the spend reaches ``BUDGET_NEARING_FRACTION`` of it, the reporter
+    says so too. The cap is unchanged: a bust still truncates and halts. What moves is
+    *when* the ceiling becomes visible, from the exit code to the spawn before it. Its
+    ``effort`` is recorded for the same reason and a sharper one: the CLI reports nothing
+    back about effort and only *warns* on a value it does not know, so without this the
+    series file and the ledger could both name a level the spawn never ran at.
+
+    The nearing test reads the provider's reported cost rather than the post-fallback one,
+    because the reported cost is what the CLI's own spend cap meters against; an estimate
+    substituted for a zero would be measuring a different quantity.
     """
     output_tail = '' if result.classification == 'ok' else result.output[-_OUTPUT_TAIL_CHARS:]
+    spend_usd = result.economy.cost_usd
+    cap_usd = governed.budget_usd
+    nearing = budget_is_nearing(spend_usd, cap_usd)
     telemetry.write(
         apply_cost_fallback(
             SpawnComplete(
@@ -240,13 +265,19 @@ def _record_spawn(
                 output_tokens=result.economy.output_tokens,
                 num_turns=result.economy.num_turns,
                 duration_s=result.economy.duration_s,
-                cost_usd=result.economy.cost_usd,
+                cost_usd=spend_usd,
                 effective_model=result.economy.effective_model,
+                effort=governed.effort,
                 output_tail=output_tail,
                 classification=result.classification,
+                budget_cap_usd=cap_usd,
+                budget_nearing=nearing,
             )
         )
     )
+    reporter.spawn_done(pr_id, role, result)
+    if nearing:
+        reporter.budget_nearing(pr_id, role, spend_usd, cap_usd)
 
 
 def _halt(pr: PR, role: str, result: SpawnResult, cap_usd: float | None = None) -> HaltDetail:
@@ -317,6 +348,8 @@ def run_series(
             advisories=tuple(
                 AdvisoryLine(kind=a.kind, where=a.where, message=a.message) for a in advisories
             ),
+            spec_path=series.spec_path,
+            spec_sha256=series.spec_sha256,
         )
     )
     reporter.run_start(series.id, run_id, len(series.prs))
@@ -381,9 +414,11 @@ def run_series(
             tools=governed.tools,
             timeout_seconds=governed.timeout_seconds,
         )
+        # Written BEFORE the spawn, so the ledger names the PR in flight for the 30–90
+        # minutes it takes rather than only once it is over.
+        telemetry.write(SpawnStart(run_id=run_id, pr_id=pr.id, role='implementation'))
         result = spawn.spawn(request, workspace)
-        _record_spawn(telemetry, run_id, pr.id, 'implementation', result)
-        reporter.spawn_done(pr.id, 'implementation', result)
+        _record_spawn(telemetry, reporter, run_id, pr.id, 'implementation', result, governed)
 
         if result.classification == 'infrastructure':
             reason = f'series halted at {pr.id} (infrastructure) before this PR started'
@@ -446,9 +481,9 @@ def run_series(
                 tools=governed.tools,
                 timeout_seconds=governed.timeout_seconds,
             )
+            telemetry.write(SpawnStart(run_id=run_id, pr_id=pr.id, role='fix'))
             fix_result = spawn.spawn(fix_request, workspace)
-            _record_spawn(telemetry, run_id, pr.id, 'fix', fix_result)
-            reporter.spawn_done(pr.id, 'fix', fix_result)
+            _record_spawn(telemetry, reporter, run_id, pr.id, 'fix', fix_result, governed)
 
             if fix_result.classification == 'infrastructure':
                 reason = f'series halted at {pr.id} (infrastructure) before this PR started'

@@ -13,7 +13,129 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-11
+
+Backlog wave 1 (`docs/backlog.md`): the run becomes legible and honest under failure —
+budget nearing before the bust, a dead driver distinguishable from a running one, a
+refused spawn never scored clean, the manual held to the engine by test, and a series
+pinned to the spec it was decomposed from.
+
 ### Added
+
+- **A series can now pin the spec it was decomposed from, and a run refuses to start against
+  a spec that has moved.** `[series]` accepts two optional keys, set together: `spec_path`,
+  the spec's repo-relative path in the workspace, and `spec_sha256`, its content hash at
+  decomposition time. Pre-flight resolves the path and compares the hash **before the first
+  spawn is purchased**, which is what "before any paid run" means — blocking, not advisory,
+  because the point is that no paid run executes against a spec that has changed since it
+  was decomposed. A matching pin is then recorded on the `run_start` line, so the join key
+  reaches the run record rather than stopping at the series file.
+
+  Without it a run recorded nowhere which spec produced it, so "which version of which spec
+  produced this run" was simply unanswerable afterwards — the same silent shape as an
+  unvalidated `effort`: nothing fails at run time, and the comparison the ledger exists to
+  support is missing when someone finally needs it. Like a hash comparison generally, this
+  needs no heuristic and has no false-positive budget. The path must be relative and an
+  absolute one is rejected at load, because a series directory travels by copy and a
+  machine-absolute path in it is wrong on arrival. A series with no pin behaves exactly as
+  before the keys existed (`core/spec.py`, `interface/preflight_probe.py`,
+  `core/telemetry.py`, `interface/drivers/headless.py`). **(consumer-affecting: two new
+  series.toml keys, two new `run_start` fields, and a new `spec_pin` pre-flight problem
+  kind)** Serves backlog row CONV-B36.
+
+- **Pre-flight now says what the blocking gate will not run.** Phase scoping made subset
+  gates possible and convoy said nothing about how to scope one. The quiet failure is the
+  expensive one: a subtree-scoped suite cannot see the repository-wide guards a PR mutates,
+  so a 16-PR wave gated 16/16 green while two of them were red — found only by running the
+  full suite by hand after the run reported `completed`, which means the series' own quality
+  claim was stronger than the tree warranted.
+
+  A third `kind='gate'` advisory answers it for free at `dry_run`, since convoy already
+  holds both the gate commands and the workspace: it names the test files present in the
+  workspace that no blocking check's declared paths cover. Unlike a path detector this needs
+  no heuristic and has no false-positive budget — it compares the paths a command *names*
+  against the files the test runners' own discovery globs *find*, and it stays silent
+  wherever the answer would be a guess. A blocking check that names no existing path runs
+  whatever its tool discovers (the whole tree), so one of those silences the advisory
+  entirely; a check naming only out-of-tree paths is an independent oracle and is passed
+  over rather than counted as either. Advice, not a problem: a deliberately narrow gate is a
+  legitimate authoring choice, and it is now a visible one
+  (`interface/preflight_probe.py`). Serves backlog row CONV-B05 (T31b); the two
+  authoring-side halves of that row still ride CONV-B08.
+
+- **The ledger now says which PR is in flight, not only which ones are done.** A new
+  `spawn_start` line is written immediately before each agent spawn launches, carrying
+  `run_id`, `pr_id` and `role` and no economy — nothing has been spent yet, and a line
+  promising numbers it could not have would be worse than none.
+
+  Until now the ledger recorded only completions, so for the 30–90 minutes a spawn takes, a
+  PR in progress looked exactly like a PR the run had not reached. Pairing `spawn_start`
+  with `spawn_complete` on `(run_id, pr_id, role)` closes that, and also separates a driver
+  that is dead from one that is alive but stuck: the second leaves a started spawn that
+  never completes. The result envelope folds it into a per-PR `in_flight` field — the role
+  in flight, or `null` (`core/telemetry.py`, `interface/drivers/headless.py`,
+  `interface/run_summary.py`). **(consumer-affecting: a new `spawn_start` event and a new
+  per-PR `in_flight` field in the run envelope)** Serves backlog row CONV-B02 (c).
+
+- **`convoy clean` closes a killed run's ledger entry instead of leaving it open for ever.**
+  Clearing a stale workspace lock now also appends a terminal `run_abandoned` line for the
+  run that left it behind, when that run recorded no outcome of its own. It has to happen
+  at that moment: the lock names the process that owned the run, and a pid is reusable once
+  that process is gone, so after the lock is cleared nothing can establish the fact. The
+  entry then reads `finished` with `outcome: "abandoned"`, `integrated: false`, and the
+  infrastructure exit code — outside the work, and re-runnable with `--resume`.
+
+  A distinct event rather than another `run_complete` outcome, because the writer is not
+  the run: every other line is the engine's account of its own work, and this one is a
+  later process's account of a run that never reached a verdict. There is deliberately no
+  `halt` and no `integrated` on the line — whoever wrote it was not there. `--dry-run`
+  names the record it would write and writes nothing; a workspace with no stale lock is
+  left alone, since the lock is what identifies the tree a killed run left behind
+  (`core/telemetry.py`, `interface/run_summary.py`, `interface/run_service.py`,
+  `interface/cli.py`). **(consumer-affecting: a new `run_abandoned` event, and `abandoned`
+  joins the reconstructed `outcome` vocabulary)** Serves backlog row CONV-B02 (b).
+
+- **A run whose driver is gone now reads `dead` instead of `running` forever.** The ledger
+  records only completions, so `convoy_status` derived `running` from the *absence* of a
+  terminal line — which is precisely what a hard-killed driver leaves behind. Two runs on
+  disk (9 spawns, about $47) have no terminal record at all and reported `running`
+  indefinitely, and every driver death in the last campaign was diagnosed by hand with an
+  OS process query.
+
+  The fact was already on disk and unused: a run takes the workspace lock before its first
+  ledger line and holds it to the end, and that lock has always recorded its owner's pid.
+  `convoy status` and `convoy_status` now accept a `--workspace` / `workspace` argument and
+  read it — nothing else, nothing written — so a run with ledger lines, no `run_complete`,
+  and a lock naming a process that no longer exists is reported `dead`, with a `message`
+  naming the recovery. The terminal fields stay `null`, because `dead` is the absence of an
+  outcome rather than one of them, and the economy is final rather than partial.
+
+  Deliberately one-sided: `dead` is claimed only on the positive evidence of a lock whose
+  owner is gone. No lock, or no `workspace` argument, reads `running` exactly as before —
+  the commonest way to see no lock is asking from the wrong directory, and a false `dead`
+  would send an operator to restart a run that is still spending
+  (`interface/workspace_lock.py`, `interface/proc.py`, `interface/run_summary.py`,
+  `interface/cli.py`, `interface/mcp/server.py`). **(consumer-affecting: `state` gains the
+  value `dead`; a consumer branching on `running` / `finished` / `unknown` must add it
+  rather than fall through)** Serves backlog row CONV-B02 (a).
+
+- **A spawn that runs close to its cap now says so, while there is still a run to save.**
+  `spawn_complete` carries two new fields: `budget_cap_usd`, the ceiling that spawn ran
+  under, and `budget_nearing`, true once the spend reaches 90% of it. The same moment is
+  narrated on stderr as a `near cap` line, so the operator watching a long run hears it
+  without tailing the JSONL.
+
+  The hard cap is deliberately untouched — a spawn that busts it is still truncated and
+  the PR still halts, which is the whole feature. What moves is when the ceiling becomes
+  visible. Until now the halt was the first thing in the record that mentioned a cap at
+  all, and by then the series was already forfeit: two of ten terminal runs on disk halted
+  on overshoots of 0.3% and 0.4%, skipping five downstream PRs between them and discarding
+  the truncated spawn's uncommitted work. The workaround that got reached for was raising
+  the cap for every PR in a wave, which weakens the ceiling for every cheap PR — the
+  opposite of what the cap is for. A signal on the spawn *before* the busting one is the
+  cheaper half of that fix (`core/telemetry.py`, `interface/drivers/headless.py`,
+  `interface/reporter.py`). **(consumer-affecting: two new telemetry fields)** Serves
+  backlog row CONV-B01.
 
 - **An `asset` nothing will ever read is now said out loud.** `[[checks]].asset` is consumed
   in exactly one place — the fail-closed isolation guard, which returns early unless the
@@ -41,6 +163,108 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   fetch. Tokens, embedding, and usage rules live in `assets/README.md`.
 
 ### Changed
+
+- **`--fresh` / `reset=true` now restores the tree, not just the branches.** There were two
+  destructive paths with overlapping names and a gap between them. `--fresh` touched branches
+  only, while by convoy's own documentation a `budget` or `infrastructure` halt returns
+  *before* the truncated spawn's work is committed — so it leaves exactly the uncommitted
+  changes and untracked files `--fresh` could not remove, and that could abort its own
+  checkout. The documented recovery was therefore "run `clean` by hand, then run `--fresh`",
+  which means the flag did not do what its name implies in the case that most needs it.
+  Budget halts were two of ten terminal runs on disk, so that is the common path.
+
+  `--fresh` now performs `convoy clean`'s tree-restoring steps first — discard uncommitted
+  changes to tracked files, delete untracked files and directories — and then deletes the
+  branches as before. One destructive path, one mental model. `convoy clean` keeps its own
+  job, which `--fresh` cannot do: restoring a workspace **without** starting a run, so it
+  takes no lock, pays for no seat probe, and closes the killed run's ledger entry. With the
+  flag off, nothing in the tree is touched and a leftover branch fails loud exactly as
+  before (`interface/run_service.py`). **(consumer-affecting: `--fresh` / `reset=true` is
+  more destructive than it was — it now discards uncommitted work in the workspace)** Serves
+  backlog row CONV-B31.
+
+- **The shipped documents no longer contradict the shipped engine, and a test now fails
+  when they do.** Corrected: the manual's claim that "there is no resume — a halted run does
+  not check-point-and-continue" (`--resume` shipped in 0.4.0 and was documented 300 lines
+  above it) and that a re-run "re-spends it in full"; the §Cost & latency claim that
+  `convoy_run` is synchronous and cannot be polled (false since `convoy_status` in 0.5.0 and
+  `detach` in 0.6.0); the absence of `convoy clean` from the manual entirely, which cost two
+  operators a hand-deleted branch that `--resume` already deletes; "two tools" in the MCP
+  server docstring and in `docs/design/03-serving.md` while three are registered;
+  `marketplace.json` advertising only `convoy_run` and `convoy_init`, so `convoy_status`
+  shipped unadvertised for three releases; and `docs/design/00-overview.md` §7's claim that
+  convoy's CI gate includes an independent check over convoy itself, which `ci.yml` has
+  never had.
+
+  The mechanism is `tests/test_doc_claims.py`, in the shape of `test_versions_are_locked`:
+  every registered MCP tool name appears where the tools are listed, every CLI verb appears
+  where the verbs are listed, every `convoy_run` argument is documented in the manual, and a
+  stated tool count matches the registered one. Deliberately narrow — it pins the claims
+  that have actually drifted and reads no prose for meaning — and it carries a non-vacuity
+  guard, since the whole module is a set difference against two registries and would pass
+  silently if either stopped answering. This is the third occurrence of the class and the
+  first two fixes were both prose, which is the escalation trigger; `AGENTS.md` already
+  carried the right rule, and what was missing was something that fails. Recorded in
+  `docs/GUARDRAILS.md` with its enforcer. Serves backlog row CONV-B04.
+
+- **A spawn the agent CLI refuses is no longer scored as a clean result with zero economy.**
+  `_classify` matched the CLI's prose on stderr and returned `'ok'` for any non-success spawn
+  carrying no auth, usage or retry signature. So a spawn refused at argument parse — a flag
+  renamed upstream, a value dropped from a choice list — was recorded as a clean task result
+  with $0 economy, and the seat probe, which blocks only on `'infrastructure'`, waved it
+  through. The operator then met a `blocked` run with $0 spend and no diagnosis.
+
+  The CLI's structured signals are now preferred over its prose wherever one exists. A
+  nonzero exit with **no `result` event at all** is `infrastructure`: the CLI never got as
+  far as running the task, and it says so in the `diagnosis`. And the `result` subtypes
+  convoy has a decision for are named in one table, with a non-success spawn carrying
+  anything else classified `infrastructure` rather than scored — an unrecognised error name
+  is a reason convoy does not understand, and "clean task result" is the one guess that is
+  wrong silently. When the CLI ships a new subtype the fix is to record a decision for it,
+  which a test now forces. Matching a vendor CLI's prose is a permanent tax with a silent
+  failure mode; this pays less of it (`interface/headless_spawn.py`). Serves backlog row
+  CONV-B07.
+
+- **`effort` is validated at load, and recorded on every spawn line.** It was an
+  unvalidated free-form string. Verified against the installed agent CLI: an unknown
+  `--effort` value prints a warning on stderr, then runs at the CLI's own default and exits
+  `0`. So a typo produced a run whose series file and whose ledger both claimed a level the
+  spawn never used — silent, undetectable downstream, and corrupting exactly the comparison
+  the ledger exists to support. `effort` now gets the allow-list treatment `permission_mode`
+  already had (`low`, `medium`, `high`, `xhigh`, `max`), on `[governance]` and on a per-PR
+  override alike, and the resolved value is written on each `spawn_complete` line as
+  `effort` so a divergence is at least visible after the fact.
+
+  `PERMISSION_MODES` is refreshed against the same CLI in the same change: it accepts
+  `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk` and `plan`, plus the
+  legacy `default`. convoy's four-value list was rejecting three modes the CLI supports
+  (`core/spec.py`, `core/telemetry.py`, `interface/drivers/headless.py`).
+  **(consumer-affecting: a new `effort` telemetry field; `[governance].effort` and
+  `[[prs]].effort` are now allow-listed, so a series carrying an unknown level — which
+  never ran at that level anyway — now fails pre-flight instead of running silently
+  mis-labelled)** Serves backlog row CONV-B06.
+
+- **A failing check's `detail` is now chosen by content rather than by stream, and cut at a
+  line boundary.** `_red_detail` was `stderr.strip() or stdout.strip()`, so *any* content on
+  stderr meant stdout was never read at all. The case that proves it: a subset-scoped pytest
+  run whose coverage-floor failure (`Required test coverage of 80% not reached`) went to
+  stdout while stderr held only a launcher warning — the real answer was not truncated, it
+  was discarded. `detail` is also what the bounded fix loop re-briefs the repair spawn with,
+  so a discarded answer aims a paid spawn at a non-problem.
+
+  A red now carries a bounded, labelled tail of **each** stream that said anything, split by
+  one budget so neither can crowd the other out and a short stream donates its unused share
+  to a long one. The bound is applied at a **line** boundary rather than a character count:
+  a tail that begins mid-word reads as though the fragment were the failure, observed twice
+  in production (a detail opening inside an unrelated xfail reason, and one inside a
+  structured log line). Any cut is marked with a leading `...`, so a reader — and the fix
+  spawn — can tell a tail from the start of the output.
+
+  This is the third fix at this layer. The first two removed a then-known pollutant; this
+  one changes how the detail is *selected*, which is the thing that kept recurring.
+  `gate_complete.checks[].detail` is free-form prose and stays a string, so
+  `schema_version` does not move — but a consumer that parses it will see the new shape
+  (`interface/gate_runner.py`). Serves backlog row CONV-B03.
 
 - **The release-tag workflow now gates the release page too.** No behaviour change to
   convoy; this is repo discipline, and a follow-up to T24a's own argument. Mechanizing the

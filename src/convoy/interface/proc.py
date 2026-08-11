@@ -64,6 +64,52 @@ def kill_process_tree(pid: int) -> None:
         os.killpg(os.getpgid(pid), signal.SIGKILL)
 
 
+def process_is_alive(pid: int) -> bool:
+    """Whether process ``pid`` currently exists. Never signals it, never raises.
+
+    Deliberately NOT ``os.kill(pid, 0)`` on every platform: on Windows CPython implements
+    ``os.kill`` as ``TerminateProcess``, so the POSIX idiom for "does this exist" would kill
+    the process it was asked about. Windows therefore asks ``tasklist`` and POSIX uses the
+    null signal, where it means what it says.
+
+    Fails **safe rather than certain**: when liveness cannot be established — no
+    ``tasklist``, a refused query, a nonsense pid — the answer is ``True``. The caller is a
+    status reader deciding whether to call a run dead, and wrongly reporting a live run dead
+    would send an operator to restart work that is still going; wrongly reporting it alive
+    is the state that reader already had.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == 'win32':
+        try:
+            listed = subprocess.run(
+                ['tasklist', '/FI', f'PID eq {pid}', '/NH', '/FO', 'CSV'],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding=TEXT_ENCODING,
+                errors=TEXT_ERRORS,
+                check=False,
+            )
+        except OSError:
+            return True  # cannot ask, so cannot claim it is gone
+        # A filter that matches nothing prints an INFO line, not a CSV row; a match prints
+        # ``"image","pid",...``. Compare the quoted pid field rather than searching the whole
+        # output, so a pid appearing inside an image name never reads as a match.
+        return any(
+            row.split(',')[1].strip('"') == str(pid)
+            for row in listed.stdout.splitlines()
+            if row.count(',') >= 1
+        )
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # it exists (or cannot be asked about), it is simply not ours to signal
+    return True
+
+
 @dataclass(frozen=True)
 class ProcResult:
     exit_code: int

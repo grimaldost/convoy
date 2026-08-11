@@ -1026,6 +1026,219 @@ def test_budget_halt_skips_the_dependent(harness: Harness) -> None:
 
 
 # ---------------------------------------------------------------------------
+# spawn_start — which PR is in flight, answerable while the spawn is still running
+# ---------------------------------------------------------------------------
+
+
+def test_a_spawn_is_announced_before_it_runs(harness: Harness) -> None:
+    """The start line precedes the completion, so a PR in flight is visible for 30-90 min."""
+    series = _one_pr_series(harness.series)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-spawn-start',
+    )
+
+    events = _read_events(harness.outputs)
+    tags = [event['event'] for event in events]
+    assert tags.index('spawn_start') < tags.index('spawn_complete')
+    started = _events_of(events, 'spawn_start')
+    assert len(started) == 1
+    assert started[0]['pr_id'] == 'pr-1'
+    assert started[0]['role'] == 'implementation'
+
+
+def test_a_fix_spawn_is_announced_under_its_own_role(harness: Harness) -> None:
+    series = _marker_series(harness, max_fix_attempts=1)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-spawn-start-fix',
+    )
+
+    started = _events_of(_read_events(harness.outputs), 'spawn_start')
+    assert [event['role'] for event in started] == ['implementation', 'fix']
+
+
+def test_a_pr_the_series_never_reached_announces_no_spawn(harness: Harness) -> None:
+    """The marker means IN FLIGHT, so a skipped PR must not carry one."""
+    red_series = _make_series(harness.repo, Check(name='red', run=_FAIL_CMD, blocking=True))
+    series = _two_pr_series(red_series)
+    (harness.repo / 'prompts' / 'impl-a.md').write_text('Implement A.')
+    (harness.repo / 'prompts' / 'impl-b.md').write_text('Implement B.')
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=MarkerSpawn([ok_result()], markers_for=('marker-a',)),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-spawn-start-skip',
+    )
+
+    started = _events_of(_read_events(harness.outputs), 'spawn_start')
+    assert [event['pr_id'] for event in started] == ['pr-a']
+
+
+# ---------------------------------------------------------------------------
+# The near-cap signal — said while there is still a run to save
+# ---------------------------------------------------------------------------
+
+
+def test_a_spawn_that_ran_close_to_its_cap_is_flagged_on_its_telemetry_line(
+    harness: Harness,
+) -> None:
+    """The ledger records the ceiling and that the spawn reached the nearing fraction of it.
+
+    The fixture cap is $1.00, so $0.95 is 95% — under the cap, so the run completes exactly
+    as it always did. The cap is not softened; what is new is that the record says the spawn
+    ran hot before the next one busts it.
+    """
+    series = _one_pr_series(harness.series)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(cost_usd=0.95)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-near-cap',
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawns[0]['budget_cap_usd'] == 1.0
+    assert spawns[0]['budget_nearing'] is True
+
+
+def test_every_spawn_line_records_the_effort_it_was_requested_at(harness: Harness) -> None:
+    """The CLI reports nothing back about effort and only warns on a value it does not know.
+
+    So without this the series file and the ledger could agree on a level the spawn never
+    ran at — the exact comparison the ledger exists to support, quietly wrong.
+    """
+    series = _marker_series(harness, max_fix_attempts=1)
+    series = replace(series, governance=replace(series.governance, effort='xhigh'))
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-effort',
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert [line['effort'] for line in spawns] == ['xhigh', 'xhigh']
+
+
+def test_a_prs_own_effort_is_what_its_spawn_line_records(harness: Harness) -> None:
+    """The recorded value is the RESOLVED one, so a per-PR override is visible in the ledger."""
+    series = _one_pr_series(harness.series)
+    series = replace(series, prs=(replace(series.prs[0], effort='max'),))
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-effort-pr',
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawns[0]['effort'] == 'max'
+
+
+def test_an_ordinary_spawn_carries_its_cap_and_is_not_flagged(harness: Harness) -> None:
+    """Every line carries the ceiling it ran under; only a hot one is flagged."""
+    series = _one_pr_series(harness.series)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(cost_usd=0.01)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-cheap',
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawns[0]['budget_cap_usd'] == 1.0
+    assert spawns[0]['budget_nearing'] is False
+
+
+def test_a_near_cap_spawn_is_narrated_and_the_run_still_completes(harness: Harness) -> None:
+    """The operator hears it on stderr, and the hard cap is untouched — the run integrates."""
+    series = _one_pr_series(harness.series)
+    rec = RecordingReporter()
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(cost_usd=0.95)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-near-cap-narrated',
+        reporter=rec,
+    )
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert rec.names() == [
+        'run_start',
+        'spawn_done',
+        'budget_nearing',
+        'gate_result',
+        'integrated',
+        'run_done',
+    ]
+    assert ('budget_nearing', 'pr-1', 'implementation', 0.95, 1.0) in rec.calls
+
+
+def test_a_near_cap_fix_spawn_reports_the_fix_role_ceiling(harness: Harness) -> None:
+    """A repair is metered against the FIX cap, not the implementation one it repairs."""
+    series = _marker_series(harness, max_fix_attempts=1)
+    fix_cap = series.governance.budgets.fix
+    rec = RecordingReporter()
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FixMarkerSpawn(
+            [ok_result(cost_usd=0.01), ok_result(cost_usd=fix_cap * 0.95)],
+            fix_creates_marker=True,
+        ),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-near-cap-fix',
+        reporter=rec,
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    fix_line = next(line for line in spawns if line['role'] == 'fix')
+    assert fix_line['budget_cap_usd'] == fix_cap
+    assert fix_line['budget_nearing'] is True
+    assert ('budget_nearing', 'pr-1', 'fix', fix_cap * 0.95, fix_cap) in rec.calls
+
+
+# ---------------------------------------------------------------------------
 # output_tail — a non-ok spawn's output reaches telemetry (bounded) for diagnosis
 # ---------------------------------------------------------------------------
 
@@ -1741,3 +1954,45 @@ def test_a_quiet_run_does_not_fire_the_advisory_hook(harness: Harness) -> None:
     )
 
     assert 'advisories' not in rec.names()
+
+
+# ---------------------------------------------------------------------------
+# The spec pin reaches the run record
+# ---------------------------------------------------------------------------
+
+
+def test_the_run_start_line_carries_the_series_spec_pin(harness: Harness) -> None:
+    """Without this the pin stops at the series file and no run can be joined to a spec."""
+    series = _one_pr_series(harness.series)
+    series = replace(series, spec_path='docs/specs/thing.md', spec_sha256='e' * 64)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-spec-pin',
+    )
+
+    (start,) = _events_of(_read_events(harness.outputs), 'run_start')
+    assert start['spec_path'] == 'docs/specs/thing.md'
+    assert start['spec_sha256'] == 'e' * 64
+
+
+def test_an_unpinned_series_records_empty_pin_fields(harness: Harness) -> None:
+    """Present and empty, so a consumer reads the keys unconditionally."""
+    run_series(
+        _one_pr_series(harness.series),
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-no-pin',
+    )
+
+    (start,) = _events_of(_read_events(harness.outputs), 'run_start')
+    assert start['spec_path'] == ''
+    assert start['spec_sha256'] == ''

@@ -7,11 +7,13 @@ timeout fires we assert the sentinel stops growing, i.e. the tree-kill reached t
 grandchild and it was not orphaned.
 """
 
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
 
-from convoy.interface.proc import ProcResult, run_with_timeout
+from convoy.interface.proc import ProcResult, process_is_alive, run_with_timeout
 
 # ``sys.executable`` (the venv python) is reused for every spawned process so the tree is
 # built from the same interpreter the test itself runs under.
@@ -144,3 +146,27 @@ def test_timeout_reaps_grandchild_no_orphan(tmp_path: Path) -> None:
         f'sentinel grew from {size_after_kill} to {final_size} after the tree-kill — '
         'the grandchild was orphaned, not reaped'
     )
+
+
+# --- process liveness: what tells a killed run apart from a slow one -----------------------
+
+
+def test_this_process_is_alive() -> None:
+    assert process_is_alive(os.getpid()) is True
+
+
+def test_a_process_that_has_exited_is_not_alive() -> None:
+    """A real child, run to completion and reaped, so the pid genuinely names nothing."""
+    child = subprocess.Popen([_PY, '-c', 'pass'], stdin=subprocess.DEVNULL)
+    pid = child.pid
+    child.wait()
+
+    assert process_is_alive(pid) is False
+
+
+def test_a_nonsense_pid_is_not_alive() -> None:
+    # 0 and negatives address a process GROUP on POSIX, never a process, so they can only
+    # ever be a caller mistake -- answering them without asking the OS keeps a stray -1 from
+    # reaching a signal call.
+    assert process_is_alive(0) is False
+    assert process_is_alive(-1) is False

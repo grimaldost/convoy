@@ -105,11 +105,33 @@ _RETRY_EXHAUSTED_RE = re.compile(
 # convoy classifies it distinctly and the driver halts the PR (truncated work is untrustworthy).
 _BUDGET_RESULT_SUBTYPE = 'error_max_budget_usd'
 
+# Every ``result`` subtype convoy has an explicit decision for, and what that decision is.
+# This is the structured signal the CLI already publishes, and it is preferred over matching
+# the CLI's prose wherever it exists — prose is a permanent tax with a silent failure mode.
+#
+# A NON-SUCCESS spawn whose subtype is not in here is classified ``infrastructure``, not
+# scored. An unrecognised error name is a reason convoy does not understand, and "clean task
+# result with zero economy" is the one guess that is wrong silently and costs money: an
+# operator then sees a blocked run with $0 spend and no diagnosis. The recovery when the CLI
+# ships a new subtype is to add it here with a recorded decision, not to widen the guess.
+_RESULT_SUBTYPES: dict[str, str] = {
+    'success': 'ok',
+    # The agent ran and produced work; the task itself did not succeed. A task outcome, so
+    # the driver commits and gates it — the gate is the arbiter, not the exit code.
+    'error_during_execution': 'ok',
+    'error_max_turns': 'ok',
+    _BUDGET_RESULT_SUBTYPE: 'budget',
+}
+
 
 # How much of the deciding text to carry as the spawn's ``diagnosis``. The HEAD, not the
 # tail: a diagnosis leads with the diagnosis, unlike a raw stream whose useful part is at
 # the end. Bounded because this is embedded in one-line messages, not stored.
 _DIAGNOSIS_CHARS = 300
+
+# Said plainly when the CLI failed before emitting a ``result`` event and wrote nothing on
+# stderr either. It is a real diagnosis: "the CLI never ran the task" is the whole finding.
+_NO_RESULT_DIAGNOSIS = 'the CLI exited nonzero without emitting a result event'
 
 
 def _is_infrastructure_signature(text: str) -> bool:
@@ -246,18 +268,31 @@ def _classify(stderr: str, parsed: _Parsed, *, success: bool) -> tuple[str, str]
        overrides even a budget cap (an auth/usage failure during a budget-capped run is
        still a real infra halt).
     2. A budget-cap result subtype — the authoritative "truncated by ``--max-budget-usd``".
-    3. A non-success spawn whose AGENT-authored result text carries an infra signature — the
+    3. A cleanly successful spawn is a task result, whatever anything says. One that
+       mentions "usage limit" (an error handler it wrote, a test name) stays ``'ok'`` with
+       an empty diagnosis.
+    4. A non-success spawn that produced **no ``result`` event at all** — the CLI never got
+       as far as running the task. An argument the CLI rejects at parse (a flag renamed
+       upstream, a value dropped from a choice list) lands here, and used to be scored as a
+       clean task result with $0 economy while the seat probe, which blocks only on
+       ``'infrastructure'``, waved it through.
+    5. A non-success spawn whose AGENT-authored result text carries an infra signature — the
        weakest signal, so it must not override a budget subtype: an agent that merely wrote
        "limit reached" in its truncated output is task content, not an infra halt.
-
-    A cleanly successful spawn that mentions "usage limit" (an error handler it wrote, a
-    test name) fails the ``success`` guard and stays ``'ok'`` with an empty diagnosis.
+    6. A non-success spawn carrying a subtype outside :data:`_RESULT_SUBTYPES`. Convoy has
+       no decision for it, and assuming a clean result is the assumption that fails silently.
     """
     if _is_infrastructure_signature(stderr):
         return 'infrastructure', _one_line(stderr, parsed.subtype)
     if parsed.subtype == _BUDGET_RESULT_SUBTYPE:
         return 'budget', _one_line(parsed.result_text, parsed.subtype)
-    if not success and _is_infrastructure_signature(parsed.result_text):
+    if success:
+        return 'ok', ''
+    if not parsed.saw_result:
+        return 'infrastructure', _one_line(stderr, parsed.subtype) or _NO_RESULT_DIAGNOSIS
+    if _is_infrastructure_signature(parsed.result_text):
+        return 'infrastructure', _one_line(parsed.result_text, parsed.subtype)
+    if _RESULT_SUBTYPES.get(parsed.subtype) != 'ok':
         return 'infrastructure', _one_line(parsed.result_text, parsed.subtype)
     return 'ok', ''
 

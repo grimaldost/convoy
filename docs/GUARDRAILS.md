@@ -95,6 +95,23 @@ protocol addition mis-handles instead of failing loud.
 *Enforced by:* convention in `docs/design/02-formats.md` + the PR checklist
 (review-enforced; mechanization candidate).
 
+### A shipped document does not contradict the shipped engine
+
+The names the code publishes — the MCP tools, the CLI verbs, the `convoy_run`
+arguments — appear in the documents that promise to list them, and a stated tool
+count matches the real one.
+
+*Why:* the manual said "there is no resume" for three releases after `--resume`
+shipped and was documented 300 lines above it; `convoy_status` was registered but
+unadvertised in `marketplace.json` for three releases; `convoy clean` appeared zero
+times in the manual, which cost two operators a hand-deleted branch the engine
+already deletes. The class recurred three times and both earlier fixes were prose.
+
+*Enforced by:* `tests/test_doc_claims.py` — deliberately narrow, pinning only the
+claims that have actually drifted, and carrying its own non-vacuity guard. The
+conflict rule itself ("if docs and code diverge, code wins") stays review-enforced
+in `AGENTS.md`; this fails on the part of it that is mechanical.
+
 ### The repo stays self-contained
 
 No references to any other tool or project in code or docs; feedback reports and

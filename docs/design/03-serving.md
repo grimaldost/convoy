@@ -32,11 +32,15 @@ init` and `convoy_init` both call `scaffold` (`interface/scaffold.py`).
 A real run passes these stages, in this order (`run_series_headless`):
 
 1. **Pre-flight** — the pure structural checks plus the filesystem probes
-   (prompts exist, `outputs` out-of-tree, asset isolation). A `PreflightError`
+   (prompts exist, `outputs` out-of-tree, the spec pin resolves and matches, asset
+   isolation). A `PreflightError`
    here precedes any side effect: no lock, no spawn, no git mutation. Pre-flight
    returns a `PreflightReport` carrying two lists: the blocking `problems` that
-   decide runnability, and non-blocking `advisories` that do not (today: a PR that
-   phase-scoped checks leave with no blocking check, so it integrates unverified).
+   decide runnability, and non-blocking `advisories` that do not — today: a PR that
+   phase-scoped checks leave with no blocking check, so it integrates unverified; a
+   check declaring an `asset` no lane will read; and a blocking gate whose declared
+   paths leave test files in the workspace unrun, so a green gate claims more than
+   the tree warrants.
    Only `problems` raises; advisories are reported and the run proceeds. They are
    reported on **every** path, the run included: on a run they ride the `run_start`
    telemetry line and the reporter narrates them under the run header. Until 0.7.0 the
@@ -56,7 +60,8 @@ A real run passes these stages, in this order (`run_series_headless`):
    plus any per-PR override), in first-PR-seen order: a tool-less brief (`Reply
    with exactly: ok`), low effort, default permission mode, a $0.05 budget cap,
    a 120-second timeout. An `'infrastructure'` classification (expired seat,
-   usage limit, retry exhaustion) or a CLI that cannot start becomes a
+   usage limit, retry exhaustion, or an invocation the CLI refuses outright) or a
+   CLI that cannot start becomes a
    `kind='seat'` pre-flight problem — located at the section that *declared* the
    failing model, `[governance]` or the overriding `[[prs]]` table — and the run
    stops with zero side effects, before the fresh reset or any branch is staged.
@@ -76,11 +81,19 @@ A real run passes these stages, in this order (`run_series_headless`):
    whose implementation committed nothing points at the same commit as the
    integration branch, and treating that as done would silently drop a PR that
    never landed.
-5. **Optional fresh reset** — with `--fresh` / `reset=true`, `Git.reset_to_base`
-   (`interface/git.py`) checks out the base branch and force-deletes the
-   integration branch and every PR branch the series names, so a completed or
-   halted run re-runs without manual git surgery. Off by default: a leftover
-   branch still fails loud exactly as before.
+5. **Optional fresh restore** — with `--fresh` / `reset=true`, the workspace is
+   restored to base: `Git.discard_changes` and `Git.clean_untracked` first, then
+   `Git.reset_to_base` (`interface/git.py`) checks out the base branch and
+   force-deletes the integration branch and every PR branch the series names, so a
+   completed or halted run re-runs without manual git surgery. The tree-restoring
+   half is the same work `convoy clean` does, and it is here because branch deletion
+   alone could not serve the common case: a `budget` or `infrastructure` halt returns
+   before the truncated spawn's work is committed, leaving uncommitted changes and
+   untracked files that abort `--fresh`'s own checkout. Two destructive paths with
+   overlapping names and a gap between them became one. Off by default, and with it
+   off nothing in the tree is touched: a leftover branch still fails loud exactly as
+   before. `convoy clean` remains the verb for restoring a workspace without starting
+   a run — no lock, no seat probe, and it closes the killed run's ledger entry.
 6. **Engine** — the `outputs` dir is created and `run_series`
    (`interface/drivers/headless.py`) takes over.
 
@@ -111,7 +124,7 @@ the tool argument states it *positively*.
 ## The MCP stdio server
 
 `src/convoy/interface/mcp/` is the agent-facing surface: a stdio server
-(`python -m convoy.interface.mcp`, in-process Python) exposing two tools that
+(`python -m convoy.interface.mcp`, in-process Python) exposing three tools that
 mirror the CLI verbs but return structured dicts instead of exit codes and
 console text (`interface/mcp/server.py`):
 
@@ -123,10 +136,11 @@ console text (`interface/mcp/server.py`):
 - **`convoy_init(directory)`** — scaffold the runnable starter series and
   return `{ok, created, series_file, workspace, next}`, naming the paths to
   hand straight to `convoy_run`.
-- **`convoy_status(series_file, run_id='')`** — report a run's state and
-  economy so far from the ledger alone, including a run still in progress and a
-  run this server never started. Spends nothing, holds no state between calls,
-  never touches the workspace.
+- **`convoy_status(series_file, run_id='', workspace='')`** — report a run's state
+  and economy so far from the ledger, including a run still in progress and a run
+  this server never started. Spends nothing, holds no state between calls, writes
+  nothing. `workspace` is optional and read for exactly one thing: the run lock
+  there names its owner process, which is what tells `dead` apart from `running`.
 
 Each tool offloads its blocking work with `asyncio.to_thread`, which keeps the
 server's event loop responsive — but `convoy_run` itself still blocks until the
@@ -175,11 +189,39 @@ a deliberate host policy, and breaking out of it silently would be worse than
 honouring it. A run killed that way stops advancing, which is what `convoy_status`
 reports.
 
+### A run whose driver is gone
+
+The ledger records only completions, so `running` was derived from the *absence* of a
+terminal line — which is exactly what a killed driver leaves behind. Every correct
+long-run integration therefore reimplemented an OS process query on the side.
+
+The lock supplies the missing fact. A run acquires the workspace lock before it writes its
+first ledger line and holds it until it returns, and the lock has always recorded its
+owner's pid; nothing read it back. `convoy_status`, given a `workspace`, does: a run with
+ledger lines, no `run_complete`, and a lock naming a process that no longer exists is
+`dead`. The terminal fields stay `null` — `dead` is the absence of an outcome, not one of
+them — and the economy is final rather than partial.
+
+Two limits are deliberate. **`dead` is claimed only on positive evidence**: no lock file at
+all reads `running`, because the commonest way to see that is asking from the wrong
+directory, and a false `dead` sends an operator to restart a run that is still spending.
+And **a pid is reusable** once its process is gone, so a live check cannot answer for a run
+that died last week and whose lock has since been cleared.
+
+That second limit is why the recovery path writes the fact down rather than leaving it to be
+queried. When `convoy clean` clears a stale lock it appends a terminal `run_abandoned` line
+for the run that left it, if that run recorded no outcome of its own — the last moment at
+which the abandonment is establishable. From then on the entry reads `finished` with
+`outcome: "abandoned"`, whether or not any lock survives. It is the only write `clean` makes
+outside the workspace, it is append-only like every other, and it is idempotent: the line it
+writes is itself terminal, so a second `clean` finds a finished run and does nothing.
+
 **The result envelope** is built by `summarize_run`: it reads the on-disk
 `spawns.jsonl`, keeps only the lines tagged with this run's `run_id` (the file
 is append-only across runs, so a reused outputs dir stays safe), and folds them
 into `economy` totals (`total_cost_usd`, `cost_estimated`, token counts,
-`num_turns`, `spawn_count`) plus a per-PR view (spawn count, the implementation
+`num_turns`, `spawn_count`) plus a per-PR view (spawn count, any spawn still
+`in_flight`, the implementation
 spawn's `effective_model`, the *latest* gate verdict with the names of its
 failing blocking checks, any skip reason). `effective_model` is keyed on the
 `implementation` role rather than append order — a fix spawn's model never
@@ -244,12 +286,13 @@ The two surfaces expose one engine; the mapping is mechanical.
 | `convoy run SERIES [--workspace DIR]` | `convoy_run(series_file, workspace)` | the CLI defaults the workspace to its working directory; `--workspace` makes it explicit, as the tool's argument always was |
 | `convoy validate SERIES [--workspace DIR]` | `convoy_run(..., dry_run=true)` | same pre-flight; neither spawns (seat probe included) nor mutates. Advisories print to stderr / fill the `advisories` key, and change neither the exit code nor `ok`/`outcome` — so `validate` can write to stderr and still exit `0` |
 | `--no-config-isolation` / `CONVOY_NO_CONFIG_ISOLATION` | `config_isolation=false` | polarity inverted; the env escape is read by the CLI entry point only |
-| `--fresh` | `reset=true` | the same `Git.reset_to_base` path |
+| `--fresh` | `reset=true` | the same restore path: discard, clean, then `Git.reset_to_base` |
 | `--resume` | `resume=true` | continue the existing integration branch, skipping PRs already merged into it; rejected together with `--fresh`/`reset` |
 | `--run-id ID` | — | pins the run id instead of minting one; the tool mints its own, and only needs the flag to pin a *detached* child's. An id already in the ledger is refused either way |
 | a background shell | `detach=true` | the CLI's answer is the operator's shell; the tool's is a detached child of the same CLI, returning `outcome: "started"` plus the `run_id` to poll |
 | `--quiet` | — | an MCP run is always silent (null reporter); the CLI narrates to stderr by default |
-| `convoy status SERIES [--run-id ID]` | `convoy_status(series_file, run_id)` | the same ledger read; `--json` gives the CLI the tool's envelope verbatim |
+| `convoy status SERIES [--run-id ID] [--workspace DIR]` | `convoy_status(series_file, run_id, workspace)` | the same ledger read; `--json` gives the CLI the tool's envelope verbatim. The CLI defaults the workspace to its working directory, the tool never guesses one |
+| `convoy clean SERIES [--workspace DIR] [--dry-run]` | — | the recovery verb: no tool equivalent, because it is destructive and takes no run. It restores the tree `--fresh` cannot (uncommitted changes, untracked files) and closes a killed run's ledger entry |
 | `convoy init [DIR]` | `convoy_init(directory)` | the same scaffold; the tool result names the follow-up `convoy_run` arguments |
 
 | CLI exit code | MCP result |

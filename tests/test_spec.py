@@ -7,6 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from convoy.core.spec import (
+    EFFORT_LEVELS,
     PERMISSION_MODES,
     PR,
     Branches,
@@ -163,6 +164,44 @@ def test_rule1_bool_is_not_int_for_timeout() -> None:
 def test_rule2_bad_permission_mode_raises() -> None:
     text = VALID_TOML.replace('permission_mode = "default"', 'permission_mode = "yolo"')
     with pytest.raises(SpecError):
+        load_series(text)
+
+
+@pytest.mark.parametrize('mode', sorted(PERMISSION_MODES))
+def test_every_mode_the_agent_cli_accepts_is_accepted_here(mode: str) -> None:
+    """The allow-list rejected three modes the CLI supports; a spec must not refuse valid input."""
+    text = VALID_TOML.replace('permission_mode = "default"', f'permission_mode = "{mode}"')
+    assert load_series(text).governance.permission_mode == mode
+
+
+@pytest.mark.parametrize('level', sorted(EFFORT_LEVELS))
+def test_every_effort_level_the_agent_cli_accepts_is_accepted_here(level: str) -> None:
+    text = VALID_TOML.replace('effort = "medium"', f'effort = "{level}"')
+    assert load_series(text).governance.effort == level
+
+
+def test_an_unknown_effort_is_rejected_at_load() -> None:
+    """The CLI only WARNS on an unknown effort and runs at its default.
+
+    So an unvalidated typo produces a run whose series file and whose ledger both claim a
+    level the spawn never ran at — silent, and undetectable downstream. Caught here instead,
+    the same treatment permission_mode already got.
+    """
+    text = VALID_TOML.replace('effort = "medium"', 'effort = "lo"')
+    with pytest.raises(SpecError, match='effort'):
+        load_series(text)
+
+
+def test_an_unknown_effort_names_the_levels_that_would_work() -> None:
+    text = VALID_TOML.replace('effort = "medium"', 'effort = "lo"')
+    with pytest.raises(SpecError, match='xhigh'):
+        load_series(text)
+
+
+def test_an_unknown_per_pr_effort_is_rejected_too() -> None:
+    """A per-PR typo is the same silent failure, one table further down."""
+    text = VALID_TOML.replace('id = "pr-1-lexer"', 'id = "pr-1-lexer"\neffort = "hgih"')
+    with pytest.raises(SpecError, match='effort'):
         load_series(text)
 
 
@@ -346,7 +385,7 @@ _MONEY = st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infin
 @st.composite
 def _series(draw: st.DrawFn) -> Series:
     governance = Governance(
-        effort=draw(_TEXT),
+        effort=draw(st.sampled_from(sorted(EFFORT_LEVELS))),
         permission_mode=draw(st.sampled_from(sorted(PERMISSION_MODES))),
         timeout_seconds=draw(st.integers(min_value=0, max_value=86_400)),
         budgets=Budgets(implementation=draw(_MONEY), review=draw(_MONEY), fix=draw(_MONEY)),
@@ -396,7 +435,7 @@ def _series(draw: st.DrawFn) -> Series:
                 depends_on=tuple(depends_on),
                 model=draw(st.none() | _TEXT),
                 tier=draw(st.none() | _TEXT),
-                effort=draw(st.none() | _TEXT),
+                effort=draw(st.none() | st.sampled_from(sorted(EFFORT_LEVELS))),
             )
         )
 
@@ -459,3 +498,71 @@ def test_empty_tier_is_rejected() -> None:
     toml = VALID_TOML.replace('model = "claude-sonnet-5"', 'model = "claude-sonnet-5"\ntier = ""')
     with pytest.raises(SpecError, match='non-empty'):
         load_series(toml)
+
+
+# --- the spec pin: which spec this series was decomposed from -------------------------------
+
+_PIN_HASH = 'a' * 64
+
+
+def _with_pin(path: str = 'docs/specs/comparison-ops.md', digest: str = _PIN_HASH) -> str:
+    return VALID_TOML.replace(
+        'version = "1"',
+        f'version = "1"\nspec_path = "{path}"\nspec_sha256 = "{digest}"',
+        1,
+    )
+
+
+def test_a_series_carries_the_spec_it_was_decomposed_from() -> None:
+    series = load_series(_with_pin())
+    assert series.spec_path == 'docs/specs/comparison-ops.md'
+    assert series.spec_sha256 == _PIN_HASH
+
+
+def test_a_series_without_a_pin_parses_exactly_as_before() -> None:
+    series = load_series(VALID_TOML)
+    assert series.spec_path == ''
+    assert series.spec_sha256 == ''
+
+
+@pytest.mark.parametrize('key', ['spec_path', 'spec_sha256'])
+def test_half_a_pin_is_rejected(key: str) -> None:
+    """A path with no hash pins nothing; a hash with no path cannot be resolved."""
+    value = 'docs/spec.md' if key == 'spec_path' else _PIN_HASH
+    text = VALID_TOML.replace('version = "1"', f'version = "1"\n{key} = "{value}"', 1)
+    with pytest.raises(SpecError, match='together'):
+        load_series(text)
+
+
+@pytest.mark.parametrize('path', ['/abs/docs/spec.md', 'C:/abs/docs/spec.md'])
+def test_an_absolute_spec_path_is_rejected(path: str) -> None:
+    """A series directory travels by copy, so an absolute path is wrong on arrival.
+
+    A drive-letter path is rejected on every platform, not only on Windows: the series file
+    is what travels, so the machine that reads it is not the one that wrote it.
+    """
+    with pytest.raises(SpecError, match='repo-relative'):
+        load_series(_with_pin(path=path))
+
+
+@pytest.mark.parametrize('digest', ['abc', 'a' * 63, 'z' * 64, ''])
+def test_a_hash_that_is_not_a_sha256_digest_is_rejected(digest: str) -> None:
+    """A truncated hash would fail the pre-flight for a reason that looks like spec drift."""
+    with pytest.raises(SpecError):
+        load_series(_with_pin(digest=digest))
+
+
+def test_an_uppercase_digest_is_normalised() -> None:
+    """A hex digest is the same value in either case; the comparison must not care."""
+    assert load_series(_with_pin(digest='A' * 64)).spec_sha256 == 'a' * 64
+
+
+def test_a_pinned_series_round_trips() -> None:
+    original = load_series(_with_pin())
+    assert load_series(dump_series(original)) == original
+
+
+def test_an_unpinned_series_dumps_no_pin_keys() -> None:
+    dumped = tomllib.loads(dump_series(load_series(VALID_TOML)))
+    assert 'spec_path' not in dumped['series']
+    assert 'spec_sha256' not in dumped['series']
