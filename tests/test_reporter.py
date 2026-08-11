@@ -33,6 +33,9 @@ class RecordingReporter:
     def spawn_done(self, pr_id: str, role: str, result: SpawnResult) -> None:
         self.calls.append(('spawn_done', pr_id, role))
 
+    def budget_nearing(self, pr_id: str, role: str, spend_usd: float, cap_usd: float) -> None:
+        self.calls.append(('budget_nearing', pr_id, role, spend_usd, cap_usd))
+
     def gate_result(self, pr_id: str, attempt: int, verdict: GateVerdict) -> None:
         self.calls.append(('gate_result', pr_id, attempt, verdict.blocking_red))
 
@@ -78,6 +81,17 @@ def test_spawn_done_line_shows_role_class_and_cost() -> None:
     assert 'impl' in out
     assert 'ok' in out
     assert '$0.0390' in out
+
+
+def test_budget_nearing_line_shows_the_spend_against_the_cap() -> None:
+    buf = io.StringIO()
+    StderrReporter(buf).budget_nearing('pr-1', 'implementation', 19.4, 20.0)
+    out = buf.getvalue()
+    assert '[pr-1]' in out
+    assert 'impl' in out
+    assert '$19.4000' in out
+    assert '$20.00' in out
+    assert '97%' in out
 
 
 def test_gate_pass_line() -> None:
@@ -145,6 +159,7 @@ def test_null_reporter_writes_nothing_and_never_raises() -> None:
     reporter: Reporter = NullReporter()
     reporter.run_start('s', 'r', 1)
     reporter.spawn_done('p', 'implementation', ok_result())
+    reporter.budget_nearing('p', 'implementation', 0.9, 1.0)
     reporter.gate_result('p', 0, _verdict(passed=True))
     reporter.fix_attempt('p', 1, 2)
     reporter.pr_skipped('p', 'x')

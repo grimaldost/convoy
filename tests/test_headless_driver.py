@@ -1026,6 +1026,111 @@ def test_budget_halt_skips_the_dependent(harness: Harness) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The near-cap signal — said while there is still a run to save
+# ---------------------------------------------------------------------------
+
+
+def test_a_spawn_that_ran_close_to_its_cap_is_flagged_on_its_telemetry_line(
+    harness: Harness,
+) -> None:
+    """The ledger records the ceiling and that the spawn reached the nearing fraction of it.
+
+    The fixture cap is $1.00, so $0.95 is 95% — under the cap, so the run completes exactly
+    as it always did. The cap is not softened; what is new is that the record says the spawn
+    ran hot before the next one busts it.
+    """
+    series = _one_pr_series(harness.series)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(cost_usd=0.95)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-near-cap',
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawns[0]['budget_cap_usd'] == 1.0
+    assert spawns[0]['budget_nearing'] is True
+
+
+def test_an_ordinary_spawn_carries_its_cap_and_is_not_flagged(harness: Harness) -> None:
+    """Every line carries the ceiling it ran under; only a hot one is flagged."""
+    series = _one_pr_series(harness.series)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(cost_usd=0.01)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-cheap',
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawns[0]['budget_cap_usd'] == 1.0
+    assert spawns[0]['budget_nearing'] is False
+
+
+def test_a_near_cap_spawn_is_narrated_and_the_run_still_completes(harness: Harness) -> None:
+    """The operator hears it on stderr, and the hard cap is untouched — the run integrates."""
+    series = _one_pr_series(harness.series)
+    rec = RecordingReporter()
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(cost_usd=0.95)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-near-cap-narrated',
+        reporter=rec,
+    )
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert rec.names() == [
+        'run_start',
+        'spawn_done',
+        'budget_nearing',
+        'gate_result',
+        'integrated',
+        'run_done',
+    ]
+    assert ('budget_nearing', 'pr-1', 'implementation', 0.95, 1.0) in rec.calls
+
+
+def test_a_near_cap_fix_spawn_reports_the_fix_role_ceiling(harness: Harness) -> None:
+    """A repair is metered against the FIX cap, not the implementation one it repairs."""
+    series = _marker_series(harness, max_fix_attempts=1)
+    fix_cap = series.governance.budgets.fix
+    rec = RecordingReporter()
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FixMarkerSpawn(
+            [ok_result(cost_usd=0.01), ok_result(cost_usd=fix_cap * 0.95)],
+            fix_creates_marker=True,
+        ),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-near-cap-fix',
+        reporter=rec,
+    )
+
+    spawns = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    fix_line = next(line for line in spawns if line['role'] == 'fix')
+    assert fix_line['budget_cap_usd'] == fix_cap
+    assert fix_line['budget_nearing'] is True
+    assert ('budget_nearing', 'pr-1', 'fix', fix_cap * 0.95, fix_cap) in rec.calls
+
+
+# ---------------------------------------------------------------------------
 # output_tail — a non-ok spawn's output reaches telemetry (bounded) for diagnosis
 # ---------------------------------------------------------------------------
 

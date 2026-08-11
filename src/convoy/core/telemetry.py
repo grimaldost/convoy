@@ -17,6 +17,14 @@ from convoy.core import pricing
 
 SCHEMA_VERSION = 1
 
+# The fraction of a spawn's cap at which its spend is called out. The cap itself is not
+# softened — a spawn that busts it is truncated and the PR halts, which is the feature — but
+# the halt is the FIRST thing that says the ceiling was in play, and by then the run is
+# already forfeit. Two of ten terminal runs on disk halted on overshoots of 0.3% and 0.4%,
+# skipping five downstream PRs between them. A tenth of the ceiling is the window left for a
+# monitor to raise the cap or stage recovery before the busting turn.
+BUDGET_NEARING_FRACTION = 0.9
+
 # The event tag written on each line, keyed by event dataclass. Kept next to the
 # classes so ``to_json_line`` never has to branch on ``isinstance``.
 _EVENT_TAGS: dict[type, str] = {}
@@ -80,6 +88,14 @@ class SpawnComplete:
     effective_model: str
     cost_estimated: bool = False
     output_tail: str = ''
+    # The ceiling this spawn ran under — the resolved ``[governance.budgets].<role>`` value,
+    # so a fix line reports the fix cap and not the implementation one it repairs — and
+    # whether the spend reached :data:`BUDGET_NEARING_FRACTION` of it. ``None`` when the
+    # spawn ran uncapped, in which case ``budget_nearing`` is always false. Recorded because
+    # the cap was previously invisible in the ledger until it was busted: a reader could see
+    # what a spawn cost but not how close that was to stopping the series.
+    budget_cap_usd: float | None = None
+    budget_nearing: bool = False
     # The adapter's verdict on WHY the spawn ended: ``ok`` | ``infrastructure`` | ``budget``.
     # It drove the run's control flow all along but was never recorded, so a consumer had to
     # infer it from ``exit_code`` plus the shape of ``output_tail`` — an inference that is
@@ -196,6 +212,22 @@ def to_json_line(event: Event) -> str:
     }
     payload.update(dataclasses.asdict(event))
     return json.dumps(payload, separators=(',', ':'))
+
+
+def budget_is_nearing(cost_usd: float, cap_usd: float | None) -> bool:
+    """Whether ``cost_usd`` has reached :data:`BUDGET_NEARING_FRACTION` of ``cap_usd``.
+
+    The threshold itself counts as nearing: the point of the signal is to be heard before
+    the busting turn, and a spawn sitting exactly on the line has already spent the part of
+    the ceiling that was safe.
+
+    A ``None`` or non-positive cap is no ceiling to near, so the answer is ``False`` rather
+    than an error — an uncapped spawn is not close to a cap it does not have, and a
+    telemetry helper is the wrong place to raise.
+    """
+    if cap_usd is None or cap_usd <= 0:
+        return False
+    return cost_usd >= cap_usd * BUDGET_NEARING_FRACTION
 
 
 def apply_cost_fallback(event: SpawnComplete) -> SpawnComplete:

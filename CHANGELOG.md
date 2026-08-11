@@ -15,6 +15,24 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **A spawn that runs close to its cap now says so, while there is still a run to save.**
+  `spawn_complete` carries two new fields: `budget_cap_usd`, the ceiling that spawn ran
+  under, and `budget_nearing`, true once the spend reaches 90% of it. The same moment is
+  narrated on stderr as a `near cap` line, so the operator watching a long run hears it
+  without tailing the JSONL.
+
+  The hard cap is deliberately untouched — a spawn that busts it is still truncated and
+  the PR still halts, which is the whole feature. What moves is when the ceiling becomes
+  visible. Until now the halt was the first thing in the record that mentioned a cap at
+  all, and by then the series was already forfeit: two of ten terminal runs on disk halted
+  on overshoots of 0.3% and 0.4%, skipping five downstream PRs between them and discarding
+  the truncated spawn's uncommitted work. The workaround that got reached for was raising
+  the cap for every PR in a wave, which weakens the ceiling for every cheap PR — the
+  opposite of what the cap is for. A signal on the spawn *before* the busting one is the
+  cheaper half of that fix (`core/telemetry.py`, `interface/drivers/headless.py`,
+  `interface/reporter.py`). **(consumer-affecting: two new telemetry fields)** Serves
+  backlog row CONV-B01.
+
 - **An `asset` nothing will ever read is now said out loud.** `[[checks]].asset` is consumed
   in exactly one place — the fail-closed isolation guard, which returns early unless the
   check is **both** blocking and independent. Anywhere else the field is accepted by the

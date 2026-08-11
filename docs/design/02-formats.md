@@ -175,7 +175,7 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 | `event` | Emitted | Required fields |
 |---|---|---|
 | `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id`, `advisories` (list of `{kind, where, message}`; `[]` when pre-flight had nothing to say) |
-| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `classification` |
+| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `classification`, `budget_cap_usd`, `budget_nearing` |
 | `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
 | `pr_skipped` | for each PR the run never processed because an earlier PR halted the series | `schema_version`, `event`, `run_id`, `pr_id`, `reason` |
 | `run_complete` | once per `convoy run` | `schema_version`, `event`, `run_id`, `outcome`, `integrated`, `halt` |
@@ -215,6 +215,17 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   populated only on a non-`ok` classification (`''` on ok lines), so an infrastructure
   or budget halt is diagnosable from telemetry alone (an expired seat's
   `Not logged in`, a usage-limit message) instead of demanding a manual re-run.
+- **`budget_cap_usd` / `budget_nearing`** (additive) — the ceiling this spawn ran under
+  (the resolved `[governance.budgets].<role>` value, so a `fix` line reports the fix cap,
+  not the implementation cap it repairs) and whether the spend reached 90% of it.
+  `budget_cap_usd` is `null` only for an uncapped spawn, and `budget_nearing` is then
+  always `false`. The hard cap is unchanged — a bust still truncates the spawn and halts
+  the PR, which is the feature. What moves is *when* the ceiling becomes visible: before
+  this, the halt was the first thing that mentioned a cap, and by then the run was already
+  forfeit. Two of ten terminal runs on disk halted on overshoots of 0.3% and 0.4%,
+  forfeiting five downstream PRs between them. A monitor tailing the ledger can now raise
+  the cap or stage recovery on the spawn before the busting one; the same moment is
+  narrated on stderr as a `near cap` line.
 - **These two events are additive.** `schema_version` stays `1`; a consumer keys on
   `event` + `schema_version` and ignores unknown events, so an older reader that
   only knows `run_start` / `spawn_complete` / `run_complete` skips `gate_complete`

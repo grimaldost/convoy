@@ -4,8 +4,11 @@ import dataclasses
 import json
 from pathlib import Path
 
+import pytest
+
 from convoy.core.telemetry import (
     _EVENT_TAGS,
+    BUDGET_NEARING_FRACTION,
     SCHEMA_VERSION,
     GateCheckLine,
     GateComplete,
@@ -15,6 +18,7 @@ from convoy.core.telemetry import (
     RunStart,
     SpawnComplete,
     apply_cost_fallback,
+    budget_is_nearing,
     to_json_line,
 )
 from convoy.interface.telemetry_writer import TelemetryWriter
@@ -73,6 +77,8 @@ def test_spawn_complete_json_line_has_schema_tag_and_all_fields() -> None:
         'cost_estimated': False,
         'output_tail': '',
         'classification': 'ok',
+        'budget_cap_usd': None,
+        'budget_nearing': False,
     }
 
 
@@ -264,3 +270,36 @@ def test_new_events_do_not_bump_schema_version() -> None:
 def test_gate_check_line_is_not_a_standalone_event() -> None:
     # A nested record inside gate_complete, never written on its own line.
     assert GateCheckLine not in _EVENT_TAGS
+
+
+# --- the near-cap signal ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize('spend', [18.0, 19.5, 20.0, 21.0])
+def test_budget_is_nearing_at_the_threshold_and_above(spend: float) -> None:
+    # 0.9 * 20.0 == 18.0, so the threshold itself counts: the point is to speak BEFORE the
+    # bust, and a spawn sitting exactly on the line has already spent the safe part.
+    assert budget_is_nearing(spend, 20.0) is True
+
+
+@pytest.mark.parametrize('spend', [0.0, 8.79, 17.99])
+def test_budget_is_not_nearing_below_the_threshold(spend: float) -> None:
+    assert budget_is_nearing(spend, 20.0) is False
+
+
+@pytest.mark.parametrize('cap', [None, 0.0, -1.0])
+def test_budget_is_not_nearing_without_a_ceiling(cap: float | None) -> None:
+    # No ceiling to near. False rather than an error: an uncapped spawn is not close to a
+    # cap it does not have, and a telemetry helper must never be the thing that raises.
+    assert budget_is_nearing(1_000.0, cap) is False
+
+
+def test_the_nearing_fraction_leaves_room_to_act() -> None:
+    assert 0.0 < BUDGET_NEARING_FRACTION < 1.0
+
+
+def test_spawn_complete_carries_the_cap_and_the_nearing_flag() -> None:
+    event = _spawn(cost_usd=19.4, budget_cap_usd=20.0, budget_nearing=True)
+    parsed = json.loads(to_json_line(event))
+    assert parsed['budget_cap_usd'] == 20.0
+    assert parsed['budget_nearing'] is True

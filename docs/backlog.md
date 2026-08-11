@@ -98,6 +98,11 @@ review, working from the ledgers, calls it the highest-leverage unbuilt row in t
 and one of two defects to fix before any new feature. Ordered here on the review's
 spend-weighting: 20% of terminal runs lost for four cents of overshoot.
 
+**Status.** **Shipped** in `[Unreleased]`. `spawn_complete` carries `budget_cap_usd` and
+`budget_nearing` (90% of the resolved per-role ceiling), and the reporter narrates a
+`near cap` line at the same moment. The hard cap is unchanged. The per-PR `budget`
+override this row's cluster also wants stays held at CONV-B22.
+
 **Effort** S–M · **Source** [triage] + [review] · **Row** T32a
 
 ### CONV-B02 — A dead driver is indistinguishable from a running one, so a run reports `running` forever.
