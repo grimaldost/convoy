@@ -116,6 +116,28 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- **A failing check's `detail` is now chosen by content rather than by stream, and cut at a
+  line boundary.** `_red_detail` was `stderr.strip() or stdout.strip()`, so *any* content on
+  stderr meant stdout was never read at all. The case that proves it: a subset-scoped pytest
+  run whose coverage-floor failure (`Required test coverage of 80% not reached`) went to
+  stdout while stderr held only a launcher warning — the real answer was not truncated, it
+  was discarded. `detail` is also what the bounded fix loop re-briefs the repair spawn with,
+  so a discarded answer aims a paid spawn at a non-problem.
+
+  A red now carries a bounded, labelled tail of **each** stream that said anything, split by
+  one budget so neither can crowd the other out and a short stream donates its unused share
+  to a long one. The bound is applied at a **line** boundary rather than a character count:
+  a tail that begins mid-word reads as though the fragment were the failure, observed twice
+  in production (a detail opening inside an unrelated xfail reason, and one inside a
+  structured log line). Any cut is marked with a leading `...`, so a reader — and the fix
+  spawn — can tell a tail from the start of the output.
+
+  This is the third fix at this layer. The first two removed a then-known pollutant; this
+  one changes how the detail is *selected*, which is the thing that kept recurring.
+  `gate_complete.checks[].detail` is free-form prose and stays a string, so
+  `schema_version` does not move — but a consumer that parses it will see the new shape
+  (`interface/gate_runner.py`). Serves backlog row CONV-B03.
+
 - **The release-tag workflow now gates the release page too.** No behaviour change to
   convoy; this is repo discipline, and a follow-up to T24a's own argument. Mechanizing the
   tag left its sibling artifact unmechanized: every version from `0.2.0` through `0.6.0`

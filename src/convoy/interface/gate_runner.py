@@ -93,15 +93,76 @@ class SubprocessGateRunner:
         return tuple(results)
 
 
+def _split_budget(first: int, second: int, budget: int) -> tuple[int, int]:
+    """How much of ``budget`` each of two tails of length ``first`` / ``second`` may keep.
+
+    Equal shares, except that a stream which does not need its share donates the remainder
+    to the other. So one line of stderr never costs stdout half its budget, and two long
+    streams are cut evenly rather than one silencing the other.
+    """
+    if first + second <= budget:
+        return first, second
+    half = budget // 2
+    if first <= half:
+        return first, budget - first
+    if second <= half:
+        return budget - second, second
+    return half, budget - half
+
+
+def _line_tail(text: str, limit: int) -> str:
+    """The last ``limit`` characters of ``text``, starting at a **line** boundary.
+
+    A character-count tail begins wherever the arithmetic lands, which is usually inside a
+    word — and a fragment starting mid-word reads as though the fragment were the failure.
+    Observed twice in production: a detail opening inside an unrelated xfail reason, and one
+    opening inside a structured log line. Aligning the cut to the previous newline costs at
+    most one line and removes the whole class.
+
+    A single line longer than the budget has no boundary to align to; it is cut at the
+    nearest space instead, and only mid-token if it has none of those either. Any cut at all
+    is marked with a leading ``...`` so a reader — or the fix spawn this text re-briefs —
+    knows it is looking at a tail rather than at the start of the output.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[-limit:]
+    newline = cut.find('\n')
+    if newline != -1:
+        return '...\n' + cut[newline + 1 :]
+    space = cut.find(' ')
+    return '...' + (cut[space:] if space != -1 else cut)
+
+
 def _red_detail(result: ProcResult, timeout_seconds: float) -> str:
     """A short, useful reason a check went red.
 
-    A timeout is reported as such (the command produced no verdict). Otherwise
-    the nonzero exit code is reported with the tail of stderr, falling back to
-    stdout when stderr is empty.
+    A timeout is reported as such (the command produced no verdict). Otherwise the nonzero
+    exit code is reported with a bounded, labelled tail of **each** stream that said
+    anything.
+
+    Both streams, because the previous rule — stderr, falling back to stdout — chose by
+    channel rather than by content, so any content at all on stderr meant stdout was never
+    read. A subset-scoped pytest run puts its coverage-floor failure on stdout while stderr
+    carries only a launcher warning: the real answer was not truncated, it was discarded.
+    Labelled, because a reader given two tails needs to know which came from where. Bounded
+    per stream by :func:`_split_budget`, so neither can crowd the other out and the whole
+    detail stays inside one budget — this text goes into telemetry and into the brief the
+    repair spawn is aimed with, so an unbounded one would be paid for twice.
     """
     if result.timed_out:
         return f'timed out after {timeout_seconds:g}s'
-    output = result.stderr.strip() or result.stdout.strip()
-    tail = output[-_DETAIL_TAIL_CHARS:] if output else '(no output)'
-    return f'exited {result.exit_code}: {tail}'
+    stdout, stderr = result.stdout.strip(), result.stderr.strip()
+    out_budget, err_budget = _split_budget(len(stdout), len(stderr), _DETAIL_TAIL_CHARS)
+    sections = [
+        f'{label}:\n{tail}'
+        for label, tail in (
+            ('stdout', _line_tail(stdout, out_budget)),
+            ('stderr', _line_tail(stderr, err_budget)),
+        )
+        if tail
+    ]
+    if not sections:
+        return f'exited {result.exit_code}: (no output)'
+    return f'exited {result.exit_code}:\n' + '\n'.join(sections)

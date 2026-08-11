@@ -159,6 +159,11 @@ removed the then-known pollutant rather than changing how the detail is selected
 (T13b), and cut at a line boundary, never mid-token (T28a). One restructuring of
 `interface/gate_runner.py::_red_detail`.
 
+**Status.** **Shipped** in `[Unreleased]`. `_red_detail` now carries a bounded, labelled
+tail of each stream that said anything, under one budget split so neither crowds the other
+out, cut at a line boundary and marked `...`. The selection rule changed, not the pollutant
+list — which is what the two earlier fixes at this layer did not do.
+
 **Effort** S · **Source** [triage] · **Rows** T13b, T28a
 
 ### CONV-B04 — The shipped manual contradicts the shipped engine, and nothing compares a documented claim to the code.

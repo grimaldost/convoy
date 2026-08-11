@@ -146,6 +146,15 @@ The pure `decide` receives independence and isolation status **as data**. All
 filesystem work — running commands, resolving paths, writability probes — is
 shell. `gate.decide` can never accidentally reach the filesystem.
 
+`detail` on a red carries a bounded, labelled tail of **each** stream the command wrote to,
+never one stream chosen ahead of the other: choosing by channel meant any content at all on
+stderr discarded stdout, and a subset-scoped suite reports its coverage-floor failure on
+stdout while stderr carries only a launcher warning. One budget covers both, split so
+neither crowds the other out and a short stream donates its unused share. The cut lands on a
+line boundary and is marked `...`, because a tail that begins mid-word reads as though the
+fragment were the failure — and `detail` is what the fix loop below re-briefs a paid spawn
+with, so a misleading one is expensive.
+
 ## Repair — fix-on-red, provenance routes the repair only
 
 - **Green** → integrate.

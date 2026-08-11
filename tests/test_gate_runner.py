@@ -215,3 +215,116 @@ def test_an_inherited_variable_the_check_needs_still_arrives(
     )
     (result,) = runner.run(tmp_path, [_check('env', command)])
     assert result.passed is True, result.detail
+
+
+# --- the detail is chosen by content, never by stream -------------------------------------
+#
+# `_red_detail` was `stderr.strip() or stdout.strip()`, so any content on stderr meant
+# stdout was never read. The case that proves it: a subset-scoped pytest run whose
+# coverage-floor failure went to stdout while stderr held only a launcher warning -- the
+# answer was not truncated, it was discarded. And the bound was a character count, so a
+# tail could begin inside a word and read as though the fragment were the failure.
+
+
+def _red_detail_of(tmp_path: Path, command: str) -> str:
+    runner = SubprocessGateRunner()
+    (result,) = runner.run(tmp_path, [_check('bad', command)])
+    assert result.passed is False
+    return result.detail
+
+
+def test_stdout_survives_when_stderr_also_has_something(tmp_path: Path) -> None:
+    """The real failure on stdout is no longer discarded by a warning on stderr."""
+    command = (
+        f'"{_PY}" -c "import sys; '
+        "sys.stdout.write('Required test coverage of 80% not reached'); "
+        "sys.stderr.write('warning: VIRTUAL_ENV does not match the project'); "
+        'sys.exit(1)"'
+    )
+    detail = _red_detail_of(tmp_path, command)
+    assert 'Required test coverage' in detail
+    assert 'VIRTUAL_ENV' in detail
+
+
+def test_each_stream_is_labelled_so_the_reader_knows_which_is_which(tmp_path: Path) -> None:
+    command = (
+        f'"{_PY}" -c "import sys; '
+        "sys.stdout.write('out-marker'); sys.stderr.write('err-marker'); sys.exit(1)\""
+    )
+    detail = _red_detail_of(tmp_path, command)
+    assert 'stdout:' in detail
+    assert 'stderr:' in detail
+    assert detail.index('out-marker') < detail.index('err-marker')
+
+
+def test_a_stream_with_nothing_on_it_is_not_mentioned(tmp_path: Path) -> None:
+    command = f'"{_PY}" -c "import sys; sys.stdout.write(\'only-out\'); sys.exit(1)"'
+    detail = _red_detail_of(tmp_path, command)
+    assert 'only-out' in detail
+    assert 'stderr' not in detail
+
+
+def test_a_silent_failing_check_still_says_it_exited(tmp_path: Path) -> None:
+    detail = _red_detail_of(tmp_path, f'"{_PY}" -c "exit(3)"')
+    assert 'exited 3' in detail
+    assert 'no output' in detail
+
+
+def test_a_long_stream_is_cut_at_a_line_boundary_not_mid_token(tmp_path: Path) -> None:
+    """A fragment beginning mid-word reads as though it were the failure."""
+    command = (
+        f'"{_PY}" -c "import sys; '
+        "sys.stdout.write((chr(10)).join('xfail-reason-%04d-not-the-failure' % i "
+        'for i in range(400))); sys.exit(1)"'
+    )
+    detail = _red_detail_of(tmp_path, command)
+    lines = detail.split('stdout:\n', 1)[1].splitlines()
+
+    assert lines[0] == '...'
+    # Every carried line is whole -- none is the suffix of one the cut landed inside.
+    assert all(line.startswith('xfail-reason-') for line in lines[1:])
+    assert lines[-1] == 'xfail-reason-0399-not-the-failure'
+
+
+def test_a_truncated_detail_says_that_it_is_a_tail(tmp_path: Path) -> None:
+    command = (
+        f'"{_PY}" -c "import sys; '
+        "sys.stdout.write((chr(10)).join('line-%d' % i for i in range(2000))); sys.exit(1)\""
+    )
+    detail = _red_detail_of(tmp_path, command)
+    assert '...' in detail
+    assert 'line-1999' in detail
+    assert 'line-0\n' not in detail
+
+
+def test_neither_stream_can_crowd_the_other_out(tmp_path: Path) -> None:
+    """Both are bounded, and the total stays inside one budget."""
+    command = (
+        f'"{_PY}" -c "import sys; '
+        "sys.stdout.write('o' * 40000 + chr(10) + 'OUT-END'); "
+        "sys.stderr.write('e' * 40000 + chr(10) + 'ERR-END'); sys.exit(1)\""
+    )
+    detail = _red_detail_of(tmp_path, command)
+    assert 'OUT-END' in detail
+    assert 'ERR-END' in detail
+    assert len(detail) < 4500
+
+
+def test_a_short_stream_donates_its_share_to_the_long_one(tmp_path: Path) -> None:
+    """One line of stderr must not cost stdout half its budget."""
+    long_only = (
+        f'"{_PY}" -c "import sys; '
+        "sys.stdout.write((chr(10)).join('line-%d' % i for i in range(2000))); sys.exit(1)\""
+    )
+    with_short_stderr = (
+        f'"{_PY}" -c "import sys; '
+        "sys.stdout.write((chr(10)).join('line-%d' % i for i in range(2000))); "
+        "sys.stderr.write('one short warning'); sys.exit(1)\""
+    )
+    alone = _red_detail_of(tmp_path, long_only)
+    together = _red_detail_of(tmp_path, with_short_stderr)
+
+    # The stdout tail is essentially unchanged: it lost only what stderr actually used.
+    alone_lines = alone.count('\n')
+    together_lines = together.count('\n')
+    assert together_lines >= alone_lines - 2
