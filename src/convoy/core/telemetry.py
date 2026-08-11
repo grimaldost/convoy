@@ -144,6 +144,30 @@ class RunComplete:
 
 
 @dataclass(frozen=True)
+class RunAbandoned:
+    """A terminal record written ABOUT a run, by a later process, once it cannot write one.
+
+    Every other event is written by the run itself. This one is written by the recovery path
+    that clears a killed run's workspace lock, which is the only moment at which anyone both
+    knows the run is over and still has the ledger open. It exists because a live process
+    check has a hard limit: a pid is reusable once its process is gone, so nothing asked
+    tomorrow can answer for a run that died today. Recording the fact while it is still
+    knowable is what turns a permanently-``running`` ledger entry into history.
+
+    Kept distinct from :class:`RunComplete` rather than folded into it as another ``outcome``:
+    a consumer should be able to tell an engine's own verdict from a third party's account of
+    a run that never reached one, and only the first is evidence about the work.
+
+    ``reason`` is free-form provenance — how the abandonment was established, not a claim
+    about what the run had done. No ``halt`` and no ``integrated``: whoever writes this was
+    not there, and inventing a located halt would be the one lie the ledger cannot afford.
+    """
+
+    run_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class GateCheckLine:
     """One check's outcome inside a ``gate_complete`` event — not itself an event.
 
@@ -191,11 +215,12 @@ class PRSkipped:
     reason: str
 
 
-Event = RunStart | SpawnComplete | RunComplete | GateComplete | PRSkipped
+Event = RunStart | SpawnComplete | RunComplete | RunAbandoned | GateComplete | PRSkipped
 
 _EVENT_TAGS[RunStart] = 'run_start'
 _EVENT_TAGS[SpawnComplete] = 'spawn_complete'
 _EVENT_TAGS[RunComplete] = 'run_complete'
+_EVENT_TAGS[RunAbandoned] = 'run_abandoned'
 _EVENT_TAGS[GateComplete] = 'gate_complete'
 _EVENT_TAGS[PRSkipped] = 'pr_skipped'
 

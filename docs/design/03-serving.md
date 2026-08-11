@@ -193,8 +193,15 @@ Two limits are deliberate. **`dead` is claimed only on positive evidence**: no l
 all reads `running`, because the commonest way to see that is asking from the wrong
 directory, and a false `dead` sends an operator to restart a run that is still spending.
 And **a pid is reusable** once its process is gone, so a live check cannot answer for a run
-that died last week and whose lock has since been cleared; repairing that history needs a
-terminal line written down at the moment the lock is cleared, not a query afterwards.
+that died last week and whose lock has since been cleared.
+
+That second limit is why the recovery path writes the fact down rather than leaving it to be
+queried. When `convoy clean` clears a stale lock it appends a terminal `run_abandoned` line
+for the run that left it, if that run recorded no outcome of its own — the last moment at
+which the abandonment is establishable. From then on the entry reads `finished` with
+`outcome: "abandoned"`, whether or not any lock survives. It is the only write `clean` makes
+outside the workspace, it is append-only like every other, and it is idempotent: the line it
+writes is itself terminal, so a second `clean` finds a finished run and does nothing.
 
 **The result envelope** is built by `summarize_run`: it reads the on-disk
 `spawns.jsonl`, keeps only the lines tagged with this run's `run_id` (the file

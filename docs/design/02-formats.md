@@ -179,6 +179,7 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 | `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
 | `pr_skipped` | for each PR the run never processed because an earlier PR halted the series | `schema_version`, `event`, `run_id`, `pr_id`, `reason` |
 | `run_complete` | once per `convoy run` | `schema_version`, `event`, `run_id`, `outcome`, `integrated`, `halt` |
+| `run_abandoned` | by the recovery path, for a killed run that recorded no outcome | `schema_version`, `event`, `run_id`, `reason` |
 
 - **`run_id`** — a lexicographically-sortable stamp (`%Y%m%dT%H%M%SZ` + short
   suffix) grouping one invocation's events; a reused `outputs` dir stays safe
@@ -226,14 +227,27 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   forfeiting five downstream PRs between them. A monitor tailing the ledger can now raise
   the cap or stage recovery on the spawn before the busting one; the same moment is
   narrated on stderr as a `near cap` line.
+- **`run_abandoned`** (additive) — the one event a run does not write about itself. A hard
+  kill leaves no terminal line, so the ledger reported the run `running` for ever; the
+  recovery path (`convoy clean`, when it clears a stale workspace lock) closes the entry
+  instead. It has to be written *then*: the lock names the process that owned the run, and
+  a pid is reusable once that process is gone, so the fact stops being establishable the
+  moment the lock is cleared. `reason` is free-form provenance about how the abandonment
+  was established. There is deliberately no `halt` and no `integrated` — the writer was not
+  there for the run. A consumer reconstructing the outcome reads it as
+  `outcome: "abandoned"`, `integrated: false`, and the infrastructure exit code: outside
+  the work, and re-runnable with `--resume`.
 - **These two events are additive.** `schema_version` stays `1`; a consumer keys on
   `event` + `schema_version` and ignores unknown events, so an older reader that
   only knows `run_start` / `spawn_complete` / `run_complete` skips `gate_complete`
   and `pr_skipped` lines without breaking.
-- **`outcome`** ∈ {`completed`, `blocked`, `infrastructure`, `budget`} — task
-  success, a gate-blocked merge, an infra halt (auth/quota/retry) that is
+- **`outcome`** ∈ {`completed`, `blocked`, `infrastructure`, `budget`} on a `run_complete`
+  line — task success, a gate-blocked merge, an infra halt (auth/quota/retry) that is
   re-runnable, or a spend-cap truncation. On `budget` the PR is halted and its
-  partial work is **not** integrated.
+  partial work is **not** integrated. A reconstructed outcome adds `abandoned`, which no
+  `run_complete` line ever carries: it comes from a `run_abandoned` line, and the
+  distinction is that the engine reported the first four about its own run while the fifth
+  is a third party's account of a run that never reported anything.
 - **Per-spawn granularity is mandatory.** A run-total-only file cannot be joined
   per spawn and is useless for economy analysis. Each spawn is one line.
 - **`cost_usd` fallback.** When the provider reports `0.0` under a subscription

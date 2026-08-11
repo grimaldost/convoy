@@ -15,6 +15,24 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **`convoy clean` closes a killed run's ledger entry instead of leaving it open for ever.**
+  Clearing a stale workspace lock now also appends a terminal `run_abandoned` line for the
+  run that left it behind, when that run recorded no outcome of its own. It has to happen
+  at that moment: the lock names the process that owned the run, and a pid is reusable once
+  that process is gone, so after the lock is cleared nothing can establish the fact. The
+  entry then reads `finished` with `outcome: "abandoned"`, `integrated: false`, and the
+  infrastructure exit code — outside the work, and re-runnable with `--resume`.
+
+  A distinct event rather than another `run_complete` outcome, because the writer is not
+  the run: every other line is the engine's account of its own work, and this one is a
+  later process's account of a run that never reached a verdict. There is deliberately no
+  `halt` and no `integrated` on the line — whoever wrote it was not there. `--dry-run`
+  names the record it would write and writes nothing; a workspace with no stale lock is
+  left alone, since the lock is what identifies the tree a killed run left behind
+  (`core/telemetry.py`, `interface/run_summary.py`, `interface/run_service.py`,
+  `interface/cli.py`). **(consumer-affecting: a new `run_abandoned` event, and `abandoned`
+  joins the reconstructed `outcome` vocabulary)** Serves backlog row CONV-B02 (b).
+
 - **A run whose driver is gone now reads `dead` instead of `running` forever.** The ledger
   records only completions, so `convoy_status` derived `running` from the *absence* of a
   terminal line — which is precisely what a hard-killed driver leaves behind. Two runs on

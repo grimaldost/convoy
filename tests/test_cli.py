@@ -25,6 +25,7 @@ from convoy.core.governance import GovernanceError
 from convoy.interface.drivers.headless import (
     EXIT_BLOCKED,
     EXIT_BUDGET,
+    EXIT_INFRASTRUCTURE,
     EXIT_OK,
     EXIT_USAGE,
     RunOutcome,
@@ -693,6 +694,103 @@ def test_clean_removes_a_stale_run_lock(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_OK
     assert not stale.exists()
     assert 'removed the run lock' in result.output
+
+
+def test_clean_closes_the_killed_runs_ledger_entry(tmp_path: Path) -> None:
+    """Clearing the lock is the last moment the abandonment is establishable — so record it.
+
+    A pid is reusable once its process is gone, so a live check asked tomorrow cannot answer
+    for a run that died today. Without the line the entry reads ``running`` for ever.
+    """
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    outputs = tmp_path / 'outputs'
+    _unfinished_ledger(outputs)
+    lock_path(workspace).write_text('99999')
+
+    result = runner.invoke(cli.app, ['clean', str(series_file), '--workspace', str(workspace)])
+    assert result.exit_code == EXIT_OK
+    assert 'recorded run r1 as abandoned' in result.output
+
+    written = [json.loads(line) for line in (outputs / 'spawns.jsonl').read_text().splitlines()]
+    assert written[-1]['event'] == 'run_abandoned'
+    assert written[-1]['run_id'] == 'r1'
+    assert written[-1]['reason']
+    # Append-only: nothing before it moved.
+    assert [entry['event'] for entry in written[:-1]] == ['run_start', 'spawn_complete']
+
+
+def test_a_run_closed_by_clean_reads_finished_and_abandoned(tmp_path: Path) -> None:
+    """The whole point of the line: status stops answering ``running`` for a dead run."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    outputs = tmp_path / 'outputs'
+    _unfinished_ledger(outputs)
+    lock_path(workspace).write_text('99999')
+    runner.invoke(cli.app, ['clean', str(series_file), '--workspace', str(workspace)])
+
+    result = runner.invoke(cli.app, ['status', str(series_file), '--json'])
+    payload = json.loads(result.stdout.strip())
+
+    assert payload['state'] == 'finished'
+    assert payload['outcome'] == 'abandoned'
+    assert payload['integrated'] is False
+    assert payload['ok'] is False
+    # Same exit code an infrastructure halt carries: outside the work, and re-runnable.
+    assert payload['exit_code'] == EXIT_INFRASTRUCTURE
+
+
+def test_clean_records_nothing_when_the_latest_run_already_finished(tmp_path: Path) -> None:
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    outputs = tmp_path / 'outputs'
+    _ledger(
+        outputs,
+        [
+            {'schema_version': 1, 'event': 'run_start', 'run_id': 'r1', 'series_id': 'cli-test'},
+            {
+                'schema_version': 1,
+                'event': 'run_complete',
+                'run_id': 'r1',
+                'outcome': 'completed',
+                'integrated': True,
+                'halt': None,
+            },
+        ],
+    )
+    lock_path(workspace).write_text('99999')
+
+    result = runner.invoke(cli.app, ['clean', str(series_file), '--workspace', str(workspace)])
+    assert 'abandoned' not in result.output
+
+    events = [
+        json.loads(line)['event'] for line in (outputs / 'spawns.jsonl').read_text().splitlines()
+    ]
+    assert events == ['run_start', 'run_complete']
+
+
+def test_clean_dry_run_names_the_abandonment_and_writes_nothing(tmp_path: Path) -> None:
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    outputs = tmp_path / 'outputs'
+    _unfinished_ledger(outputs)
+    before = (outputs / 'spawns.jsonl').read_text()
+    lock_path(workspace).write_text('99999')
+
+    result = runner.invoke(
+        cli.app, ['clean', str(series_file), '--workspace', str(workspace), '--dry-run']
+    )
+    assert result.exit_code == EXIT_OK
+    assert 'record run r1 as abandoned' in result.output
+    assert (outputs / 'spawns.jsonl').read_text() == before
+
+
+def test_clean_without_a_stale_lock_leaves_the_ledger_alone(tmp_path: Path) -> None:
+    """The lock is what identifies this workspace as the one a killed run left behind."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    outputs = tmp_path / 'outputs'
+    _unfinished_ledger(outputs)
+    before = (outputs / 'spawns.jsonl').read_text()
+
+    runner.invoke(cli.app, ['clean', str(series_file), '--workspace', str(workspace)])
+
+    assert (outputs / 'spawns.jsonl').read_text() == before
 
 
 def test_clean_is_idempotent_on_an_already_clean_workspace(tmp_path: Path) -> None:

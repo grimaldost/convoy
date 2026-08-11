@@ -33,12 +33,21 @@ _PR_CAP = 50
 # outcome → the process exit code convoy would have returned for it. The mapping is the
 # published contract (02-formats.md § Exit codes), which is what lets a terminal outcome be
 # rebuilt from a ``run_complete`` line alone — no live ``RunOutcome`` needed.
+#
+# ``abandoned`` is the one entry no process ever actually returned: the run was killed, so
+# there was no exit. It maps to the infrastructure code because that is the class it belongs
+# to — the run stopped for a reason outside the work, and ``--resume`` is the recovery — and
+# because a consumer branching on the exit code should treat it the same way.
 _EXIT_BY_OUTCOME: dict[str, int] = {
     'completed': EXIT_OK,
     'blocked': EXIT_BLOCKED,
     'infrastructure': EXIT_INFRASTRUCTURE,
     'budget': EXIT_BUDGET,
+    'abandoned': EXIT_INFRASTRUCTURE,
 }
+
+# The reason recorded on a ``run_abandoned`` line written by the recovery path.
+ABANDONED_BY_CLEAN_REASON = 'workspace lock cleared by convoy clean; the run never returned'
 
 
 def _run_lines(telemetry_path: Path, run_id: str | None = None) -> list[dict[str, Any]]:
@@ -92,6 +101,11 @@ def reconstruct_outcome(telemetry_path: Path, run_id: str) -> RunOutcome | None:
     An unknown ``outcome`` value (a newer engine wrote the ledger) maps to the usage exit
     code rather than raising: a poller reading a ledger it half-understands should degrade,
     not crash.
+
+    A ``run_abandoned`` line is terminal in the same sense and is read the same way: the run
+    is over and will record nothing further. It reports ``outcome: 'abandoned'`` and
+    ``integrated: False`` — whoever wrote it was not there for the run, so the only honest
+    claim is that this run did not reach a completed integration.
     """
     for entry in _run_lines(telemetry_path, run_id):
         if entry.get('event') == 'run_complete':
@@ -101,7 +115,26 @@ def reconstruct_outcome(telemetry_path: Path, run_id: str) -> RunOutcome | None:
                 integrated=entry['integrated'],
                 exit_code=_EXIT_BY_OUTCOME.get(outcome, EXIT_USAGE),
             )
+        if entry.get('event') == 'run_abandoned':
+            return RunOutcome(
+                outcome='abandoned',
+                integrated=False,
+                exit_code=_EXIT_BY_OUTCOME['abandoned'],
+            )
     return None
+
+
+def orphaned_run_id(telemetry_path: Path) -> str | None:
+    """The most recent run in ``telemetry_path`` that recorded no terminal line.
+
+    ``None`` when the ledger is empty or its latest run finished. Only the latest run is
+    considered: a run that leaves the workspace lock behind blocks every later run until
+    someone clears it, so the run that left it IS the latest one to have started.
+    """
+    run_id = latest_run_id(telemetry_path)
+    if run_id is None or reconstruct_outcome(telemetry_path, run_id) is not None:
+        return None
+    return run_id
 
 
 def unfinished_state(workspace: Path | None) -> str:

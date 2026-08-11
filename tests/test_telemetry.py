@@ -14,6 +14,7 @@ from convoy.core.telemetry import (
     GateComplete,
     HaltDetail,
     PRSkipped,
+    RunAbandoned,
     RunComplete,
     RunStart,
     SpawnComplete,
@@ -265,6 +266,25 @@ def test_new_events_do_not_bump_schema_version() -> None:
     for line in lines:
         assert json.loads(line)['schema_version'] == SCHEMA_VERSION
     assert SCHEMA_VERSION == 1
+
+
+def test_run_abandoned_json_line_has_schema_tag_and_all_fields() -> None:
+    reason = 'workspace lock cleared by convoy clean; the run never returned'
+    event = RunAbandoned(run_id='20260703T142210Z-a1', reason=reason)
+    parsed = json.loads(to_json_line(event))
+    assert parsed == {
+        'schema_version': 1,
+        'event': 'run_abandoned',
+        'run_id': '20260703T142210Z-a1',
+        'reason': reason,
+    }
+
+
+def test_run_abandoned_claims_nothing_the_writer_could_not_know() -> None:
+    """No halt, no integrated: whoever writes this was not there for the run."""
+    parsed = json.loads(to_json_line(RunAbandoned(run_id='r', reason='x')))
+    assert 'halt' not in parsed
+    assert 'integrated' not in parsed
 
 
 def test_gate_check_line_is_not_a_standalone_event() -> None:

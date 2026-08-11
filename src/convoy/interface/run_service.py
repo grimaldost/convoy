@@ -14,6 +14,7 @@ from pathlib import Path
 
 from convoy.core.preflight import PreflightReport, Problem
 from convoy.core.spec import Series
+from convoy.core.telemetry import RunAbandoned
 from convoy.interface.config_isolation import isolated_config
 from convoy.interface.drivers.headless import RunOutcome, format_problems, run_series
 from convoy.interface.gate_runner import SubprocessGateRunner
@@ -21,7 +22,11 @@ from convoy.interface.git import Git
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter
-from convoy.interface.run_summary import run_recorded
+from convoy.interface.run_summary import (
+    ABANDONED_BY_CLEAN_REASON,
+    orphaned_run_id,
+    run_recorded,
+)
 from convoy.interface.seat_probe import seat_problem
 from convoy.interface.telemetry_writer import TelemetryWriter
 from convoy.interface.workspace_lock import workspace_lock
@@ -105,6 +110,29 @@ def _run_id_problems(series: Series, run_id: str) -> list[Problem]:
             ),
         )
     ]
+
+
+def abandon_orphaned_run(series: Series, *, reason: str = ABANDONED_BY_CLEAN_REASON) -> str | None:
+    """Close a killed run's ledger entry with a terminal ``run_abandoned`` line.
+
+    Returns the run id recorded, or ``None`` when there was no unfinished run to close.
+
+    Called from the recovery path, right where a stale workspace lock is cleared, because
+    that is the last moment at which the fact is still establishable: the lock names the
+    process that owned the run, and once the lock is gone a pid tells nobody anything —
+    pids are reused. Asked a day later, no amount of process querying can distinguish a run
+    that died from one still going. So the answer is written down while it is knowable, and
+    the ledger stops reporting the run as ``running`` forever.
+
+    Idempotent by construction: the line it writes is itself terminal, so a second call
+    finds a finished run and does nothing.
+    """
+    telemetry_path = Path(series.paths.outputs) / 'spawns.jsonl'
+    run_id = orphaned_run_id(telemetry_path)
+    if run_id is None:
+        return None
+    TelemetryWriter(telemetry_path).write(RunAbandoned(run_id=run_id, reason=reason))
+    return run_id
 
 
 def start_report(

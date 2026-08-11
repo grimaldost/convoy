@@ -212,6 +212,12 @@ from one that was killed. Without it a run with no terminal record reads `runnin
 always did. The claim is made only on positive evidence — a lock naming a process that no
 longer exists — so asking from a tree that holds no lock never yields a false `dead`.
 
+Once `convoy clean` has cleared that lock the run reads `finished` with a fifth `outcome`,
+`abandoned`, carrying the infrastructure exit code — `clean` closes the killed run's ledger
+entry on its way past, because a pid is reusable and the fact stops being establishable
+after that. `integrated` is `false` and `halt` is `null`: the process that recorded it was
+not there for the run.
+
 **`convoy_init`** — `{ ok, created, series_file, workspace, next }`: the paths
 written, and the `series_file` / `workspace` to hand straight to `convoy_run`.
 

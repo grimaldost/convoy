@@ -22,8 +22,12 @@ from convoy.interface.drivers.headless import (
 from convoy.interface.git import Git, GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
-from convoy.interface.run_service import PreflightError, run_series_headless
-from convoy.interface.run_summary import error_kind, status_of, summarize_run
+from convoy.interface.run_service import (
+    PreflightError,
+    abandon_orphaned_run,
+    run_series_headless,
+)
+from convoy.interface.run_summary import error_kind, orphaned_run_id, status_of, summarize_run
 from convoy.interface.scaffold import ScaffoldError, scaffold
 from convoy.interface.streams import harden_std_streams
 from convoy.interface.workspace_lock import WorkspaceBusyError, lock_path, remove_stale_lock
@@ -309,6 +313,9 @@ def _clean_plan(git: Git, series: Series, workspace: Path) -> list[str]:
         lines += [f'    {branch}' for branch in existing]
     if lock_path(workspace).exists():
         lines.append(f'remove the run lock ({lock_path(workspace)})')
+        orphan = orphaned_run_id(Path(series.paths.outputs) / 'spawns.jsonl')
+        if orphan is not None:
+            lines.append(f'record run {orphan} as abandoned in the ledger')
     return lines
 
 
@@ -339,11 +346,19 @@ def clean(
     why ``--fresh`` cannot serve it, since ``--fresh`` acquires the lock and probes the
     seat before it ever resets anything. Recovering by hand was otherwise the only
     option, and one campaign needed it five times.
+
+    Removing a stale lock also **closes the killed run's ledger entry** with a terminal
+    ``run_abandoned`` line, if that run recorded no outcome of its own. This is the last
+    moment at which the fact is establishable — the lock names the process that owned the
+    run, and a pid is reusable once it is gone — so the alternative is a ledger entry that
+    reads ``running`` for ever. It is the only write ``clean`` makes outside the workspace,
+    and it is append-only like every other.
     """
     series = _load_or_exit(series_file)
     target = _workspace_or_exit(workspace)
     git = Git(target)
     removed_lock = False
+    abandoned: str | None = None
     try:
         plan = _clean_plan(git, series, target)
         if dry_run:
@@ -358,6 +373,10 @@ def clean(
             [series.branches.integration, *(pr.branch for pr in series.prs)],
         )
         removed_lock = remove_stale_lock(target)
+        if removed_lock:
+            # Written only when a lock was actually cleared: that is what identifies this
+            # workspace as the one a killed run left behind.
+            abandoned = abandon_orphaned_run(series)
     except GitError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
@@ -365,6 +384,8 @@ def clean(
         typer.echo(line)
     if removed_lock:
         typer.echo('removed the run lock')
+    if abandoned is not None:
+        typer.echo(f'recorded run {abandoned} as abandoned')
     typer.echo(f'clean: {target} is on {series.branches.base!r}')
 
 
