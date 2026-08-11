@@ -83,7 +83,7 @@ def test_explicit_model_wins_over_tier() -> None:
 def test_tier_maps_to_its_default_model() -> None:
     """With no model, the tier maps through the default tier→model table."""
     assert resolve_model(_governance(tier='mid')) == DEFAULT_TIER_MODELS['mid']
-    assert resolve_model(_governance(tier='strong')) == 'claude-opus-4-8'
+    assert resolve_model(_governance(tier='strong')) == 'claude-opus-5'
 
 
 def test_custom_tier_table_is_honored() -> None:
