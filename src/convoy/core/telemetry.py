@@ -65,6 +65,27 @@ class RunStart:
 
 
 @dataclass(frozen=True)
+class SpawnStart:
+    """Emitted immediately before an agent spawn is launched — the in-flight marker.
+
+    Carries no economy: nothing has been spent yet, and a line that promised numbers it
+    could not have would be worse than none. Its whole job is to make "which PR is convoy
+    working on right now" answerable from the ledger while a 30–90 minute spawn runs, which
+    previously it was not: the ledger recorded only completions, so a PR in progress was
+    indistinguishable from a PR not yet reached. It also separates a driver that is dead
+    from one that is alive but stuck — the second leaves a started spawn that never
+    completes.
+
+    ``role`` is one of ``implementation``, ``review``, ``fix``, matching
+    :class:`SpawnComplete`, so a consumer pairs the two on ``(run_id, pr_id, role)``.
+    """
+
+    run_id: str
+    pr_id: str
+    role: str
+
+
+@dataclass(frozen=True)
 class SpawnComplete:
     """Emitted once per agent spawn — the per-spawn economy record.
 
@@ -215,9 +236,12 @@ class PRSkipped:
     reason: str
 
 
-Event = RunStart | SpawnComplete | RunComplete | RunAbandoned | GateComplete | PRSkipped
+Event = (
+    RunStart | SpawnStart | SpawnComplete | RunComplete | RunAbandoned | GateComplete | PRSkipped
+)
 
 _EVENT_TAGS[RunStart] = 'run_start'
+_EVENT_TAGS[SpawnStart] = 'spawn_start'
 _EVENT_TAGS[SpawnComplete] = 'spawn_complete'
 _EVENT_TAGS[RunComplete] = 'run_complete'
 _EVENT_TAGS[RunAbandoned] = 'run_abandoned'

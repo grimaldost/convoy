@@ -134,7 +134,9 @@ Every tool returns a single JSON object.
   making `total_cost_usd` approximate. Per-spawn `duration` is not summarized here — it is
   in the telemetry trace.
 - `prs` — one entry per PR, in processing order: `{ pr_id, spawns, effective_model, gate,
-  skipped, skip_reason }`. `gate` is `null` if the PR never gated, else `{ attempt,
+  skipped, skip_reason, in_flight }`. `in_flight` names the role of a spawn that started and
+  has not completed (`null` otherwise) — on a live run, what convoy is doing right now; on a
+  killed run, the PR the money was going into. `gate` is `null` if the PR never gated, else `{ attempt,
   blocking_red, independent_red, failing_checks }` for the **latest** attempt
   (`failing_checks` lists the names of the blocking checks that were red). `attempt` is
   `0` for the initial gate and `1..N` after each fix re-gate; `blocking_red` and

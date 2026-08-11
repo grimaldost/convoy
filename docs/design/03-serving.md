@@ -207,7 +207,8 @@ writes is itself terminal, so a second `clean` finds a finished run and does not
 `spawns.jsonl`, keeps only the lines tagged with this run's `run_id` (the file
 is append-only across runs, so a reused outputs dir stays safe), and folds them
 into `economy` totals (`total_cost_usd`, `cost_estimated`, token counts,
-`num_turns`, `spawn_count`) plus a per-PR view (spawn count, the implementation
+`num_turns`, `spawn_count`) plus a per-PR view (spawn count, any spawn still
+`in_flight`, the implementation
 spawn's `effective_model`, the *latest* gate verdict with the names of its
 failing blocking checks, any skip reason). `effective_model` is keyed on the
 `implementation` role rather than append order — a fix spawn's model never

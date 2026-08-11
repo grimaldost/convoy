@@ -47,6 +47,7 @@ from convoy.core.telemetry import (
     RunComplete,
     RunStart,
     SpawnComplete,
+    SpawnStart,
     apply_cost_fallback,
     budget_is_nearing,
 )
@@ -405,6 +406,9 @@ def run_series(
             tools=governed.tools,
             timeout_seconds=governed.timeout_seconds,
         )
+        # Written BEFORE the spawn, so the ledger names the PR in flight for the 30–90
+        # minutes it takes rather than only once it is over.
+        telemetry.write(SpawnStart(run_id=run_id, pr_id=pr.id, role='implementation'))
         result = spawn.spawn(request, workspace)
         _record_spawn(
             telemetry, reporter, run_id, pr.id, 'implementation', result, governed.budget_usd
@@ -471,6 +475,7 @@ def run_series(
                 tools=governed.tools,
                 timeout_seconds=governed.timeout_seconds,
             )
+            telemetry.write(SpawnStart(run_id=run_id, pr_id=pr.id, role='fix'))
             fix_result = spawn.spawn(fix_request, workspace)
             _record_spawn(
                 telemetry, reporter, run_id, pr.id, 'fix', fix_result, governed.budget_usd

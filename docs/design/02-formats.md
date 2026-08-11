@@ -175,6 +175,7 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 | `event` | Emitted | Required fields |
 |---|---|---|
 | `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id`, `advisories` (list of `{kind, where, message}`; `[]` when pre-flight had nothing to say) |
+| `spawn_start` | once per agent spawn, immediately before it launches | `schema_version`, `event`, `run_id`, `pr_id`, `role` |
 | `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `classification`, `budget_cap_usd`, `budget_nearing` |
 | `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
 | `pr_skipped` | for each PR the run never processed because an earlier PR halted the series | `schema_version`, `event`, `run_id`, `pr_id`, `reason` |
@@ -227,6 +228,14 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   forfeiting five downstream PRs between them. A monitor tailing the ledger can now raise
   the cap or stage recovery on the spawn before the busting one; the same moment is
   narrated on stderr as a `near cap` line.
+- **`spawn_start`** (additive) — written immediately before a spawn launches, carrying no
+  economy because nothing has been spent yet. The ledger recorded only completions, so a PR
+  in progress was indistinguishable from one the run had not reached, and "which PR is it
+  working on" was unanswerable for the 30–90 minutes a spawn takes. Pair it with
+  `spawn_complete` on `(run_id, pr_id, role)`: a start with no completion is a spawn in
+  flight, which is also what tells a driver that is alive but stuck from one that is gone.
+  The result envelope folds this into a per-PR `in_flight` field (the role in flight, else
+  `null`).
 - **`run_abandoned`** (additive) — the one event a run does not write about itself. A hard
   kill leaves no terminal line, so the ledger reported the run `running` for ever; the
   recovery path (`convoy clean`, when it clears a stale workspace lock) closes the entry

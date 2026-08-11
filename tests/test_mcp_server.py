@@ -843,3 +843,89 @@ def test_status_without_a_workspace_answers_exactly_as_before(tmp_path: Path) ->
     envelope = asyncio.run(srv.convoy_status(str(series_file), run_id='r'))
 
     assert envelope['state'] == 'running'
+
+
+# --- in_flight: which PR the run is working on right now ------------------------------------
+
+
+def test_the_envelope_names_the_spawn_still_in_flight(tmp_path: Path) -> None:
+    telem = tmp_path / 'spawns.jsonl'
+    _write_jsonl(
+        telem,
+        [
+            {'schema_version': 1, 'event': 'run_start', 'run_id': 'r', 'series_id': 's'},
+            {
+                'schema_version': 1,
+                'event': 'spawn_start',
+                'run_id': 'r',
+                'pr_id': 'pr-1',
+                'role': 'implementation',
+            },
+            _spawn_line('r', 'pr-1'),
+            {
+                'schema_version': 1,
+                'event': 'spawn_start',
+                'run_id': 'r',
+                'pr_id': 'pr-2',
+                'role': 'implementation',
+            },
+        ],
+    )
+
+    envelope = summarize_run(telem, run_id='r', series_id='s', outcome=None)
+    by_id = {pr['pr_id']: pr for pr in envelope['prs']}
+
+    # pr-1 started and finished; pr-2 started and did not.
+    assert by_id['pr-1']['in_flight'] is None
+    assert by_id['pr-2']['in_flight'] == 'implementation'
+
+
+def test_a_fix_spawn_in_flight_is_named_under_its_own_role(tmp_path: Path) -> None:
+    telem = tmp_path / 'spawns.jsonl'
+    _write_jsonl(
+        telem,
+        [
+            {
+                'schema_version': 1,
+                'event': 'spawn_start',
+                'run_id': 'r',
+                'pr_id': 'pr-1',
+                'role': 'implementation',
+            },
+            _spawn_line('r', 'pr-1'),
+            {
+                'schema_version': 1,
+                'event': 'spawn_start',
+                'run_id': 'r',
+                'pr_id': 'pr-1',
+                'role': 'fix',
+            },
+        ],
+    )
+
+    envelope = summarize_run(telem, run_id='r', series_id='s', outcome=None)
+
+    assert envelope['prs'][0]['in_flight'] == 'fix'
+
+
+def test_in_flight_is_always_present_and_null_on_a_finished_run(tmp_path: Path) -> None:
+    telem = tmp_path / 'spawns.jsonl'
+    _write_jsonl(
+        telem,
+        [
+            {
+                'schema_version': 1,
+                'event': 'spawn_start',
+                'run_id': 'r',
+                'pr_id': 'pr-1',
+                'role': 'implementation',
+            },
+            _spawn_line('r', 'pr-1'),
+        ],
+    )
+
+    envelope = summarize_run(
+        telem, run_id='r', series_id='s', outcome=RunOutcome('completed', True, EXIT_OK)
+    )
+
+    assert envelope['prs'][0]['in_flight'] is None

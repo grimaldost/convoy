@@ -209,6 +209,10 @@ def summarize_run(
                 'gate': None,
                 'skipped': False,
                 'skip_reason': None,
+                # The role of a spawn that started and has not completed, else ``None``.
+                # On a live run this is "what convoy is doing right now"; on a run whose
+                # driver was killed it is the PR the money was being spent on.
+                'in_flight': None,
             },
         )
 
@@ -220,7 +224,12 @@ def summarize_run(
             if entry.get('run_id') != run_id:
                 continue
             event = entry.get('event')
-            if event == 'spawn_complete':
+            if event == 'spawn_start':
+                # Set on start and cleared on the matching completion, in append order —
+                # the ledger is written in that order by construction, so what survives the
+                # walk is exactly the spawn that never finished.
+                _pr(entry['pr_id'])['in_flight'] = entry['role']
+            elif event == 'spawn_complete':
                 economy['total_cost_usd'] += entry['cost_usd']
                 economy['input_tokens'] += entry['input_tokens']
                 economy['output_tokens'] += entry['output_tokens']
@@ -231,6 +240,7 @@ def summarize_run(
                 )
                 pr = _pr(entry['pr_id'])
                 pr['spawns'] += 1
+                pr['in_flight'] = None
                 # effective_model is the implementation spawn's model: the spawn the tier
                 # decision governed and the one the gate judged. Keyed on role, not append
                 # order — a fix spawn's model never overwrites it, whatever the line order.

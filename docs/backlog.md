@@ -128,6 +128,14 @@ during a 30–90 minute spawn, and a driver that is alive but stuck becomes visi
 `interface/run_service.py`, `interface/drivers/headless.py`. **(consumer-affecting: a new
 `state` value, a new event and `outcome` value, a new event)**
 
+**Status.** **Shipped** in `[Unreleased]`, all three parts. (a) `convoy status` /
+`convoy_status` take an optional workspace, read the lock's owner pid, and report `dead` —
+claimed only on the positive evidence of a lock whose owner is gone, so no lock and no
+workspace both still read `running`. (b) `convoy clean` appends a terminal `run_abandoned`
+line for the orphaned run when it clears a stale lock; reconstruction reads it as
+`outcome: abandoned` with the infrastructure exit code. (c) `spawn_start` is written before
+every spawn, and the envelope carries a per-PR `in_flight`.
+
 **Effort** M · **Source** [triage] + [review] · **Rows** T29a, T29b, T29c
 
 ### CONV-B03 — The gate's failure `detail` is chosen by stream rather than by content, and cut mid-token.

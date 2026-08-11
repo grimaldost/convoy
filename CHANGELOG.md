@@ -15,6 +15,20 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **The ledger now says which PR is in flight, not only which ones are done.** A new
+  `spawn_start` line is written immediately before each agent spawn launches, carrying
+  `run_id`, `pr_id` and `role` and no economy — nothing has been spent yet, and a line
+  promising numbers it could not have would be worse than none.
+
+  Until now the ledger recorded only completions, so for the 30–90 minutes a spawn takes, a
+  PR in progress looked exactly like a PR the run had not reached. Pairing `spawn_start`
+  with `spawn_complete` on `(run_id, pr_id, role)` closes that, and also separates a driver
+  that is dead from one that is alive but stuck: the second leaves a started spawn that
+  never completes. The result envelope folds it into a per-PR `in_flight` field — the role
+  in flight, or `null` (`core/telemetry.py`, `interface/drivers/headless.py`,
+  `interface/run_summary.py`). **(consumer-affecting: a new `spawn_start` event and a new
+  per-PR `in_flight` field in the run envelope)** Serves backlog row CONV-B02 (c).
+
 - **`convoy clean` closes a killed run's ledger entry instead of leaving it open for ever.**
   Clearing a stale workspace lock now also appends a terminal `run_abandoned` line for the
   run that left it behind, when that run recorded no outcome of its own. It has to happen

@@ -1026,6 +1026,72 @@ def test_budget_halt_skips_the_dependent(harness: Harness) -> None:
 
 
 # ---------------------------------------------------------------------------
+# spawn_start — which PR is in flight, answerable while the spawn is still running
+# ---------------------------------------------------------------------------
+
+
+def test_a_spawn_is_announced_before_it_runs(harness: Harness) -> None:
+    """The start line precedes the completion, so a PR in flight is visible for 30-90 min."""
+    series = _one_pr_series(harness.series)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-spawn-start',
+    )
+
+    events = _read_events(harness.outputs)
+    tags = [event['event'] for event in events]
+    assert tags.index('spawn_start') < tags.index('spawn_complete')
+    started = _events_of(events, 'spawn_start')
+    assert len(started) == 1
+    assert started[0]['pr_id'] == 'pr-1'
+    assert started[0]['role'] == 'implementation'
+
+
+def test_a_fix_spawn_is_announced_under_its_own_role(harness: Harness) -> None:
+    series = _marker_series(harness, max_fix_attempts=1)
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=FixMarkerSpawn([ok_result(), ok_result()], fix_creates_marker=True),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-spawn-start-fix',
+    )
+
+    started = _events_of(_read_events(harness.outputs), 'spawn_start')
+    assert [event['role'] for event in started] == ['implementation', 'fix']
+
+
+def test_a_pr_the_series_never_reached_announces_no_spawn(harness: Harness) -> None:
+    """The marker means IN FLIGHT, so a skipped PR must not carry one."""
+    red_series = _make_series(harness.repo, Check(name='red', run=_FAIL_CMD, blocking=True))
+    series = _two_pr_series(red_series)
+    (harness.repo / 'prompts' / 'impl-a.md').write_text('Implement A.')
+    (harness.repo / 'prompts' / 'impl-b.md').write_text('Implement B.')
+
+    run_series(
+        series,
+        harness.repo,
+        spawn=MarkerSpawn([ok_result()], markers_for=('marker-a',)),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-spawn-start-skip',
+    )
+
+    started = _events_of(_read_events(harness.outputs), 'spawn_start')
+    assert [event['pr_id'] for event in started] == ['pr-a']
+
+
+# ---------------------------------------------------------------------------
 # The near-cap signal — said while there is still a run to save
 # ---------------------------------------------------------------------------
 
