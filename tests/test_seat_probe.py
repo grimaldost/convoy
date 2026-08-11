@@ -1,5 +1,7 @@
 """Tests for the pre-run seat viability probe (interface/seat_probe.py)."""
 
+import stat
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from convoy.core.spec import (
     Series,
     Tools,
 )
+from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.seat_probe import seat_problem
 from convoy.interface.spawn import (
     FakeSpawn,
@@ -238,3 +241,39 @@ def test_an_empty_output_still_names_the_failure(tmp_path: Path) -> None:
 
     assert problem is not None
     assert '(no output)' in problem.message
+
+
+# --- the probe's claim, end to end through the real adapter ---------------------------------
+#
+# The probe blocks only on 'infrastructure'. A spawn the CLI refuses at argument parse used
+# to classify 'ok', so the probe waved it through and the run went on to be blocked at $0
+# with no diagnosis. This composes the real adapter with a stub CLI that refuses, so the
+# claim "the seat can serve this model" means what it says. No real agent is launched.
+
+
+def _refusing_cli(tmp_path: Path) -> str:
+    """A stub standing in for the agent CLI, refusing every invocation at argument parse."""
+    stub = tmp_path / 'refuse.py'
+    stub.write_text(
+        'import sys\n'
+        "sys.stderr.write(\"error: option '--effort <level>' argument 'lo' is invalid.\")\n"
+        'sys.exit(1)\n',
+        encoding='utf-8',
+    )
+    if sys.platform == 'win32':
+        launcher = tmp_path / 'refuse.cmd'
+        launcher.write_text(f'@echo off\r\n"{sys.executable}" "{stub}" %*\r\n', encoding='utf-8')
+    else:
+        launcher = tmp_path / 'refuse.sh'
+        launcher.write_text(f'#!/bin/sh\n"{sys.executable}" "{stub}" "$@"\n', encoding='utf-8')
+        launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return str(launcher)
+
+
+def test_a_cli_that_refuses_the_invocation_blocks_the_run(tmp_path: Path) -> None:
+    problem = seat_problem(HeadlessSpawn(claude_bin=_refusing_cli(tmp_path)), _series(), tmp_path)
+
+    assert problem is not None
+    assert problem.kind == 'seat'
+    # And the operator is told what happened rather than meeting a $0 blocked run.
+    assert '--effort' in problem.message

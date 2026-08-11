@@ -56,7 +56,8 @@ A real run passes these stages, in this order (`run_series_headless`):
    plus any per-PR override), in first-PR-seen order: a tool-less brief (`Reply
    with exactly: ok`), low effort, default permission mode, a $0.05 budget cap,
    a 120-second timeout. An `'infrastructure'` classification (expired seat,
-   usage limit, retry exhaustion) or a CLI that cannot start becomes a
+   usage limit, retry exhaustion, or an invocation the CLI refuses outright) or a
+   CLI that cannot start becomes a
    `kind='seat'` pre-flight problem — located at the section that *declared* the
    failing model, `[governance]` or the overriding `[[prs]]` table — and the run
    stops with zero side effects, before the fresh reset or any branch is staged.

@@ -275,6 +275,13 @@ hole and makes the seat probe's claim mean what it says. Add a test that fails o
 unrecognised `result.subtype`. `interface/headless_spawn.py`. Do this regardless of
 CONV-B35, which considers replacing the parser entirely.
 
+**Status.** **Shipped** in `[Unreleased]`. A nonzero exit with no `result` event is now
+`infrastructure` and carries a diagnosis; the `result` subtypes convoy has a decision for
+are named in one table, and a non-success spawn carrying anything else is not scored. A
+seat-probe test composes the real adapter with a stub CLI that refuses at argument parse.
+The adjacent `--effort` half of this row's evidence is closed at the other end by CONV-B06,
+which rejects an unknown level at load. Independent of CONV-B35 as the row asks.
+
 **Effort** M · **Source** [review]
 
 ---

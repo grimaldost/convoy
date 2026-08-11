@@ -116,6 +116,24 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- **A spawn the agent CLI refuses is no longer scored as a clean result with zero economy.**
+  `_classify` matched the CLI's prose on stderr and returned `'ok'` for any non-success spawn
+  carrying no auth, usage or retry signature. So a spawn refused at argument parse — a flag
+  renamed upstream, a value dropped from a choice list — was recorded as a clean task result
+  with $0 economy, and the seat probe, which blocks only on `'infrastructure'`, waved it
+  through. The operator then met a `blocked` run with $0 spend and no diagnosis.
+
+  The CLI's structured signals are now preferred over its prose wherever one exists. A
+  nonzero exit with **no `result` event at all** is `infrastructure`: the CLI never got as
+  far as running the task, and it says so in the `diagnosis`. And the `result` subtypes
+  convoy has a decision for are named in one table, with a non-success spawn carrying
+  anything else classified `infrastructure` rather than scored — an unrecognised error name
+  is a reason convoy does not understand, and "clean task result" is the one guess that is
+  wrong silently. When the CLI ships a new subtype the fix is to record a decision for it,
+  which a test now forces. Matching a vendor CLI's prose is a permanent tax with a silent
+  failure mode; this pays less of it (`interface/headless_spawn.py`). Serves backlog row
+  CONV-B07.
+
 - **`effort` is validated at load, and recorded on every spawn line.** It was an
   unvalidated free-form string. Verified against the installed agent CLI: an unknown
   `--effort` value prints a warning on stderr, then runs at the CLI's own default and exits
