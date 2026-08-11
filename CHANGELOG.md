@@ -13,6 +13,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **(consumer-affecting)** The `strong` tier now resolves to `claude-opus-5`
+  (`DEFAULT_TIER_MODELS`, the skill's tier map). The previous id is still served, so
+  existing explicit `model =` pins keep working; only series that say `tier = "strong"`
+  pick up the new model. Mirror sync with the model-policy owner's canonical lineup
+  (reconciled 2026-08-11); family-keyed pricing needed no change.
+
 ## [0.8.0] - 2026-08-11
 
 Backlog wave 1 (`docs/backlog.md`): the run becomes legible and honest under failure —

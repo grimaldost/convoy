@@ -18,7 +18,7 @@ from convoy.core.spec import PR, Governance, Series
 DEFAULT_TIER_MODELS: dict[str, str] = {
     'weak': 'claude-haiku-4-5',
     'mid': 'claude-sonnet-5',
-    'strong': 'claude-opus-4-8',
+    'strong': 'claude-opus-5',
     'frontier': 'claude-fable-5',
 }
 

@@ -257,7 +257,7 @@ least one entry.
 
 - **`model` vs `tier`.** Set an explicit `model` (e.g. `claude-haiku-4-5`) or a `tier`
   that resolves to one: `weak` → `claude-haiku-4-5`, `mid` → `claude-sonnet-5`, `strong`
-  → `claude-opus-4-8`, `frontier` → `claude-fable-5`. `model` wins if both are set. A
+  → `claude-opus-5`, `frontier` → `claude-fable-5`. `model` wins if both are set. A
   `[[prs]]` table may set its own `model` / `tier` / `effort`, falling back to
   `[governance]` when absent; a PR that sets `model` or `tier` supplies both (the series
   pair is not consulted), and both spawns of a PR — implementation and fix — resolve the
