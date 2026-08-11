@@ -35,8 +35,11 @@ A real run passes these stages, in this order (`run_series_headless`):
    (prompts exist, `outputs` out-of-tree, asset isolation). A `PreflightError`
    here precedes any side effect: no lock, no spawn, no git mutation. Pre-flight
    returns a `PreflightReport` carrying two lists: the blocking `problems` that
-   decide runnability, and non-blocking `advisories` that do not (today: a PR that
-   phase-scoped checks leave with no blocking check, so it integrates unverified).
+   decide runnability, and non-blocking `advisories` that do not — today: a PR that
+   phase-scoped checks leave with no blocking check, so it integrates unverified; a
+   check declaring an `asset` no lane will read; and a blocking gate whose declared
+   paths leave test files in the workspace unrun, so a green gate claims more than
+   the tree warrants.
    Only `problems` raises; advisories are reported and the run proceeds. They are
    reported on **every** path, the run included: on a run they ride the `run_start`
    telemetry line and the reporter narrates them under the run header. Until 0.7.0 the

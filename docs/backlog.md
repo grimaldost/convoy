@@ -230,6 +230,11 @@ gate-hygiene note (T31c) — land in CONV-B08's reference; T31a is already valid
 field, with three consecutive waves closing with no post-run surprises after it was
 adopted.
 
+**Status.** **Shipped** in `[Unreleased]` — the T31b half. A third `kind='gate'` advisory
+names the test files no blocking check's declared paths cover, silent whenever the answer
+would be a guess (a check naming no path runs the whole tree; a check naming only out-of-tree
+paths is an oracle and is passed over). T31a and T31c still ride CONV-B08.
+
 **Effort** M · **Source** [triage] + [review] · **Rows** T31b (T31a, T31c ride in CONV-B08)
 
 ### CONV-B06 — `effort` is an unvalidated free-form string the CLI silently ignores when it is wrong, and convoy records it nowhere.

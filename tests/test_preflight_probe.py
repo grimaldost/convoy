@@ -17,6 +17,7 @@ from convoy.interface.preflight_probe import (
     check_isolation,
     check_outputs,
     check_prompts,
+    gate_scope,
     preflight,
 )
 
@@ -224,3 +225,121 @@ def test_the_ungated_pr_advisory_stays_first(tmp_path: Path) -> None:
     report = preflight(series, workspace)
 
     assert [a.where for a in report.advisories] == ["[[prs]] 'pr-1'", "[[checks]] 'oracle'"]
+
+
+# --- gate scope: what the gate does not run ------------------------------------------------
+#
+# Phase scoping made subset gates possible and convoy said nothing about how to scope one. A
+# 16-PR wave gated 16/16 green while two repository-wide guards were red, found only by
+# running the full suite by hand after the run reported `completed` -- so the series' own
+# quality claim was stronger than the tree warranted. convoy already holds the gate commands
+# and the workspace, so this is answerable for free at dry_run.
+
+
+def _tree(workspace: Path, *relative: str) -> None:
+    for entry in relative:
+        path = workspace / entry
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('x', encoding='utf-8')
+
+
+def _scoped(tmp_path: Path, run: str, *, blocking: bool = True) -> tuple[Series, Path]:
+    workspace, prompts, outputs = _dirs(tmp_path)
+    series = _series(
+        prompts=prompts,
+        outputs=outputs,
+        checks=(Check(name='suite', run=run, blocking=blocking),),
+    )
+    return series, workspace
+
+
+def test_a_path_scoped_gate_names_the_test_files_it_will_not_run(tmp_path: Path) -> None:
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core')
+    _tree(workspace, 'src/core/test_core.py', 'tests/test_registry.py', 'tests/test_wiring.py')
+
+    (advisory,) = gate_scope(series, workspace)
+
+    assert advisory.kind == 'gate'
+    assert '2' in advisory.message
+    # Named, so the author can judge rather than take a bare count on trust.
+    assert 'test_registry.py' in advisory.message
+
+
+def test_an_unscoped_blocking_check_says_nothing(tmp_path: Path) -> None:
+    """`pytest -q` runs the whole tree, so there is nothing the gate does not run."""
+    series, workspace = _scoped(tmp_path, 'python -m pytest -q')
+    _tree(workspace, 'tests/test_registry.py')
+
+    assert gate_scope(series, workspace) == []
+
+
+def test_a_scope_that_covers_every_test_file_says_nothing(tmp_path: Path) -> None:
+    series, workspace = _scoped(tmp_path, 'python -m pytest tests')
+    _tree(workspace, 'tests/test_a.py', 'tests/nested/test_b.py')
+
+    assert gate_scope(series, workspace) == []
+
+
+def test_an_out_of_tree_oracle_does_not_suppress_the_advisory(tmp_path: Path) -> None:
+    """A check pointing outside the workspace says nothing about in-tree coverage.
+
+    Treating it as "runs everything" would silence the advisory for exactly the series
+    shape -- a subtree-scoped suite plus an independent oracle -- it exists to warn about.
+    """
+    workspace, prompts, outputs = _dirs(tmp_path)
+    oracle = tmp_path / 'oracles' / 'probe.py'
+    oracle.parent.mkdir()
+    oracle.write_text('x', encoding='utf-8')
+    series = _series(
+        prompts=prompts,
+        outputs=outputs,
+        checks=(
+            Check(name='suite', run='python -m pytest src/core', blocking=True),
+            Check(name='oracle', run=f'python {oracle}', blocking=True),
+        ),
+    )
+    _tree(workspace, 'src/core/mod.py', 'tests/test_registry.py')
+
+    (advisory,) = gate_scope(series, workspace)
+
+    assert 'test_registry.py' in advisory.message
+
+
+def test_a_workspace_with_no_test_files_says_nothing(tmp_path: Path) -> None:
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core')
+    _tree(workspace, 'src/core/mod.py', 'README.md')
+
+    assert gate_scope(series, workspace) == []
+
+
+def test_a_non_blocking_check_does_not_count_as_scope(tmp_path: Path) -> None:
+    """Only a blocking check can stop a merge, so only a blocking check defines the gate."""
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core', blocking=False)
+    _tree(workspace, 'tests/test_registry.py')
+
+    assert gate_scope(series, workspace) == []
+
+
+def test_ignored_directories_are_not_searched_for_test_files(tmp_path: Path) -> None:
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core')
+    _tree(workspace, 'src/core/mod.py', 'node_modules/pkg/test_vendor.py', '.venv/lib/test_dep.py')
+
+    assert gate_scope(series, workspace) == []
+
+
+def test_the_advisory_reaches_the_preflight_report(tmp_path: Path) -> None:
+    """It has to arrive on the channel the surfaces already read, or nobody meets it."""
+    workspace, prompts, outputs = _dirs(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series = _series(
+        prompts=prompts,
+        outputs=outputs,
+        prs=(PR(id='pr-1', branch='pr-1', prompt='pr1.md', phase='p'),),
+        checks=(Check(name='suite', run='python -m pytest src/core', blocking=True),),
+    )
+    _tree(workspace, 'src/core/mod.py', 'tests/test_registry.py')
+
+    report = preflight(series, workspace)
+
+    assert report.clean  # advice, never a problem
+    assert [a.where for a in report.advisories] == ['[[checks]]']

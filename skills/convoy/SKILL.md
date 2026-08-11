@@ -89,6 +89,11 @@ with the `run_id` it returns.
 - `run_id` (default `""`) — which run to report. Defaults to the most recent run in the
   ledger, which is usually what a poller means; pass an explicit id to follow one run in
   an outputs dir that accumulates several — including the id a `detach` launch returned.
+- `workspace` (default `""`) — absolute path to the run's git repository. Optional, and
+  read for exactly one thing: the run lock there names the process that owns the run,
+  which is what tells `dead` apart from `running`. Nothing is written. Omit it and a run
+  with no terminal record reads `running`, as before — so pass it whenever you want to
+  know that a run has died.
 
 Traps the pre-flight catches (so `dry_run` reports them instead of a half-run):
 `[paths]` that don't resolve to an existing prompts dir or that name missing prompt
@@ -102,9 +107,12 @@ check would gate nothing); and a governance block that resolves to neither a
 
 The dry run also returns **`advisories`** — located `{kind, where, message}` remarks
 that do **not** make the series invalid, so they never change `ok` or `outcome` (and on
-the CLI, `convoy validate` prints them to stderr and still exits `0`). Today the one
-advisory is a PR that no blocking check gates, which therefore integrates unverified.
-Read them; they are the things that are legal and probably not what you meant.
+the CLI, `convoy validate` prints them to stderr and still exits `0`). Today there are
+three: a PR that no blocking check gates, which therefore integrates unverified; a check
+declaring an `asset` on a lane that will never read it; and a blocking gate that is
+path-scoped away from test files present in the workspace, so a green gate is a narrower
+claim than the tree warrants. Read them; they are the things that are legal and probably
+not what you meant.
 
 ### `convoy_init`
 

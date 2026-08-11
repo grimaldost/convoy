@@ -15,6 +15,26 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- **Pre-flight now says what the blocking gate will not run.** Phase scoping made subset
+  gates possible and convoy said nothing about how to scope one. The quiet failure is the
+  expensive one: a subtree-scoped suite cannot see the repository-wide guards a PR mutates,
+  so a 16-PR wave gated 16/16 green while two of them were red — found only by running the
+  full suite by hand after the run reported `completed`, which means the series' own quality
+  claim was stronger than the tree warranted.
+
+  A third `kind='gate'` advisory answers it for free at `dry_run`, since convoy already
+  holds both the gate commands and the workspace: it names the test files present in the
+  workspace that no blocking check's declared paths cover. Unlike a path detector this needs
+  no heuristic and has no false-positive budget — it compares the paths a command *names*
+  against the files the test runners' own discovery globs *find*, and it stays silent
+  wherever the answer would be a guess. A blocking check that names no existing path runs
+  whatever its tool discovers (the whole tree), so one of those silences the advisory
+  entirely; a check naming only out-of-tree paths is an independent oracle and is passed
+  over rather than counted as either. Advice, not a problem: a deliberately narrow gate is a
+  legitimate authoring choice, and it is now a visible one
+  (`interface/preflight_probe.py`). Serves backlog row CONV-B05 (T31b); the two
+  authoring-side halves of that row still ride CONV-B08.
+
 - **The ledger now says which PR is in flight, not only which ones are done.** A new
   `spawn_start` line is written immediately before each agent spawn launches, carrying
   `run_id`, `pr_id` and `role` and no economy — nothing has been spent yet, and a line

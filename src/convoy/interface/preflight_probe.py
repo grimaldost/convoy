@@ -14,6 +14,7 @@ decide runnability, plus the non-blocking advisories that do not.
 from pathlib import Path
 
 from convoy.core.preflight import (
+    Advisory,
     PreflightReport,
     Problem,
     inert_assets,
@@ -79,6 +80,143 @@ def check_outputs(series: Series, workspace: Path) -> list[Problem]:
     return problems
 
 
+# The filename globs test runners use for their OWN default discovery — pytest, go test,
+# jest/vitest, rspec. They are not convoy's guess at what a test looks like: a file matching
+# one of them is a test file by the toolchain's own rule, which is what keeps this a
+# comparison rather than a heuristic.
+_TEST_FILE_GLOBS = (
+    'test_*.py',
+    '*_test.py',
+    '*_test.go',
+    '*.test.js',
+    '*.test.jsx',
+    '*.test.ts',
+    '*.test.tsx',
+    '*.spec.js',
+    '*.spec.ts',
+    '*_spec.rb',
+)
+
+# Directory names whose contents belong to somebody else — vendored packages, virtualenvs,
+# build output, caches. A test file in there is not the repository's test surface, and
+# walking them is slow enough to matter on a large tree.
+_UNSEARCHED_DIRS = frozenset(
+    {
+        '.git',
+        '.venv',
+        'venv',
+        'node_modules',
+        '__pycache__',
+        '.tox',
+        '.nox',
+        '.mypy_cache',
+        '.pytest_cache',
+        '.ruff_cache',
+        'dist',
+        'build',
+        'target',
+        'vendor',
+    }
+)
+
+# How many uncovered files to name before falling back to the count alone.
+_NAMED_EXAMPLES = 3
+
+
+def _declared_paths(command: str, workspace: Path) -> tuple[list[Path], bool]:
+    """The in-tree paths ``command`` names, and whether it names any existing path at all.
+
+    A token is a declared path when it resolves to something that exists — nothing is
+    guessed from shape, so a flag, a module name or a stray word is simply not a path. The
+    second value distinguishes the two ways a check can name no in-tree path, which mean
+    opposite things: a command naming **no existing path anywhere** runs whatever its tool
+    discovers by default, i.e. the whole tree; a command naming only paths *outside* the
+    workspace is an out-of-tree oracle and says nothing about in-tree coverage.
+    """
+    workspace = workspace.resolve()
+    in_tree: list[Path] = []
+    names_any_path = False
+    for raw in command.split():
+        token = raw.strip('"\'')
+        if not token or token.startswith('-'):
+            continue
+        candidate = Path(token)
+        resolved = (workspace / candidate).resolve() if not candidate.is_absolute() else candidate
+        if not resolved.exists():
+            continue
+        names_any_path = True
+        if resolved == workspace or workspace in resolved.parents:
+            in_tree.append(resolved)
+    return in_tree, names_any_path
+
+
+def _test_files(workspace: Path) -> list[Path]:
+    """Every test file in ``workspace``, by the runners' own discovery globs."""
+    found: list[Path] = []
+    for glob in _TEST_FILE_GLOBS:
+        for path in workspace.rglob(glob):
+            if any(part in _UNSEARCHED_DIRS for part in path.relative_to(workspace).parts):
+                continue
+            if path.is_file():
+                found.append(path.resolve())
+    return sorted(set(found))
+
+
+def gate_scope(series: Series, workspace: Path) -> list[Advisory]:
+    """An Advisory naming the test files the blocking gate will not run.
+
+    Phase scoping made subset gates possible, and a subset gate fails in two opposite ways.
+    This one is the quiet half: a subtree-scoped suite cannot see the repository-wide guards
+    a PR mutates, so a 16-PR wave gated 16/16 green while two of them were red — found only
+    by running the full suite by hand after the run reported ``completed``. The series' own
+    quality claim was stronger than the tree warranted, and nothing said so.
+
+    Answerable for free, because convoy already holds both the gate commands and the
+    workspace. Unlike a path detector this needs no heuristic and has no false-positive
+    budget: it compares the paths a command **names** against the files the test runners'
+    own discovery globs **find**.
+
+    Silent whenever the answer would be a guess. Only blocking checks are considered, since
+    only they can stop a merge. If any of them names no existing path at all, it runs
+    whatever its tool discovers — the whole tree — and there is nothing the gate misses. A
+    check naming only out-of-tree paths (an independent oracle) neither scopes the tree nor
+    covers it, so it is passed over rather than treated as either.
+    """
+    blocking = [check for check in series.checks if check.blocking]
+    scoped: list[Path] = []
+    for check in blocking:
+        in_tree, names_any_path = _declared_paths(check.run, workspace)
+        if not names_any_path:
+            return []  # this check runs the whole tree
+        scoped.extend(in_tree)
+    if not scoped:
+        return []
+    uncovered = [
+        path
+        for path in _test_files(workspace)
+        if not any(path == root or root in path.parents for root in scoped)
+    ]
+    if not uncovered:
+        return []
+    shown = ', '.join(
+        str(path.relative_to(workspace.resolve())) for path in uncovered[:_NAMED_EXAMPLES]
+    )
+    more = (
+        f' and {len(uncovered) - _NAMED_EXAMPLES} more' if len(uncovered) > _NAMED_EXAMPLES else ''
+    )
+    return [
+        Advisory(
+            kind='gate',
+            where='[[checks]]',
+            message=(
+                f'the blocking gate does not run {len(uncovered)} test file(s) present in the '
+                f'workspace ({shown}{more}), so a green gate is a narrower claim than the '
+                'tree warrants; widen a check, or accept it deliberately'
+            ),
+        )
+    ]
+
+
 def check_isolation(series: Series, workspace: Path) -> list[Problem]:
     """A Problem for each blocking independent check whose asset isolation fails closed."""
     problems: list[Problem] = []
@@ -105,7 +243,7 @@ def preflight(series: Series, workspace: Path) -> PreflightReport:
             *check_outputs(series, workspace),
             *check_isolation(series, workspace),
         ),
-        # Appended after the existing producer, so a consumer that has been reading
+        # Appended after the existing producers, so a consumer that has been reading
         # advisories[0] since 0.3.0 still finds the ungated-PR remark there.
-        advisories=(*ungated_prs(series), *inert_assets(series)),
+        advisories=(*ungated_prs(series), *inert_assets(series), *gate_scope(series, workspace)),
     )
