@@ -153,6 +153,58 @@ def test_fresh_true_resets_the_workspace_before_the_engine_runs(
     assert 'integration' not in result.stdout
 
 
+def test_fresh_clears_the_debris_a_halt_leaves_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The case --fresh could not serve, which is also the common one.
+
+    A budget or infrastructure halt returns BEFORE the truncated spawn's work is committed,
+    so it leaves exactly the uncommitted changes and untracked files that branch deletion
+    cannot remove — and that abort the checkout --fresh itself needs. Budget halts were two
+    of ten terminal runs on disk. --fresh now performs `clean`'s tree-restoring steps first,
+    so there is one destructive path rather than two with a gap between them.
+    """
+    ws, series, _outputs = _clean(tmp_path)
+    _init_repo(ws)
+    _git(ws, 'checkout', '-b', 'pr-1')
+    _git(ws, 'checkout', 'base')
+    (ws / 'README.md').write_text('modified by a truncated spawn\n')
+    (ws / 'debris.txt').write_text('left uncommitted by the halt\n')
+    (ws / 'subdir').mkdir()
+    (ws / 'subdir' / 'more.txt').write_text('nested debris\n')
+
+    monkeypatch.setattr(
+        run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
+    )
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
+
+    run_series_headless(series, ws, run_id='r', fresh=True)
+
+    assert (ws / 'README.md').read_text() == 'initial\n'
+    assert not (ws / 'debris.txt').exists()
+    assert not (ws / 'subdir').exists()
+    assert Git(ws).current_branch() == 'base'
+    assert Git(ws).status_porcelain() == ()
+
+
+def test_fresh_false_touches_nothing_in_the_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The escalation is opt-in: without the flag a dirty tree is left exactly as it was."""
+    ws, series, _outputs = _clean(tmp_path)
+    _init_repo(ws)
+    (ws / 'debris.txt').write_text('mine\n')
+
+    monkeypatch.setattr(
+        run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
+    )
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
+
+    run_series_headless(series, ws, run_id='r', fresh=False)
+
+    assert (ws / 'debris.txt').read_text() == 'mine\n'
+
+
 def test_fresh_false_leaves_existing_branches_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

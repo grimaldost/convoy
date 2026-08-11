@@ -136,6 +136,25 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- **`--fresh` / `reset=true` now restores the tree, not just the branches.** There were two
+  destructive paths with overlapping names and a gap between them. `--fresh` touched branches
+  only, while by convoy's own documentation a `budget` or `infrastructure` halt returns
+  *before* the truncated spawn's work is committed — so it leaves exactly the uncommitted
+  changes and untracked files `--fresh` could not remove, and that could abort its own
+  checkout. The documented recovery was therefore "run `clean` by hand, then run `--fresh`",
+  which means the flag did not do what its name implies in the case that most needs it.
+  Budget halts were two of ten terminal runs on disk, so that is the common path.
+
+  `--fresh` now performs `convoy clean`'s tree-restoring steps first — discard uncommitted
+  changes to tracked files, delete untracked files and directories — and then deletes the
+  branches as before. One destructive path, one mental model. `convoy clean` keeps its own
+  job, which `--fresh` cannot do: restoring a workspace **without** starting a run, so it
+  takes no lock, pays for no seat probe, and closes the killed run's ledger entry. With the
+  flag off, nothing in the tree is touched and a leftover branch fails loud exactly as
+  before (`interface/run_service.py`). **(consumer-affecting: `--fresh` / `reset=true` is
+  more destructive than it was — it now discards uncommitted work in the workspace)** Serves
+  backlog row CONV-B31.
+
 - **The shipped documents no longer contradict the shipped engine, and a test now fails
   when they do.** Corrected: the manual's claim that "there is no resume — a halted run does
   not check-point-and-continue" (`--resume` shipped in 0.4.0 and was documented 300 lines

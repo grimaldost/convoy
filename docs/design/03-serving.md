@@ -80,11 +80,19 @@ A real run passes these stages, in this order (`run_series_headless`):
    whose implementation committed nothing points at the same commit as the
    integration branch, and treating that as done would silently drop a PR that
    never landed.
-5. **Optional fresh reset** — with `--fresh` / `reset=true`, `Git.reset_to_base`
-   (`interface/git.py`) checks out the base branch and force-deletes the
-   integration branch and every PR branch the series names, so a completed or
-   halted run re-runs without manual git surgery. Off by default: a leftover
-   branch still fails loud exactly as before.
+5. **Optional fresh restore** — with `--fresh` / `reset=true`, the workspace is
+   restored to base: `Git.discard_changes` and `Git.clean_untracked` first, then
+   `Git.reset_to_base` (`interface/git.py`) checks out the base branch and
+   force-deletes the integration branch and every PR branch the series names, so a
+   completed or halted run re-runs without manual git surgery. The tree-restoring
+   half is the same work `convoy clean` does, and it is here because branch deletion
+   alone could not serve the common case: a `budget` or `infrastructure` halt returns
+   before the truncated spawn's work is committed, leaving uncommitted changes and
+   untracked files that abort `--fresh`'s own checkout. Two destructive paths with
+   overlapping names and a gap between them became one. Off by default, and with it
+   off nothing in the tree is touched: a leftover branch still fails loud exactly as
+   before. `convoy clean` remains the verb for restoring a workspace without starting
+   a run — no lock, no seat probe, and it closes the killed run's ledger entry.
 6. **Engine** — the `outputs` dir is created and `run_series`
    (`interface/drivers/headless.py`) takes over.
 
@@ -277,7 +285,7 @@ The two surfaces expose one engine; the mapping is mechanical.
 | `convoy run SERIES [--workspace DIR]` | `convoy_run(series_file, workspace)` | the CLI defaults the workspace to its working directory; `--workspace` makes it explicit, as the tool's argument always was |
 | `convoy validate SERIES [--workspace DIR]` | `convoy_run(..., dry_run=true)` | same pre-flight; neither spawns (seat probe included) nor mutates. Advisories print to stderr / fill the `advisories` key, and change neither the exit code nor `ok`/`outcome` — so `validate` can write to stderr and still exit `0` |
 | `--no-config-isolation` / `CONVOY_NO_CONFIG_ISOLATION` | `config_isolation=false` | polarity inverted; the env escape is read by the CLI entry point only |
-| `--fresh` | `reset=true` | the same `Git.reset_to_base` path |
+| `--fresh` | `reset=true` | the same restore path: discard, clean, then `Git.reset_to_base` |
 | `--resume` | `resume=true` | continue the existing integration branch, skipping PRs already merged into it; rejected together with `--fresh`/`reset` |
 | `--run-id ID` | — | pins the run id instead of minting one; the tool mints its own, and only needs the flag to pin a *detached* child's. An id already in the ledger is refused either way |
 | a background shell | `detach=true` | the CLI's answer is the operator's shell; the tool's is a detached child of the same CLI, returning `outcome: "started"` plus the `run_id` to poll |

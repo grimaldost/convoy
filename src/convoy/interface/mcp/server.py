@@ -247,9 +247,13 @@ async def convoy_run(
         bool,
         Field(
             description=(
-                'Reset the workspace to base and delete prior integration/PR branches before '
-                'running, so a completed or halted run can be re-run cleanly. Off by default: '
-                'a leftover branch still fails loud exactly as without this flag.'
+                'DESTRUCTIVE. Restore the workspace to base before running — discard '
+                'uncommitted changes to tracked files, delete untracked files, then delete '
+                'the prior integration and PR branches — so a completed or halted run can be '
+                're-run cleanly. These are the same steps `convoy clean` performs; a budget '
+                'or infrastructure halt leaves uncommitted work that branch deletion alone '
+                'cannot clear. Off by default: a leftover branch then fails loud exactly as '
+                'without this flag, and nothing in the tree is touched.'
             )
         ),
     ] = False,

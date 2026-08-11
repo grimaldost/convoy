@@ -866,6 +866,13 @@ corner. [review]
 branches, or remove `--fresh` in favour of `clean && run`, with `run` failing on a leftover
 branch and naming `clean` in the message. One destructive path, one mental model.
 
+**Status.** **Shipped** in `[Unreleased]`, taking the first of the two options: `--fresh`
+reuses `clean`'s tree-restoring steps before deleting branches. The flag was kept rather
+than removed — `clean` still owns restoring a workspace *without* starting a run (no lock,
+no seat probe, and it closes the killed run's ledger entry), which is a different job. The
+escalation is stated plainly rather than smuggled: `--fresh` now discards uncommitted work,
+and with the flag off nothing in the tree is touched.
+
 **Effort** M · **Source** [review]
 
 ### CONV-B32 — Demote the independent-check lane. Keep the mechanism; retire its prominence. Replacement: one usage condition plus the measured table.

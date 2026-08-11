@@ -188,11 +188,17 @@ def run_series_headless(
     ``CLAUDE_CONFIG_DIR`` (removed on exit, even on error). Propagates the engine's
     ``GovernanceError`` / ``GitError`` / ``OSError`` unchanged.
 
-    When ``fresh`` is true, after a clean pre-flight and before the engine runs, the
-    integration branch and every PR branch the series names are deleted and ``workspace``
-    is reset onto the series' base branch — so a completed or halted run can be re-run
-    without a prior "branch already exists" failure. Off by default: with ``fresh`` false,
-    a leftover branch still fails loud exactly as before this option existed.
+    When ``fresh`` is true, after a clean pre-flight and before the engine runs,
+    ``workspace`` is restored to the series' base branch: uncommitted changes to tracked
+    files are discarded, untracked files and directories are deleted, and then the
+    integration branch and every PR branch the series names are force-deleted — so a
+    completed or halted run can be re-run without a prior "branch already exists" failure.
+    That is the same work ``convoy clean`` does, deliberately: ``fresh`` used to touch
+    branches only, while a ``budget`` or ``infrastructure`` halt returns *before* the
+    truncated spawn's work is committed and so leaves exactly the debris branch deletion
+    cannot remove — which then aborts ``fresh``'s own checkout. Off by default: with
+    ``fresh`` false, a leftover branch still fails loud exactly as before this option
+    existed, and nothing in the tree is touched.
 
     When ``resume`` is true, the run continues the existing integration branch instead of
     creating one, and skips every PR whose work it already contains — so a halt does not
@@ -223,8 +229,19 @@ def run_series_headless(
                 raise PreflightError([problem])
 
             if fresh:
+                # The same three steps ``convoy clean`` performs, in the same order, and
+                # for the reason that verb exists: a ``budget`` or ``infrastructure`` halt
+                # returns BEFORE the truncated spawn's work is committed, so it leaves
+                # exactly the uncommitted changes and untracked files that branch deletion
+                # cannot remove and that abort the checkout it needs. Budget halts were two
+                # of ten terminal runs on disk, so that is the common path, not the corner.
+                # Restoring the tree only to delete branches was two destructive paths with
+                # overlapping names and a gap between them; now there is one.
+                git = Git(workspace)
+                git.discard_changes()
+                git.clean_untracked()
                 branches = [series.branches.integration, *(pr.branch for pr in series.prs)]
-                Git(workspace).reset_to_base(series.branches.base, branches)
+                git.reset_to_base(series.branches.base, branches)
 
             # Create the telemetry output dir before the run. A filesystem failure here
             # (e.g. an ancestor path component is a regular file) surfaces as OSError to

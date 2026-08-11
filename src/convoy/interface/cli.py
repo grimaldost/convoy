@@ -185,8 +185,10 @@ def run(
         False,
         '--fresh',
         help=(
-            'Reset the workspace to base and delete prior integration/PR branches before '
-            'running, so a completed or halted run can be re-run cleanly.'
+            'DESTRUCTIVE. Restore the workspace to base before running — discard '
+            'uncommitted changes, delete untracked files, delete prior integration/PR '
+            'branches — so a completed or halted run can be re-run cleanly. Same steps as '
+            '`convoy clean`; run that with --dry-run first to see them.'
         ),
     ),
     resume: Annotated[

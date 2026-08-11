@@ -55,12 +55,16 @@ with the `run_id` it returns.
   **only** your Claude credential into it (so auth still works), and removes it when the
   run ends. Turn it off only to deliberately run under your full operator config dir
   unchanged.
-- `reset` (default `false`) — opt-in workspace reset before staging: check out `base` and
-  delete the `integration` branch and every PR branch the series names — so a completed or
-  halted run can be re-run without a "branch already exists" failure. The reset touches
-  branches only; it does **not** discard uncommitted changes or untracked files (see
-  "Limits and re-runs"). Off by default: a leftover branch still fails loud exactly as
-  without the flag. CLI equivalent: `convoy run --fresh`.
+- `reset` (default `false`) — **DESTRUCTIVE**, opt-in workspace restore before staging:
+  discard uncommitted changes to tracked files, delete untracked files and directories,
+  check out `base`, and delete the `integration` branch and every PR branch the series
+  names — so a completed or halted run can be re-run without a "branch already exists"
+  failure. These are the same steps `convoy clean` performs, deliberately: a `budget` or
+  `infrastructure` halt returns *before* the truncated spawn's work is committed, so it
+  leaves exactly the debris branch deletion cannot clear, which then aborts the reset's own
+  checkout. Off by default, and with it off nothing in the tree is touched — a leftover
+  branch fails loud exactly as without the flag. Run `convoy clean --dry-run` first if you
+  want to see what it will remove. CLI equivalent: `convoy run --fresh`.
 - `resume` (default `false`) — **the cheap way to recover a halted run.** Continue the
   existing `integration` branch instead of creating one, skipping every PR whose work it
   already contains and re-attempting the rest. After a halt that branch holds every PR
@@ -407,16 +411,17 @@ partial or gate-failed attempt: it is **deleted** and re-attempted from the curr
 integration state rather than built on. Resuming when no `integration` branch exists is a
 pre-flight problem, not a silent full run.
 
-**`reset: true` (CLI: `convoy run --fresh`) starts over.** Before staging, convoy checks out
-`base` and deletes the `integration` branch and every PR branch the series names, then runs
-as normal — re-spending the whole series, with no partial credit for a prior attempt. The
-reset touches **branches only**: it does not discard uncommitted changes or remove untracked
-files, and a `budget` or `infrastructure` halt returns *before* the truncated spawn's work is
-committed, leaving exactly that kind of debris behind. So run **`convoy clean <series.toml>`**
-first, which is the recovery verb: it discards uncommitted changes, removes untracked files,
-checks out `base`, deletes the series' branches, and clears a stale run lock. Use
-`convoy clean --dry-run` first to see exactly what that means for your tree — it is
-destructive and unrecoverable. Deleting a halted PR's branch by hand is not necessary;
+**`reset: true` (CLI: `convoy run --fresh`) starts over, and is DESTRUCTIVE.** Before
+staging, convoy discards uncommitted changes to tracked files, deletes untracked files and
+directories, checks out `base`, and deletes the `integration` branch and every PR branch the
+series names — then runs as normal, re-spending the whole series with no partial credit for a
+prior attempt. Those are the same steps **`convoy clean <series.toml>`** performs, and they
+are here because a `budget` or `infrastructure` halt returns *before* the truncated spawn's
+work is committed: branch deletion alone cannot clear that debris, and the debris aborts the
+reset's own checkout. So one destructive path, one mental model. `convoy clean` remains the
+verb for restoring a workspace **without** starting a run (it takes no lock, pays for no seat
+probe, and closes the killed run's ledger entry); run `convoy clean --dry-run` first to see
+exactly what either will remove. Deleting a halted PR's branch by hand is not necessary;
 `--resume` already does it.
 
 `outputs/spawns.jsonl` is
