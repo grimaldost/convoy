@@ -13,6 +13,13 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-11
+
+Backlog wave 1 (`docs/backlog.md`): the run becomes legible and honest under failure —
+budget nearing before the bust, a dead driver distinguishable from a running one, a
+refused spawn never scored clean, the manual held to the engine by test, and a series
+pinned to the spec it was decomposed from.
+
 ### Added
 
 - **A series can now pin the spec it was decomposed from, and a run refuses to start against
