@@ -13,6 +13,13 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-12
+
+One consumer-affecting change and nothing else: the `strong` tier resolves to a different
+model than 0.8.0 gave it. A tier is a name a series pins, so the switch needs a version a
+consumer can pin against rather than arriving as a silent change of meaning under a
+constant name.
+
 ### Changed
 
 - **(consumer-affecting)** The `strong` tier now resolves to `claude-opus-5`
