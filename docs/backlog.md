@@ -30,6 +30,14 @@ changes nothing else — no row was reordered and no existing argument was rewri
 it disagrees with what a row already argues, the note sits under that row and both
 readings stand until someone settles them.
 
+**A status pass ran on 2026-08-12** — not a reconciliation: no input was merged, no row was
+added, reordered or rewritten on new evidence. It retargets the `Status` lines of the rows
+the 0.8.0 tag now serves, records CONV-B27's settlement as ADR-0009 and CONV-B14's partial
+one, and **corrects CONV-B37**, whose imported measurement cited a figure belonging to an
+arm its own run rejected. A row whose numbers came from outside this repository is the one
+kind of row the "written to stand alone" bar does not protect, so the correction is recorded
+in place rather than substituted.
+
 ## Reading this backlog
 
 - **ID.** `CONV-Bnn` is the stable build ID used from this pass forward. `T<cluster><letter>`
@@ -98,7 +106,7 @@ review, working from the ledgers, calls it the highest-leverage unbuilt row in t
 and one of two defects to fix before any new feature. Ordered here on the review's
 spend-weighting: 20% of terminal runs lost for four cents of overshoot.
 
-**Status.** **Shipped** in `[Unreleased]`. `spawn_complete` carries `budget_cap_usd` and
+**Status.** **Shipped** in 0.8.0. `spawn_complete` carries `budget_cap_usd` and
 `budget_nearing` (90% of the resolved per-role ceiling), and the reporter narrates a
 `near cap` line at the same moment. The hard cap is unchanged. The per-PR `budget`
 override this row's cluster also wants stays held at CONV-B22.
@@ -128,7 +136,7 @@ during a 30–90 minute spawn, and a driver that is alive but stuck becomes visi
 `interface/run_service.py`, `interface/drivers/headless.py`. **(consumer-affecting: a new
 `state` value, a new event and `outcome` value, a new event)**
 
-**Status.** **Shipped** in `[Unreleased]`, all three parts. (a) `convoy status` /
+**Status.** **Shipped** in 0.8.0, all three parts. (a) `convoy status` /
 `convoy_status` take an optional workspace, read the lock's owner pid, and report `dead` —
 claimed only on the positive evidence of a lock whose owner is gone, so no lock and no
 workspace both still read `running`. (b) `convoy clean` appends a terminal `run_abandoned`
@@ -159,7 +167,7 @@ removed the then-known pollutant rather than changing how the detail is selected
 (T13b), and cut at a line boundary, never mid-token (T28a). One restructuring of
 `interface/gate_runner.py::_red_detail`.
 
-**Status.** **Shipped** in `[Unreleased]`. `_red_detail` now carries a bounded, labelled
+**Status.** **Shipped** in 0.8.0. `_red_detail` now carries a bounded, labelled
 tail of each stream that said anything, under one budget split so neither crowds the other
 out, cut at a line boundary and marked `...`. The selection rule changed, not the pollutant
 list — which is what the two earlier fixes at this layer did not do.
@@ -194,7 +202,7 @@ actually drifted — the MCP tool count, the CLI verb list, and the presence of
 `resume`/`clean` — against the code providing them (T30b). Deliberately narrow, not a
 prose linter.
 
-**Status.** **Shipped** in `[Unreleased]`, both halves. (a) The false resume/synchronous
+**Status.** **Shipped** in 0.8.0, both halves. (a) The false resume/synchronous
 claims are gone, `clean` is named as the recovery verb and `--resume`'s branch handling is
 stated, the tool count is corrected in the server docstring, `03-serving.md` and
 `marketplace.json`, and `00-overview.md` §7 now records the CI claim as unbuilt rather than
@@ -230,7 +238,7 @@ gate-hygiene note (T31c) — land in CONV-B08's reference; T31a is already valid
 field, with three consecutive waves closing with no post-run surprises after it was
 adopted.
 
-**Status.** **Shipped** in `[Unreleased]` — the T31b half. A third `kind='gate'` advisory
+**Status.** **Shipped** in 0.8.0 — the T31b half. A third `kind='gate'` advisory
 names the test files no blocking check's declared paths cover, silent whenever the answer
 would be a guess (a check naming no path runs the whole tree; a check naming only out-of-tree
 paths is an oracle and is passed over). T31a and T31c still ride CONV-B08.
@@ -262,7 +270,7 @@ escalates it on a measurement-integrity argument triage did not make, and adds t
 recording half. Ordered here on the review's reasoning; if the recording half proves
 awkward, the validation half alone still closes the silent case.
 
-**Status.** **Shipped** in `[Unreleased]`, both halves. `effort` is allow-listed at load
+**Status.** **Shipped** in 0.8.0, both halves. `effort` is allow-listed at load
 (`low`/`medium`/`high`/`xhigh`/`max`) on `[governance]` and per PR, `PERMISSION_MODES` is
 refreshed to the CLI's six plus legacy `default`, and the resolved `effort` is recorded on
 `spawn_complete`. The accepted sets were read from the installed CLI's own flag help, not
@@ -289,7 +297,7 @@ hole and makes the seat probe's claim mean what it says. Add a test that fails o
 unrecognised `result.subtype`. `interface/headless_spawn.py`. Do this regardless of
 CONV-B35, which considers replacing the parser entirely.
 
-**Status.** **Shipped** in `[Unreleased]`. A nonzero exit with no `result` event is now
+**Status.** **Shipped** in 0.8.0. A nonzero exit with no `result` event is now
 `infrastructure` and carries a diagnosis; the `result` subtypes convoy has a decision for
 are named in one table, and a non-success spawn carrying anything else is not scored. A
 seat-probe test composes the real adapter with a stub CLI that refuses at argument parse.
@@ -480,6 +488,18 @@ it does not mean convoy is invisible to the walk that has to visit it. A mirror 
 knows to visit is precisely the stale-lineup failure this row exists to prevent, and the
 registration costs one line in a file outside this repository. [cross-review]
 
+**Status.** **Partly settled; the row is unbuilt.** Cross-review point (a) — the
+contradiction between "all four mirrors are correct today" and the sibling collection's
+claim that the canonical lineup they copy from is stale — is resolved: the canonical lineup
+was reconciled on 2026-08-11 and convoy's mirrors were re-synced against it, which shipped
+in 0.9.0 as the `strong` tier resolving to `claude-opus-5` (`DEFAULT_TIER_MODELS` and the
+skill's tier map; family-keyed pricing needed no change). The lineup was in fact behind, so
+the ordering warning in (a) held — and it holds for the *next* pass too: the sync date to
+stamp is the reconciliation's, not this row's build date. Everything the row actually asks
+for remains unbuilt: no sync-date stamp, no age tripwire, no `[governance.tier_models]`
+override, no maintainer note (T39a), and no registration in the collection's bindings file
+(point (b)). This cycle's fix was manual, which is exactly the state the row exists to end.
+
 **Effort** S–M · **Source** [triage] + [review] + [cross-review] · **Row** T39a, escalated
 from `watch` by the review
 
@@ -559,7 +579,7 @@ reintroduce the machine-absolute problem CONV-B11 removes. `core/spec.py`,
 `core/preflight.py`, `core/telemetry.py`, `interface/drivers/headless.py`.
 **(consumer-affecting: a new series.toml key and new `run_start` fields)**
 
-**Status.** **Shipped** in `[Unreleased]`, both halves. `[series]` takes optional
+**Status.** **Shipped** in 0.8.0, both halves. `[series]` takes optional
 `spec_path` + `spec_sha256` (set together, path rejected if absolute, hash validated as a
 SHA-256 digest at load); a blocking `kind='spec_pin'` pre-flight check resolves and compares
 before any spawn; and the matched pin is recorded on `run_start`. Deliberately **not** added
@@ -575,20 +595,62 @@ directive — one short instruction appended to every spawn's brief, the motivat
 being a verification directive that tells the agent to check its own claim before
 reporting done — is the same shape as the commit-message policy in CONV-B12 and wants the
 same carrier rather than a second one. What the routing also carries is the measurement,
-and that is the part worth writing into the row: across 648 and then 165 pre-registered
-trials the lift is **not general**. Verification tasks moved +0.56 and +0.56; debugging
-+0.11 and +0.22; data verification +0.00 and +0.00. So the field is worth having and a
-default-on directive is not — the honest claim is "measurably helps verification-shaped
-work, indistinguishable from nothing on data verification", and a series that switches it
-on for every PR pays brief tokens for a null on most of them. [cross-review]
+and the figures this row first recorded were **wrong**. They are corrected below against
+the source runs (2026-08-12).
+
+The corrected numbers — the promoted gate's lift over its own bare baseline, on a
+leave-a-check-behind proxy:
+
+| Discipline | Weak tier | Mid tier | Strong tier |
+|---|---|---|---|
+| Verification | **+0.22** | **+0.56** | **+0.44**, 90% CI [+0.11, +0.78] |
+| Debugging | +0.11 | +0.22 | not measured |
+| Data verification | +0.00 | +0.00 | not measured |
+
+Four corrections, because each one changes what an author would conclude:
+
+- **The +0.56/+0.56 pair cited for verification was not the promoted arm's.** It belonged
+  to a **prescriptive** wording of the same gate that the same run **rejected**: it won the
+  primary metric outright and then performed the behaviour on 58% of trivial edits in the
+  paired null banks, and the pre-registered false-positive constraint killed it. The arm
+  that was promoted is the discipline-worded one, and its verification lift is +0.22 at the
+  weak tier, not +0.56. The source run's own findings say so in as many words; the
+  misattribution entered downstream, in the one-line summary this row copied.
+- **Each pair is two tiers, not two runs.** This row read "+0.11 and +0.22" as one figure
+  reproduced across two studies. They are the weak- and mid-tier cells of a single one.
+- **There is no tier collapse.** A later 72-trial run measured the same gate at the strong
+  tier at +0.44, 90% CI [+0.11, +0.78] — excluding zero, at zero false-positive cost. The
+  pre-registered risk that a strong model would leave no headroom did not materialise: the
+  bare strong-tier arm still skipped verification on 44% of delegated tasks.
+- **The claimed replication over 165 pre-registered trials never happened for
+  verification.** That 165-trial run was a separate pre-registered study of **debugging and
+  data verification** — it is where the +0.11/+0.22 and +0.00/+0.00 figures come from — not
+  a re-run of the verification bank. The verification figures rest on one 648-trial run plus
+  the 72-trial strong-tier run.
+
+The row's headline survives all four: the lift is discipline-dependent rather than general,
+so the field is worth having and a default-on directive is not. The corrections move it in
+one direction — at the weak tier the promoted gate buys half what this row claimed, while
+data verification stays a measured null on both tiers it ran on. One operational rule
+travels with the correction and belongs beside the field: a **paired null bank is mandatory**
+for anything gate-shaped, because without it the run would have shipped the arm that
+over-triggers. [cross-review]
 
 **Change.** Generalize CONV-B12's mechanism instead of adding a parallel one: a single
 `[governance]` standing-directive field appended to every spawn's brief, with the
 commit-message policy as its first instance. Build it with or after CONV-B12, never
-before, so there is one carrier and not two. Record the measured lift per discipline
-beside the field's documentation — including the two zeroes — so an author deciding
-whether to set it meets the null cases rather than a general endorsement.
+before, so there is one carrier and not two. Record the corrected per-tier table above
+beside the field's documentation — including the two zeroes and the rejected prescriptive
+arm — so an author deciding whether to set it meets the null cases and the over-trigger
+case rather than a general endorsement.
 **(consumer-affecting: a new series.toml key)**
+
+**Status.** **Corrected, not built** (2026-08-12). The measurement half of this row was
+imported from another project's evidence and carried a figure that belonged to a rejected
+arm; the table above replaces it. The change itself is unbuilt and still gated on CONV-B12.
+No convoy behaviour depended on the wrong number — the row had not been built — but it was
+the row's whole argument for how strongly to recommend the field, which is why the
+correction is recorded rather than quietly overwritten.
 
 **Effort** S–M on top of CONV-B12 · **Source** [cross-review] · **Gate** CONV-B12
 
@@ -765,6 +827,23 @@ an in-house engine; this row cites its existence rather than its contents, and a
 build-versus-adopt ADR resting on an unread decisive input should say so on its face.
 [cross-review]
 
+**Status.** **Settled as a deferral** in 0.9.0 —
+[ADR-0009](adr/0009-thin-governed-layer-position-deferred.md), taking the second of the
+two options the cross-review note offered. The position is *not* recorded as convoy's
+identity, because the measurement that would license it was designed, reviewed, repaired
+and then stopped on cost: a dry-run priced it at $152.00 (16 control cells $32.00, 8
+treatment cells $120.00) against a $30 rail and an original $4–16 estimate — about $15 per
+cell, since one cell buys a whole governed series where a control cell buys one session.
+The ADR records what is known without it, names what would license adopting or rejecting
+the position, and answers note (b) plainly: the published orchestration spec has not been
+read by anyone. Two consequences land back here. The retire rows below keep standing on
+their own evidence rather than on a principle — none of them needs the ADR. And the
+weak-tier ablation's 9/10 strengthened-gate figure is **quarantined as unattributable**
+(the committed scenario shipped a placeholder probe command; no preimage of its ledger
+`config_hash` was found while all fourteen other arms reconstruct exactly), so the
+comparison that survives is 3/8 bare against 3/8 with a blind gate — which does not support
+the position and is why deferring, rather than hedging, was the honest status.
+
 **Effort** M — a decision, not a build · **Source** [research] + [review] + [cross-review]
 
 ### CONV-B28 — Measure the skill itself.
@@ -873,7 +952,7 @@ corner. [review]
 branches, or remove `--fresh` in favour of `clean && run`, with `run` failing on a leftover
 branch and naming `clean` in the message. One destructive path, one mental model.
 
-**Status.** **Shipped** in `[Unreleased]`, taking the first of the two options: `--fresh`
+**Status.** **Shipped** in 0.8.0, taking the first of the two options: `--fresh`
 reuses `clean`'s tree-restoring steps before deleting branches. The flag was kept rather
 than removed — `clean` still owns restoring a workspace *without* starting a run (no lock,
 no seat probe, and it closes the killed run's ledger entry), which is a different job. The
@@ -951,7 +1030,7 @@ the one thing not to do is discover the answer from a broken scored arm. [cross-
 
 ## Shipped
 
-### Since the last reconciliation (0.2.0 – 0.7.0)
+### Since the last reconciliation (0.2.0 – 0.8.0)
 
 Reconciled against the campaign window; each row is closed on production evidence, not on
 the merge alone.
@@ -974,7 +1053,7 @@ the merge alone.
 | T21a | Seat-probe diagnosis extracted at the source, as `SpawnResult.diagnosis` | 0.7.0 |
 | T24a | Release-tag workflow, scheduled rather than push-triggered, checking tag and release page separately | 0.7.0 |
 | T25a | Advisories carried on the `run_start` line, so one mechanism serves the reporter, both envelopes and `convoy_status`. **(consumer-affecting)** | 0.7.0 |
-| T26a | Advisory naming which flag an inert `[[checks]].asset` is missing | Unreleased |
+| T26a | Advisory naming which flag an inert `[[checks]].asset` is missing | 0.8.0 |
 | — | README MCP tool count corrected | PR #48 |
 | — | `--durations` guidance in GUARDRAILS.md | — |
 
