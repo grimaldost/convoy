@@ -13,6 +13,21 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-28
+
+The delta triage build round: nothing in the engine's contract moves, so this is a patch
+cut — no new event, field, `outcome`, `error_kind`, exit code or series.toml key, and
+therefore nothing marked consumer-affecting. What changes is what convoy *says*. The skill's
+trigger no longer fires only after someone has chosen convoy; a pre-flight advisory that two
+production workspaces had drowned in vendored files is readable again; a failing engine-side
+`git` command reports what git actually said; and two engine behaviours an operator could
+previously only discover by paying for them are in the manual.
+
+Consumers parsing advisory *message text* — never a promised contract, but worth naming
+rather than leaving to be discovered — will see two changes: paths are POSIX-separated on
+every platform, and a long uncovered-test list now names directories with counts instead of
+three file names.
+
 ### Changed
 
 - The skill's trigger description now states the **pre-condition** — a plan, spec or PR

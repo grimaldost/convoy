@@ -106,7 +106,7 @@ wheels = [
 
 [[package]]
 name = "convoy-engine"
-version = "0.9.0"
+version = "0.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
