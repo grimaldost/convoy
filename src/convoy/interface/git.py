@@ -56,13 +56,19 @@ class Git:
         exists to undo. An argument carrying whitespace is quoted, so a commit message
         cannot be mistaken for further operands.
 
-        When git said nothing on stderr the exit code stands in. That path is real, not
-        defensive: ``git commit`` reports "nothing to commit" on *stdout* and leaves
-        stderr empty, which used to raise a `GitError` whose message was the empty string.
+        The detail is read from stderr, then stdout, then the exit code — in that order and
+        not stopping at the first stream. ``git commit`` reports "nothing to commit" on
+        *stdout* with stderr empty, and reading stderr alone turned that into a bare
+        ``exited 1``: in production an engine-side commit failed exactly that way, and
+        nothing in the message distinguished an empty commit from a hook rejection or an
+        index lock, so it was diagnosed by inspecting the workspace by hand. The same
+        stream-precedence mistake the gate's failure detail was corrected for, in the
+        engine's own subprocess calls. The exit code still stands in when git genuinely said
+        nothing anywhere, which a silent ``rev-parse --verify --quiet`` really does.
         """
         command = ' '.join(shlex.quote(arg) for arg in ('git', *args))
-        detail = result.stderr.strip() or f'exited {result.returncode}'
-        return GitError(f'{command}: {detail}')
+        said = result.stderr.strip() or result.stdout.strip()
+        return GitError(f'{command}: {said or f"exited {result.returncode}"}')
 
     def _run_checked(self, *args: str) -> subprocess.CompletedProcess[str]:
         """Run ``git <args>``; raise :class:`GitError` naming it on nonzero exit."""
