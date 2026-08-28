@@ -27,6 +27,19 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   series was authored from — the content is load-bearing and the trigger was not reaching
   it.
 
+### Fixed
+
+- The pre-flight advisory naming the test files a blocking gate will not run now skips the
+  files the workspace's **own** ignore rules exclude, and names the directories holding
+  them once the list is too long to read as a list. Two production workspaces had turned
+  the advisory into noise the same way — a virtualenv under a name no hardcoded list
+  anticipated (526 site-packages test files), and a build directory of archived sibling
+  repositories (474) — which trains an operator to skip advisories, including the ones that
+  are right. `git check-ignore` answers with the repository's rules rather than convoy's
+  guess at what a borrowed directory is called; a workspace that is not a repository, or a
+  machine with no `git`, is unchanged. Advisory paths are now POSIX-separated on every
+  platform.
+
 ## [0.9.0] - 2026-08-12
 
 One consumer-affecting change and nothing else: the `strong` tier resolves to a different
