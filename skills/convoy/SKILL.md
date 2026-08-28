@@ -1,15 +1,17 @@
 ---
 description: >-
-  Drive convoy's `convoy_run` and `convoy_init` MCP tools to execute a governed multi-PR
-  series — decompose work into dependency-ordered PR-sized tasks, run a coding agent through
-  each under a per-phase budget, gate each result against a quality check, repair on a
-  failing gate, integrate the green branches, and read back a structured per-spawn economy
-  plus gate summary. Use when running a convoy series.toml, when scaffolding one with
-  `convoy_init`, when a job needs several PR-sized steps executed and measured under budget
-  behind a quality gate, or when someone asks to run a governed or measured multi-PR
-  execution. Not for a single quick edit or one-shot task — that is a direct agent turn; not
-  for interactive human-in-the-loop PR review — that is the normal Claude Code workflow; not
-  for deciding what to build or writing the spec — convoy runs a series you already have.
+  Execute an already-settled plan of two or more PR-sized changes as a governed, measured
+  series — a coding agent driven through each task in dependency order under a per-phase
+  budget, each result gated deterministically, repaired on a red gate, the green branches
+  integrated, and a per-spawn economy plus gate summary read back. The trigger is the plan,
+  not convoy's own file: use when a spec, plan or PR manifest already names two or more
+  PR-sized changes; when a wave is about to be implemented PR by PR and someone will want to
+  price or audit it; when the work is hours nobody intends to sit through; when a
+  series.toml exists, or wants scaffolding with `convoy_init`. A series.toml is convoy's
+  input, not its cue: waiting for one means the choice was made elsewhere. Not for a single
+  quick edit or one-shot task — that is a direct agent turn; not for human-in-the-loop PR
+  review — that is the normal Claude Code workflow; not for writing the spec or deciding
+  what to build — convoy executes a plan, never authors one.
 ---
 
 # convoy
