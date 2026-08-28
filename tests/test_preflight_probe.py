@@ -1,6 +1,7 @@
 """Tests for the filesystem pre-flight probes (interface/preflight_probe.py)."""
 
 import hashlib
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -424,3 +425,93 @@ def test_a_stale_pin_reaches_the_preflight_report(tmp_path: Path) -> None:
 
     assert not report.clean
     assert [p.kind for p in report.problems] == ['spec_pin']
+
+
+def _init_repo(workspace: Path, *, gitignore: str) -> None:
+    """Make ``workspace`` a git repo with ``gitignore`` as its ignore rules."""
+    subprocess.run(['git', 'init', '-q'], cwd=workspace, check=True)
+    (workspace / '.gitignore').write_text(gitignore, encoding='utf-8')
+
+
+def test_a_test_file_the_repo_ignores_is_not_counted_against_the_gate(tmp_path: Path) -> None:
+    """The borrowed-directory case: a virtualenv under a name no hardcoded list anticipates."""
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core')
+    _tree(workspace, 'src/core/mod.py', '.venv-core/lib/test_dep.py')
+    _init_repo(workspace, gitignore='.venv-core/\n')
+
+    assert gate_scope(series, workspace) == []
+
+
+def test_an_ignored_test_file_does_not_inflate_a_real_advisory(tmp_path: Path) -> None:
+    """The advisory still fires for the tracked file, and counts only it."""
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core')
+    _tree(workspace, 'src/core/mod.py', 'tests/test_real.py', 'containers/context/test_copy.py')
+    _init_repo(workspace, gitignore='containers/\n')
+
+    (advisory,) = gate_scope(series, workspace)
+
+    assert 'tests/test_real.py' in advisory.message
+    assert '1 test file' in advisory.message
+    assert 'test_copy.py' not in advisory.message
+
+
+def test_a_workspace_that_is_not_a_repository_still_gets_the_advisory(tmp_path: Path) -> None:
+    """No repo means no ignore rules to consult, not an advisory withheld."""
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core')
+    _tree(workspace, 'src/core/mod.py', 'tests/test_real.py')
+
+    (advisory,) = gate_scope(series, workspace)
+
+    assert 'tests/test_real.py' in advisory.message
+
+
+def test_a_long_uncovered_list_is_summarised_by_directory(tmp_path: Path) -> None:
+    """Past a handful, three arbitrary file names hide where the rest are."""
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core')
+    _tree(
+        workspace,
+        'src/core/mod.py',
+        'tests/unit/test_a.py',
+        'tests/unit/test_b.py',
+        'tests/unit/test_c.py',
+        'tests/e2e/test_d.py',
+        'other/test_e.py',
+    )
+
+    (advisory,) = gate_scope(series, workspace)
+
+    assert '5 test file(s)' in advisory.message
+    # Ranked by how many each holds, so the biggest offender is the first thing read.
+    assert 'tests/unit/ (3)' in advisory.message
+    assert 'tests/e2e/ (1)' in advisory.message
+    assert 'other/ (1)' in advisory.message
+    # No individual file name survives the switch to directories.
+    assert 'test_a.py' not in advisory.message
+
+
+def test_a_short_uncovered_list_still_names_the_files(tmp_path: Path) -> None:
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core')
+    _tree(workspace, 'src/core/mod.py', 'tests/test_a.py', 'tests/test_b.py')
+
+    (advisory,) = gate_scope(series, workspace)
+
+    assert 'tests/test_a.py' in advisory.message
+    assert 'tests/test_b.py' in advisory.message
+
+
+def test_many_files_in_few_directories_names_every_directory(tmp_path: Path) -> None:
+    """Past the file budget but inside the directory one: nothing is left over to count."""
+    series, workspace = _scoped(tmp_path, 'python -m pytest src/core')
+    _tree(
+        workspace,
+        'src/core/mod.py',
+        'tests/test_a.py',
+        'tests/test_b.py',
+        'tests/test_c.py',
+        'tests/test_d.py',
+    )
+
+    (advisory,) = gate_scope(series, workspace)
+
+    assert 'tests/ (4)' in advisory.message
+    assert 'more director' not in advisory.message
