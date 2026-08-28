@@ -136,3 +136,72 @@ def test_the_marketplace_entry_is_the_one_the_installer_reads() -> None:
     convoy = next(plugin for plugin in marketplace['plugins'] if plugin['name'] == 'convoy')
     missing = sorted(name for name in _mcp_tool_names() if name not in convoy['description'])
     assert not missing, f'the marketplace plugin description does not name {missing}'
+
+
+def _ci_gate_commands() -> list[str]:
+    """Every command CI runs, in the order CI runs them.
+
+    Read from the workflow rather than restated here, so the expectation cannot be the thing
+    that goes stale. Parsed with a line regex instead of a YAML dependency: the file is one
+    job of plain `- run:` steps, and a parser is not what this test is about.
+    """
+    workflow = _text('.github', 'workflows', 'ci.yml')
+    return [match.group(1).strip() for match in re.finditer(r'^\s*- run: (.+)$', workflow, re.M)]
+
+
+def _gate_block(body: str) -> str | None:
+    """The document's fenced block that lists the gate, or ``None`` if no block lists it all.
+
+    The block, not the whole document: `uv sync` appears in a setup section too, and a
+    document-wide search would read that mention as the gate's first step and call the order
+    wrong.
+    """
+    commands = _ci_gate_commands()
+    for block in re.findall(r'^```[^\n]*\n(.*?)^```', body, re.M | re.S):
+        if all(command in block for command in commands):
+            return block
+    return None
+
+
+# Documents that promise to list the gate a contributor must pass. CONTRIBUTING said "the
+# same set CI runs" while listing four of the six.
+_GATE_LISTING_DOCS = (('CONTRIBUTING.md',), ('AGENTS.md',))
+
+
+@pytest.mark.parametrize('parts', _GATE_LISTING_DOCS, ids=lambda parts: parts[-1])
+def test_the_documented_gate_names_every_command_ci_runs(parts: tuple[str, ...]) -> None:
+    """CONTRIBUTING listed four commands and said CI ran "the same set"; CI ran six.
+
+    The missing one was `uv lock --check` — the step whose position the same document
+    elsewhere calls load-bearing, and whose absence from a cut is why `uv.lock` recorded
+    `convoy-engine 0.1.1` through the whole of `0.2.0`. A contributor working from that list
+    runs everything except the one check that cannot repair what it measures.
+    """
+    body = _text(*parts)
+    missing = [command for command in _ci_gate_commands() if command not in body]
+    assert _gate_block(body) is not None, (
+        f'{parts[-1]} has no fenced block listing every CI step; absent from the file: {missing}'
+    )
+
+
+@pytest.mark.parametrize('parts', _GATE_LISTING_DOCS, ids=lambda parts: parts[-1])
+def test_the_documented_gate_keeps_cis_order(parts: tuple[str, ...]) -> None:
+    """`uv lock --check` before `uv sync` is the whole reason it can ever fail.
+
+    Naming every command is not enough on its own: a list carrying `uv sync` first would
+    satisfy the check above while documenting the one arrangement in which the lock check is
+    guaranteed to pass.
+    """
+    block = _gate_block(_text(*parts))
+    assert block is not None  # the check above owns this failure
+    positions = [block.index(command) for command in _ci_gate_commands()]
+    assert positions == sorted(positions), (
+        f'{parts[-1]} lists the gate commands in a different order than ci.yml runs them'
+    )
+
+
+def test_the_ci_gate_is_not_empty() -> None:
+    """Non-vacuity guard: an unparsed workflow would make both checks above pass silently."""
+    commands = _ci_gate_commands()
+    assert len(commands) >= 4, commands
+    assert 'uv lock --check' in commands
