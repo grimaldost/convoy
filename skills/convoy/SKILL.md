@@ -47,7 +47,10 @@ with the `run_id` it returns.
 - `workspace` (required) — absolute path to the git repository to operate in (the
   scored tree). The series is staged on its base branch here; each PR's branch and
   the integration branch are created in this repo. It must be an existing git repo
-  whose current/base branch matches the series' `[branches].base`.
+  whose current/base branch matches the series' `[branches].base`. **Do not write to
+  this repository while the run is live**: convoy moves `HEAD` between branches for the
+  duration, so a commit made from another session lands on whichever branch is checked
+  out at that instant rather than the one you meant.
 - `dry_run` (default `false`) — when `true`, only pre-flight the series (structure,
   model resolution, paths, gate isolation) and return `{ok, outcome, problems,
   advisories}`. No git mutation, no agent spawn, no spend. Do this before every real run.
@@ -421,6 +424,16 @@ that gated green are not paid for twice. A PR branch that exists but never merge
 partial or gate-failed attempt: it is **deleted** and re-attempted from the current
 integration state rather than built on. Resuming when no `integration` branch exists is a
 pre-flight problem, not a silent full run.
+
+**A stop at a PR boundary plus an edited series file is how a gate is repaired mid-run.**
+`resume` re-reads the series file, so `[[checks]]` added, widened, or re-`phases`-scoped
+between two PRs govern every PR the resumed run still has to execute, while the PRs already
+integrated are skipped rather than re-gated under the new rules. That is a supported
+pattern, not an accident of implementation: stop the driver at a boundary, fix the gate that
+turned out to be too narrow, resume. In one production night it let five added checks and
+one widened check govern the remaining PRs of a seven-PR series without re-paying for the
+four already integrated. The converse holds too, and is the reason it is not free: a check
+added mid-series never ran against the PRs that landed before it.
 
 **`reset: true` (CLI: `convoy run --fresh`) starts over, and is DESTRUCTIVE.** Before
 staging, convoy discards uncommitted changes to tracked files, deletes untracked files and
