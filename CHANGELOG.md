@@ -13,6 +13,20 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- The skill's trigger description now states the **pre-condition** — a plan, spec or PR
+  manifest that already names two or more PR-sized changes — instead of leading with
+  convoy's own artifacts. The old wording opened on the MCP tool names and its first
+  trigger was "when running a convoy series.toml", a condition that only becomes true after
+  someone has already chosen convoy: the trigger fired after the decision it exists to
+  inform. Both clauses are displaced, not appended to. A documented program recorded zero
+  convoy invocations across two sessions doing governed multi-PR work; a post-hoc telemetry
+  pass over the same window recorded the skill entered 3 times against 271 engine
+  invocations, while more than half the feedback corpus cites the skill document as what a
+  series was authored from — the content is load-bearing and the trigger was not reaching
+  it.
+
 ### Fixed
 
 - The pre-flight advisory naming the test files a blocking gate will not run now skips the
