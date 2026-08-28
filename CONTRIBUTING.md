@@ -14,14 +14,23 @@ uv sync
 
 ## Quality gates
 
-All four must pass locally before opening a PR; CI runs the same set:
+Every one of these must pass locally before opening a PR. This is the same set CI
+runs, **in this order**:
 
 ```
+uv lock --check
+uv sync
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run ty check src
 uv run pytest
 ```
+
+The order is load-bearing at the top: `uv lock --check` reports a stale lockfile,
+while `uv sync` — and every later `uv run` — silently repairs one, so running it
+first is the only arrangement in which it can ever say no. Running the checks
+without it is how a release shipped a lockfile pinning a version three releases
+old.
 
 The unit suite spends no money and spawns no real agent — if it suddenly takes
 much longer than ~30 s, a real spawn has leaked past the `tests/conftest.py`

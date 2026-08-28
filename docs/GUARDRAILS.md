@@ -98,14 +98,17 @@ protocol addition mis-handles instead of failing loud.
 ### A shipped document does not contradict the shipped engine
 
 The names the code publishes — the MCP tools, the CLI verbs, the `convoy_run`
-arguments — appear in the documents that promise to list them, and a stated tool
-count matches the real one.
+arguments — appear in the documents that promise to list them, a stated tool count
+matches the real one, and a document listing "the gate" lists every command CI runs,
+in CI's order.
 
 *Why:* the manual said "there is no resume" for three releases after `--resume`
 shipped and was documented 300 lines above it; `convoy_status` was registered but
 unadvertised in `marketplace.json` for three releases; `convoy clean` appeared zero
 times in the manual, which cost two operators a hand-deleted branch the engine
-already deletes. The class recurred three times and both earlier fixes were prose.
+already deletes; and `CONTRIBUTING.md` said "CI runs the same set" over four of the
+six steps CI runs, omitting the one whose position that same file calls load-bearing.
+The class recurred four times and both early fixes were prose.
 
 *Enforced by:* `tests/test_doc_claims.py` — deliberately narrow, pinning only the
 claims that have actually drifted, and carrying its own non-vacuity guard. The
