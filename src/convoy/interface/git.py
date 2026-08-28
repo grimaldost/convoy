@@ -25,16 +25,19 @@ class Git:
         """Operate on the git working tree rooted at ``repo``."""
         self._repo = repo
 
-    def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
+    def _run(self, *args: str, stdin_text: str | None = None) -> subprocess.CompletedProcess[str]:
         """Run ``git <args>`` in the repo, returning the completed process.
 
         Captures stdout/stderr as text and does not raise on nonzero exit — callers decide
-        what a failure means.
+        what a failure means. ``stdin_text`` feeds a command that reads operands from
+        standard input rather than argv, which is how a path list longer than the platform
+        command line is passed; without it stdin stays closed.
         """
         return subprocess.run(
             ['git', *GIT_HERMETIC_FLAGS, *args],
             cwd=self._repo,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if stdin_text is None else None,
+            input=stdin_text,
             capture_output=True,
             text=True,
             encoding=TEXT_ENCODING,
@@ -53,13 +56,19 @@ class Git:
         exists to undo. An argument carrying whitespace is quoted, so a commit message
         cannot be mistaken for further operands.
 
-        When git said nothing on stderr the exit code stands in. That path is real, not
-        defensive: ``git commit`` reports "nothing to commit" on *stdout* and leaves
-        stderr empty, which used to raise a `GitError` whose message was the empty string.
+        The detail is read from stderr, then stdout, then the exit code — in that order and
+        not stopping at the first stream. ``git commit`` reports "nothing to commit" on
+        *stdout* with stderr empty, and reading stderr alone turned that into a bare
+        ``exited 1``: in production an engine-side commit failed exactly that way, and
+        nothing in the message distinguished an empty commit from a hook rejection or an
+        index lock, so it was diagnosed by inspecting the workspace by hand. The same
+        stream-precedence mistake the gate's failure detail was corrected for, in the
+        engine's own subprocess calls. The exit code still stands in when git genuinely said
+        nothing anywhere, which a silent ``rev-parse --verify --quiet`` really does.
         """
         command = ' '.join(shlex.quote(arg) for arg in ('git', *args))
-        detail = result.stderr.strip() or f'exited {result.returncode}'
-        return GitError(f'{command}: {detail}')
+        said = result.stderr.strip() or result.stdout.strip()
+        return GitError(f'{command}: {said or f"exited {result.returncode}"}')
 
     def _run_checked(self, *args: str) -> subprocess.CompletedProcess[str]:
         """Run ``git <args>``; raise :class:`GitError` naming it on nonzero exit."""
@@ -185,3 +194,28 @@ class Git:
         """
         self._run_checked('checkout', into)
         self._run_checked('merge', '--no-ff', '--no-edit', source)
+
+    def ignored(self, paths: Sequence[str]) -> frozenset[str]:
+        """Which of ``paths`` this repository's own ignore rules exclude.
+
+        Asks ``git check-ignore``, so the answer is the repo's rules — ``.gitignore``, the
+        global excludes file, ``.git/info/exclude`` — rather than convoy's guess at what a
+        borrowed directory is called. A tracked file is never reported, which is the right
+        reading: the repo decided to keep it.
+
+        Empty on any failure, so a caller can treat the answer as advice. There are three
+        ordinary ways to fail — no ``git`` on PATH, a workspace that is not a repository,
+        and exit 1 meaning "none of them are ignored" — and none of them should be louder
+        than the question. Paths are given repo-relative and NUL-delimited on stdin, which
+        both survives a path containing whitespace and keeps a large tree off the command
+        line.
+        """
+        if not paths:
+            return frozenset()
+        try:
+            result = self._run('check-ignore', '--stdin', '-z', stdin_text='\0'.join(paths))
+        except OSError:
+            return frozenset()
+        if result.returncode != 0:
+            return frozenset()
+        return frozenset(entry for entry in result.stdout.split('\0') if entry)

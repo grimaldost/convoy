@@ -13,7 +13,19 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
-### Documentation
+### Changed
+
+- The skill's trigger description now states the **pre-condition** — a plan, spec or PR
+  manifest that already names two or more PR-sized changes — instead of leading with
+  convoy's own artifacts. The old wording opened on the MCP tool names and its first
+  trigger was "when running a convoy series.toml", a condition that only becomes true after
+  someone has already chosen convoy: the trigger fired after the decision it exists to
+  inform. Both clauses are displaced, not appended to. A documented program recorded zero
+  convoy invocations across two sessions doing governed multi-PR work; a post-hoc telemetry
+  pass over the same window recorded the skill entered 3 times against 271 engine
+  invocations, while more than half the feedback corpus cites the skill document as what a
+  series was authored from — the content is load-bearing and the trigger was not reaching
+  it.
 
 - The manual now describes two engine behaviours it was silent about, both of which cost an
   operator in production. **Mid-series gate repair**: `resume` re-reads the series file, so
@@ -24,6 +36,37 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   moves `HEAD` between branches for the run's duration, so an outside commit lands on
   whichever branch is checked out at that instant. Both are engine behaviour the manual is
   supposed to carry, not new advice.
+
+### Fixed
+
+- The pre-flight advisory naming the test files a blocking gate will not run now skips the
+  files the workspace's **own** ignore rules exclude, and names the directories holding
+  them once the list is too long to read as a list. Two production workspaces had turned
+  the advisory into noise the same way — a virtualenv under a name no hardcoded list
+  anticipated (526 site-packages test files), and a build directory of archived sibling
+  repositories (474) — which trains an operator to skip advisories, including the ones that
+  are right. `git check-ignore` answers with the repository's rules rather than convoy's
+  guess at what a borrowed directory is called; a workspace that is not a repository, or a
+  machine with no `git`, is unchanged. Advisory paths are now POSIX-separated on every
+  platform.
+
+- `CONTRIBUTING.md` and the PR template now list **every** command CI runs, in CI's
+  order. Both listed four of the six and CONTRIBUTING called it "the same set CI runs";
+  the omitted `uv lock --check` is the step whose position the same file elsewhere calls
+  load-bearing, and skipping it is how `uv.lock` recorded `convoy-engine 0.1.1` through
+  the whole of `0.2.0`. `tests/test_doc_claims.py` now reads the workflow and fails on a
+  documented gate that is missing a step or lists them out of order, so the fourth
+  recurrence of this class is the last one prose has to catch.
+
+- A failing engine-side `git` command now reports what git said on **either** stream. The
+  detail was read from stderr alone, so `git commit` with nothing staged — which says why on
+  stdout and leaves stderr empty — produced a bare `git commit -m '…': exited 1`. In
+  production an engine-side commit failed exactly that way and the message did not
+  distinguish an empty commit from a hook rejection or an index lock, so it was diagnosed by
+  inspecting the workspace by hand. Stderr, then stdout, then the exit code, which still
+  stands in when git genuinely said nothing anywhere. This is the same stream-precedence
+  mistake the gate's failure detail was corrected for in 0.8.0, in the engine's own
+  subprocess calls.
 
 ## [0.9.0] - 2026-08-12
 
