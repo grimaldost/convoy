@@ -215,3 +215,48 @@ def test_delete_branch_failure_also_names_its_command(tmp_path: Path) -> None:
         Git(repo).delete_branch(_BASE)  # cannot delete the checked-out branch
 
     assert str(excinfo.value).startswith(f'git branch -D {_BASE}: ')
+
+
+def test_ignored_reports_the_paths_the_repo_excludes(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    (repo / '.gitignore').write_text('.venv-core/\n', encoding='utf-8')
+    (repo / '.venv-core').mkdir()
+    (repo / '.venv-core' / 'test_dep.py').write_text('x', encoding='utf-8')
+    (repo / 'tests').mkdir()
+    (repo / 'tests' / 'test_real.py').write_text('x', encoding='utf-8')
+
+    ignored = Git(repo).ignored(['.venv-core/test_dep.py', 'tests/test_real.py'])
+
+    assert ignored == frozenset({'.venv-core/test_dep.py'})
+
+
+def test_ignored_is_empty_when_nothing_is_excluded(tmp_path: Path) -> None:
+    """``check-ignore`` exits 1 when no path matches, which is an answer, not a failure."""
+    repo = _init_repo(tmp_path)
+    (repo / 'tests').mkdir()
+    (repo / 'tests' / 'test_real.py').write_text('x', encoding='utf-8')
+
+    assert Git(repo).ignored(['tests/test_real.py']) == frozenset()
+
+
+def test_ignored_is_empty_outside_a_repository(tmp_path: Path) -> None:
+    """A workspace git cannot answer for is advice withheld, never an error raised."""
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    (plain / 'test_a.py').write_text('x', encoding='utf-8')
+
+    assert Git(plain).ignored(['test_a.py']) == frozenset()
+
+
+def test_ignored_asks_nothing_when_given_nothing(tmp_path: Path) -> None:
+    assert Git(_init_repo(tmp_path)).ignored([]) == frozenset()
+
+
+def test_ignored_survives_a_path_containing_whitespace(tmp_path: Path) -> None:
+    """Operands ride NUL-delimited on stdin, so a space in a path is not a separator."""
+    repo = _init_repo(tmp_path)
+    (repo / '.gitignore').write_text('build out/\n', encoding='utf-8')
+    (repo / 'build out').mkdir()
+    (repo / 'build out' / 'test_x.py').write_text('x', encoding='utf-8')
+
+    assert Git(repo).ignored(['build out/test_x.py']) == frozenset({'build out/test_x.py'})
