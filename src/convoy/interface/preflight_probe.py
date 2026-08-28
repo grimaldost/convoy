@@ -12,7 +12,7 @@ decide runnability, plus the non-blocking advisories that do not.
 """
 
 import hashlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from convoy.core.preflight import (
     Advisory,
@@ -24,6 +24,7 @@ from convoy.core.preflight import (
 )
 from convoy.core.spec import Series
 from convoy.interface.fs_probe import isolation_result
+from convoy.interface.git import Git
 
 
 def check_prompts(series: Series) -> list[Problem]:
@@ -100,7 +101,10 @@ _TEST_FILE_GLOBS = (
 
 # Directory names whose contents belong to somebody else — vendored packages, virtualenvs,
 # build output, caches. A test file in there is not the repository's test surface, and
-# walking them is slow enough to matter on a large tree.
+# walking them is slow enough to matter on a large tree. This list is the fast pre-filter
+# that needs no repository; the authoritative answer is the workspace's own ignore rules,
+# applied afterwards in :func:`_test_files`, which is what catches the borrowed directory
+# nobody thought to name here.
 _UNSEARCHED_DIRS = frozenset(
     {
         '.git',
@@ -120,8 +124,10 @@ _UNSEARCHED_DIRS = frozenset(
     }
 )
 
-# How many uncovered files to name before falling back to the count alone.
+# How many uncovered files to name individually before naming their directories instead.
 _NAMED_EXAMPLES = 3
+# How many directories to name when the file list is too long to be read as a list.
+_NAMED_DIRECTORIES = 3
 
 
 def _declared_paths(command: str, workspace: Path) -> tuple[list[Path], bool]:
@@ -152,7 +158,21 @@ def _declared_paths(command: str, workspace: Path) -> tuple[list[Path], bool]:
 
 
 def _test_files(workspace: Path) -> list[Path]:
-    """Every test file in ``workspace``, by the runners' own discovery globs."""
+    """Every test file in ``workspace``, by the runners' own discovery globs.
+
+    Then minus the ones the workspace's own ignore rules exclude. Two production workspaces
+    turned this advisory into noise the same way: one held a virtualenv under a name no
+    hardcoded list anticipated (526 site-packages test files), the other a build directory
+    of archived sibling repositories (474). Both are ignored by the repository that holds
+    them, so the repository had already answered the question — the advisory just never
+    asked. Asking keeps this a comparison against somebody else's rule rather than a
+    lengthening list of directory names convoy guesses at, which is the same standard
+    ``_TEST_FILE_GLOBS`` is held to.
+
+    A workspace that is not a repository, or a machine with no ``git``, answers nothing and
+    the glob walk stands alone — the pre-``git`` behaviour, which was never wrong, only
+    incomplete.
+    """
     found: list[Path] = []
     for glob in _TEST_FILE_GLOBS:
         for path in workspace.rglob(glob):
@@ -160,7 +180,39 @@ def _test_files(workspace: Path) -> list[Path]:
                 continue
             if path.is_file():
                 found.append(path.resolve())
-    return sorted(set(found))
+    candidates = sorted(set(found))
+    root = workspace.resolve()
+    relative = [candidate.relative_to(root).as_posix() for candidate in candidates]
+    ignored = Git(root).ignored(relative)
+    return [
+        candidate
+        for candidate, name in zip(candidates, relative, strict=True)
+        if name not in ignored
+    ]
+
+
+def _uncovered_summary(uncovered: list[Path], workspace: Path) -> str:
+    """How to name ``uncovered`` in the advisory: the files, or the directories holding them.
+
+    A handful of file names is the most useful thing to say, and what the operator can act
+    on directly. Past that the list stops being a list — "a, b, c and 471 more" names three
+    arbitrary files and hides where the other 471 are, which is the shape that trained an
+    operator to skip the advisory. The directories carry that information in the same space.
+    """
+    root = workspace.resolve()
+    names = [path.relative_to(root).as_posix() for path in uncovered]
+    if len(names) <= _NAMED_EXAMPLES:
+        return ', '.join(names)
+    counts: dict[str, int] = {}
+    for name in names:
+        parent = str(PurePosixPath(name).parent)
+        counts[parent] = counts.get(parent, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    shown = ', '.join(f'{directory}/ ({count})' for directory, count in ranked[:_NAMED_DIRECTORIES])
+    remaining = len(ranked) - _NAMED_DIRECTORIES
+    if remaining <= 0:
+        return shown
+    return f'{shown} and {remaining} more director{"y" if remaining == 1 else "ies"}'
 
 
 def gate_scope(series: Series, workspace: Path) -> list[Advisory]:
@@ -199,20 +251,15 @@ def gate_scope(series: Series, workspace: Path) -> list[Advisory]:
     ]
     if not uncovered:
         return []
-    shown = ', '.join(
-        str(path.relative_to(workspace.resolve())) for path in uncovered[:_NAMED_EXAMPLES]
-    )
-    more = (
-        f' and {len(uncovered) - _NAMED_EXAMPLES} more' if len(uncovered) > _NAMED_EXAMPLES else ''
-    )
     return [
         Advisory(
             kind='gate',
             where='[[checks]]',
             message=(
                 f'the blocking gate does not run {len(uncovered)} test file(s) present in the '
-                f'workspace ({shown}{more}), so a green gate is a narrower claim than the '
-                'tree warrants; widen a check, or accept it deliberately'
+                f'workspace ({_uncovered_summary(uncovered, workspace)}), so a green gate is '
+                'a narrower claim than the tree warrants; widen a check, or accept it '
+                'deliberately'
             ),
         )
     ]
