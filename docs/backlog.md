@@ -38,6 +38,18 @@ arm its own run rejected. A row whose numbers came from outside this repository 
 kind of row the "written to stand alone" bar does not protect, so the correction is recorded
 in place rather than substituted.
 
+**A delta pass ran on 2026-08-28**, over the six reports the 2026-08-11 triage does not
+list. Small corpus, so it is a narrow pass justified by one routed item rather than by
+volume: a requirements-conformance finding routed in from a cross-project triage, reinforced
+by a corrective wave in this corpus. It mints CONV-B38..CONV-B45, folds three documentation
+findings into CONV-B08, and re-statuses five rows the field has since confirmed or
+falsified. Two inputs beyond the reports informed it: the **first production evidence from
+outside the campaign estate** (five repositories, seven series, 15 PR spawns in one night,
+$157 metered), and a periodic post-hoc telemetry pass over agent transcripts for
+2026-06-26..08-25, whose figures are cited below as dispatch evidence and nowhere as an
+effect size — it has no control arm and counts only what an agent invoked, so its engine
+counts are a floor.
+
 ## Reading this backlog
 
 - **ID.** `CONV-Bnn` is the stable build ID used from this pass forward. `T<cluster><letter>`
@@ -52,6 +64,14 @@ in place rather than substituted.
 - **Consumer-affecting** rows must carry the CHANGELOG marker convention from
   [docs/design/02-formats.md](design/02-formats.md) when built.
 - Evidence is cited by date and neutral descriptor rather than by report filename.
+- **An imported measurement carries its provenance or it does not license anything.** A
+  number that came from outside this repository is stated with the study that produced it,
+  which arm of that study, `n`, and the interval's confidence level — and is re-read against
+  that source before a row leans on it. This is the one bar the "written to stand alone"
+  rule cannot cover, and CONV-B37 is why it is written down: a one-line summary imported a
+  figure belonging to an arm its own run had rejected, and travelled unchallenged through
+  every later reading because nothing downstream could check it. A summary line is the part
+  that travels, so it is the part that has to be checkable.
 - A `[cross-review]` note may cite a row ID that is not a `CONV-B` one. Those are foreign
   row IDs, carried only as join keys so the two ledgers can be reconciled by whoever holds
   both. They are citations, not dependencies: convoy stays self-contained by carrying its
@@ -75,6 +95,18 @@ anything, both are cheap, and each names the dependency that holds it.
 
 **Later** holds work that is either gated on a measurement, held at `watch` awaiting a
 second report, or a positioning decision rather than a build.
+
+**What the 2026-08-28 delta added, and where.** Every CONV-B01..B07 row is shipped, so the
+open head of **Now** is the three rows that pass minted there: CONV-B38 first — the largest
+measured cost in this corpus is a design deviation that executed to completion with every
+gate green, and no convoy mechanism was positioned to see it — then CONV-B40 (an unreachable
+check that burned two fix spawns, and that an operator now probes by hand before authoring)
+and CONV-B41 (an expired on-disk credential that killed two runs outright and moved a whole
+series to manual execution). **Next** takes the recovery and observability rows the same
+nights produced. Four rows were built in the pass itself and are recorded under Shipped. The
+pass appended nothing to `SKILL.md` as advice: the documentation findings that would have
+are folded into CONV-B08, which exists to shorten that file, and the two items that shipped
+there instead are descriptions of engine behaviour the manual owes a reader.
 
 **Retire / fold** is the review's sentence on surfaces that no longer earn their place;
 each names its replacement, and the two that are conditional name the measurement that
@@ -143,6 +175,13 @@ workspace both still read `running`. (b) `convoy clean` appends a terminal `run_
 line for the orphaned run when it clears a stale lock; reconstruction reads it as
 `outcome: abandoned` with the infrastructure exit code. (c) `spawn_start` is written before
 every spawn, and the envelope carries a per-PR `in_flight`.
+
+**Confirmed in production (2026-08-28 delta).** Two machine-sleep events killed drivers in
+one night and `dead` was claimed correctly both times, on positive evidence rather than a
+timeout guess; the operator's report calls it exactly what was asked for. Two residuals
+opened by the ship itself are now CONV-B42: the `dead` message names the destructive remedy
+first, and the state's other half — a per-PR `in_flight` that never advances during a
+94-minute spawn — is CONV-B43(c).
 
 **Effort** M · **Source** [triage] + [review] · **Rows** T29a, T29b, T29c
 
@@ -243,6 +282,15 @@ names the test files no blocking check's declared paths cover, silent whenever t
 would be a guess (a check naming no path runs the whole tree; a check naming only out-of-tree
 paths is an oracle and is passed over). T31a and T31c still ride CONV-B08.
 
+**Confirmed in production, and repaired (2026-08-28 delta).** The advisory named a check as
+too narrow before a series ran; the check was widened on that advice and later caught a real
+breakage — the clearest instance in the corpus of a pre-flight advisory paying for itself.
+It was also, in two other workspaces, unreadable: 526 and 474 uncovered test files, all of
+them inside a virtualenv or a build directory the workspace's own rules ignore. Repaired in
+`[Unreleased]` — the scan now consults `git check-ignore` and names directories rather than
+three arbitrary files. An advisory nobody reads is worth less than one that does not exist,
+because it also discredits the ones that are right. T31a and T31c still ride CONV-B08.
+
 **Effort** M · **Source** [triage] + [review] · **Rows** T31b (T31a, T31c ride in CONV-B08)
 
 ### CONV-B06 — `effort` is an unvalidated free-form string the CLI silently ignores when it is wrong, and convoy records it nowhere.
@@ -308,6 +356,134 @@ which rejects an unknown level at load. Independent of CONV-B35 as the row asks.
 
 ---
 
+### CONV-B38 — A series pins the spec it came from and can say nothing about whether that spec was ever certified, so a deviated design executes to completion with every gate green.
+
+**Cause / evidence.** The costliest failure in this corpus is not a defect convoy has: a
+programme's spec said its sources would be reached through a configuration layer, that
+mechanism was silently replaced by bespoke readers, and the substitution then propagated
+across later waves *because* they were disciplined enough to mirror the proven sibling. Four
+blind pre-mortems audited that spec — about 70 real findings between them — and none caught
+it, because they audited the spec against the code and the data contracts, and the owner's
+order existed in no artifact a blind reviewer could open. The corrective wave that repaired
+it is the single-PR series recorded in this corpus: $1.83, two fix spawns spent against an
+unreachable check, finished by hand. CONV-B36 shipped the anchor this row needs —
+`[series].spec_path` + `spec_sha256`, resolved and hashed at pre-flight before the first
+spawn is purchased — and it is already load-bearing in production, having answered "which
+revision produced this run" for a spec that moved between authoring and launch. What it
+cannot say is whether the thing it pinned was ever *ready*. [triage: 2026-08-24 corrective
+wave; routed in from a cross-project pass with its analysis already reinforced]
+
+**Change.** A pre-series readiness gate, and the load-bearing half is **who owns the
+definition**. convoy must not learn a readiness grammar — not a certification block, not a
+requirements ledger, not an order-id format. Each of those belongs to whichever planning
+discipline produced the spec, is under active development there, and would diverge from a
+copy held here within a release. Instead `[series]` accepts an optional readiness command
+that convoy runs **once, before the first spawn, against the pinned spec**, treating a
+nonzero exit as a blocking pre-flight `Problem` of a new `kind='readiness'`. convoy owns
+when it runs and that it blocks; the operator's own gate owns what "ready" means. That is
+reuse rather than duplication, it keeps this repository self-contained (the command is data
+in the operator's series file, never a name in this tree), and it generalizes past any one
+method: a schema validator, a sign-off script and a spec linter are the same shape.
+
+**Opt-in and silent when undeclared**, exactly as the spec pin is — every series authored
+before the key existed keeps running unchanged, which is what keeps this from blocking flows
+that work today. Needs an ADR: executing an operator-supplied command at pre-flight is a new
+class of thing for the engine (working directory, environment, timeout, and its relationship
+to `[[checks]]`, which gate produced work in a worktree and cannot serve this).
+**(consumer-affecting: a new series.toml key, a new `problems[].kind`)**
+
+**Effort** L · **Source** [triage] + routed · **Rows** T40a
+
+### CONV-B39 — The gate answers "are the checks green", never "did this task do what it was asked", so a task can satisfy every check and still not satisfy its requirement.
+
+**Cause / evidence.** The second half of the same routed finding. convoy's gate is
+deterministic by charter (ADR-0002) and reads exit codes; the acceptance criteria a task was
+written against, and the orders the series is meant to serve, are read by nobody at gate
+time. In the deviation above, every check would have passed on the deviated design — and the
+report that routed this says so plainly: a Definition-of-Done gate inherits garbage-in and
+sees only what the requirements artifact hands it. That is why this row is second and not
+first: **the artifact has to exist and be enforced upstream before a conformance answer
+means anything.** [triage: 2026-08-24 corrective wave; routed]
+
+**Change.** Two layers on the existing per-PR gate, both additive to the result envelope and
+neither displacing the deterministic verdict, which stays the sole merge arbiter. (a) The
+task's own acceptance criteria evaluated against what the task produced. (b) A conformance
+answer per declared requirement id — advanced, violated, or does not touch — folded into a
+task × requirement matrix on the series result. Held behind CONV-B38: without the upstream
+gate the matrix reports over an artifact nothing guarantees exists, which is the shape that
+produces confident green on a wrong design. **(consumer-affecting: new result-envelope
+fields)**
+
+**Effort** L · **Source** [triage] + routed · **Gate** CONV-B38 · **Rows** T40b
+
+### CONV-B40 — The engine runs a check without ever establishing what that check observes, so it cannot tell a red it caused from a red it inherited, or a green that means something from a green that means nothing.
+
+**Cause / evidence.** One cause, three measured faces, all in this corpus. (a) **Red the
+work cannot reach.** A pytest check inherited its repository's `--cov … fail_under=80`
+addopts; a subset run measures the whole tree, exits 1 with every test passing, and the
+series halted `blocked` after two fix spawns ($1.22) changed nothing meaningful twice. The
+failing text even said "Required test coverage of 80% not reached". On the *base* branch
+that check already exits 1 — the gate measured something no PR could influence, and one
+execution against the unmodified base would have proved it before a cent was spent. The next
+series in the corpus opens by recording that the operator probed all three checks green on
+base **by hand** before authoring, which is the engine's job being done by a person. (b)
+**Green that observes nothing.** A gate-sufficiency audit found a docs-only PR gated by a
+code-only suite — structurally incapable of going red for that diff — integrating with the
+same green as a tested PR. The existing ungated-PR advisory does not fire, because *some*
+blocking check exists. (c) **A check that repairs what it validates.** Audited as a BLOCKER:
+drift gates regenerated their corpus in place after validating it, so a red on attempt 0
+self-healed by attempt 1 — `max_fix_attempts` re-runs the gate, and the re-run validates
+what the first run rewrote, whether or not the fix spawn committed anything. Gate authoring
+is the root cause and belongs upstream; the engine is the amplifier, and the only party
+positioned to notice. [triage: 2026-08-24 corrective wave; 2026-08-24 wave-c, the operator
+applying the fix by hand; 2026-08-25 gate audit, two findings]
+
+**Change.** Three mechanisms, and (a) is the one with money behind it. (a) Execute each
+blocking check once against the unmodified base at pre-flight. Red on base is a `usage`
+problem — "this gate cannot pass in this repository" — not a spawn trigger; green on base
+**and** untouched by the PR is the symmetric hazard and reads as an advisory. The cost is
+real and belongs in the ADR: pre-flight stops being free, which is the property `dry_run` is
+valued for, so this likely wants its own opt-in rather than riding `dry_run`. (b) Refine the
+ungated-PR advisory: warn when a PR's changed paths plausibly intersect no blocking check's
+observed surface, docs-only-diff against code-only-checks being the canonical case. (c)
+Record whether the worktree is dirty after a check ran — an advisory at minimum, a
+`gate_complete` field ideally. A dirty tree after a read-only claim is exactly the
+self-healing-oracle signature, and the engine already refuses in-tree `outputs` on the same
+instinct. **(consumer-affecting: a new `problems[].kind`, and a `gate_complete` field for
+(c))**
+
+**Effort** M for (a), with an ADR · S for (b) and (c) · **Source** [triage] · **Rows** T41a, T41b, T41c
+
+### CONV-B41 — An expired on-disk credential kills the seat probe while the operator's live session goes on working, so convoy is unavailable at exactly the moment an operator reaches for it.
+
+**Cause / evidence.** Two reports, three dead launches, and one hypothesis eliminated
+between them. The seat probe fails with "OAuth session expired and could not be refreshed"
+against a credential the interactive session beside it is refreshing continuously — the live
+session rotates the refresh token, and the point-in-time copy convoy took cannot. The first
+report saw it on two `resume` launches and reasonably suspected `config_isolation`'s
+credential copy. The second killed that hypothesis: a bare probe under the **operator's own
+config** fails identically, so `config_isolation = false` is not a mitigation, and the kill
+hit a *first* run of a new series rather than a resumption — the exposed surface is any
+long-lived interactive session, not a rare recovery path. Spend cost is approximately zero,
+which is the engine failing closed correctly. The cost is availability: both series
+completed by hand under the same gates, so convoy's ledger records no integration for
+content that integrated — the second occasion in this corpus where a run's ledger and the
+repository disagree about what happened.
+
+Recorded as an availability defect only. A session that could not start convoy is not
+evidence about whether convoy would have been chosen, and this pass keeps the two apart
+deliberately. [triage: 2026-08-24 corrective wave #2, 2026-08-24 wave-c #1]
+
+**Change.** Validate — or refresh — the operator credential *before* copying it, and when it
+cannot be refreshed, fail with the sentence that ends the investigation: the on-disk
+credential is expired, an interactive session alive beside it is not evidence of health, and
+re-authenticating interactively then re-launching is the fix. Run the probe at `dry_run` and
+at detach pre-flight too, so an operator learns the seat is dead before designing a series
+around it rather than after. The fail-closed behaviour is correct and stays; what changes is
+when it speaks and what it says.
+
+**Effort** M · **Source** [triage] · **Rows** T42a
+
 ## Next
 
 ### CONV-B08 — Authoring doctrine gets a home, and the skill gets shorter.
@@ -345,8 +521,22 @@ reasoning that a document only acquires a cap while someone still remembers what
 for. State the budget in the file's own header, and require the next promotion into it to
 name what it displaces. [cross-review]
 
+**Delta pass, 2026-08-28.** Three more findings arrived that would each have been a
+paragraph appended to `SKILL.md`, and are folded here instead — which is what this row is
+for, and the reason it is worth building before the next one lands. (1) `[[checks]].phases`
+displaces failure attribution silently: a defect introduced in an unscoped phase first goes
+red at the next scoped one, attributed to the wrong PR and billed to its fix budget. (2)
+Gate-scope authoring doctrine from a blind gate-sufficiency audit of seven series — the
+vacuous shapes it catalogued live in check *content*, which the engine does not read, so the
+only place they can be addressed here is authoring guidance. (3) Series-sizing calibration
+from the first out-of-estate production night: an in-to-out token ratio near 178:1, cost
+tracking cached input while wall-clock tracks output generation. Two adjacent findings from
+the same reports did **not** come here: describing mid-series gate repair and the
+driven-workspace hazard is documenting engine behaviour the manual owes a reader, not advice,
+and both shipped in `[Unreleased]`.
+
 **Effort** L · **Source** [triage] + [review] + [cross-review] · **Row** T38a (absorbs
-T31a, T31c)
+T31a, T31c, and three 2026-08-28 documentation findings)
 
 ### CONV-B09 — The release discipline was mechanized without re-reading its reasoning, and the stated rationale is false.
 
@@ -400,7 +590,7 @@ which way it goes rather than assuming either. [cross-review]
 
 **Effort** M · **Source** [review] + [research] + [cross-review]
 
-### CONV-B11 — A scaffolded series is non-portable by construction and leads with the lane that has never fired.
+### CONV-B11 — A scaffolded series is non-portable by construction and leads with the lane that has never gone red.
 
 **Cause / evidence.** `convoy init` writes machine-absolute `[paths]`, so a series
 directory that travels by copy — the expected transport, since that directory is untracked
@@ -420,6 +610,15 @@ starter model from the one tier table (see CONV-B14). T33a is the constructive d
 held path detectors in CONV-B24 — it removes the need for the machine-absolute path rather
 than detecting one, with no regex, stat, platform branch or false-positive budget — and
 would retire all three of them. **(consumer-affecting if the key becomes optional)**
+
+**Correction (2026-08-28 delta).** The heading read "the lane that has never fired". It has
+now fired, twice over: a second series declared `independent = true`, its out-of-tree oracle
+ran end to end across every gate attempt, and its isolation contract was satisfiable from the
+skill document alone on a machine that had never run convoy. What the lane has never done is
+go **red** — `independent_red` is still 0 everywhere it has run. The precise claim is the
+weaker one, and it is the one CONV-B32 and CONV-B33 actually rest on; the imprecise version
+would have been read as evidence the mechanism does not work, which is not what the field
+says.
 
 **Effort** M · **Source** [triage] + [review] · **Row** T33a
 
@@ -579,7 +778,13 @@ reintroduce the machine-absolute problem CONV-B11 removes. `core/spec.py`,
 `core/preflight.py`, `core/telemetry.py`, `interface/drivers/headless.py`.
 **(consumer-affecting: a new series.toml key and new `run_start` fields)**
 
-**Status.** **Shipped** in 0.8.0, both halves. `[series]` takes optional
+**Status.** **Shipped** in 0.8.0, confirmed load-bearing in production (2026-08-28 delta):
+two series in one night carried the pin, the spec moved between authoring and launch on one
+of them, and the pin is what made "which revision produced this run" answerable without
+archaeology. **CONV-B38 builds directly on it** — the pin resolves and hashes the spec before
+the first spawn is purchased, which is exactly the moment a readiness gate has to run, so
+that row adds a question at a seam that already exists rather than a new one. Both halves.
+`[series]` takes optional
 `spec_path` + `spec_sha256` (set together, path rejected if absolute, hash validated as a
 SHA-256 digest at load); a blocking `kind='spec_pin'` pre-flight check resolves and compares
 before any spawn; and the matched pin is recorded on `run_start`. Deliberately **not** added
@@ -653,6 +858,86 @@ the row's whole argument for how strongly to recommend the field, which is why t
 correction is recorded rather than quietly overwritten.
 
 **Effort** S–M on top of CONV-B12 · **Source** [cross-review] · **Gate** CONV-B12
+
+### CONV-B42 — The remedy a dead run advertises is heavier than the situation needs, and the branch that blocks a restart still has to be deleted by hand.
+
+**Cause / evidence.** CONV-B02 shipped and works — `dead` was claimed correctly twice in one
+night, on the positive evidence of a lock whose owner is gone, and an operator called it
+exactly what was asked for. What shipped with it is a `message` that says to run `convoy
+clean`, and `clean` discards uncommitted changes and deletes branches. After a spawn killed
+mid-implementation that is precisely the work an operator may still want to inspect. What
+was actually needed both times was the *safe half*: verify the owner pid is gone, remove
+`.git/convoy-run.lock`, resume with the partial work intact — done by hand, twice.
+
+The second half is the same night's other manual step: a PR branch sitting at exactly the
+integration tip, zero unique commits, blocking a clean restart. Four instances across the
+two 2026-08-25 reports, on top of the two the campaign already recorded — and the check that
+would clear them safely is the one an earlier finding already proposed for `resume`
+pre-flight. Both are cheap, both are decidable from positive evidence, and both are
+currently a procedure an operator has to know. [triage: 2026-08-25 seven-series #4/#5,
+2026-08-25 gate audit #5; extends the lock lineage and CONV-B02 post-ship]
+
+**Change.** Split the remedy. A lock release that is safe by construction — confirm the
+owner process is gone, remove the lock, log that it did — named *first* in the `dead`
+message, with `clean` kept for the case where a wipe is what the operator wants. Then have
+`resume` pre-flight compare each PR branch against the integration tip and self-clear the
+zero-unique-commit case with a logged note, which is the state that already cannot lose
+work. **(consumer-affecting: a new recovery verb or flag)**
+
+**Effort** M · **Source** [triage] · **Rows** T43a, T43b
+
+### CONV-B43 — A run can be over while `convoy_status` still says `running`, and the result file exists from launch, so neither the state nor the file answers "is it finished?".
+
+**Cause / evidence.** Two shapes of the same gap, from the first multi-series night driven
+entirely through detach and polling. (a) A spawn died, the engine's own `git commit` failed,
+and `result_path` received a terminal envelope — `{"ok": false, "outcome": "usage",
+"error_kind": "git"}` — while `convoy_status` went on answering `running` with `in_flight:
+"implementation"`, because no `run_complete` line ever reached the ledger. The documented
+fallback covers a run that died *before* writing to the ledger; this one wrote, then failed
+terminally without closing. A poller that trusts `state` waits forever on a run that is
+already over, and it was caught only because a file watcher noticed the result JSON gaining
+bytes. (b) That result file is created empty at launch, so existence is not completion — a
+watcher testing for the file fired instantly at launch. A third, smaller face: `economy`
+advances only when a spawn completes, so a 94-minute spawn reports an unchanged cost for 94
+minutes and status cannot distinguish progress from a hang. [triage: 2026-08-25
+seven-series #1, #2, #6]
+
+**Change.** (a) Have the status fold read `result_path` whenever the ledger lacks a terminal
+line **and** the file is non-empty, not only in the never-wrote-to-the-ledger case, and
+report `finished` with that envelope. (b) Either create the result file at terminal time, or
+write a `{"state": "running", "run_id": …}` stub at launch so a reader can branch on content
+rather than existence — and document whichever. (c) Add `in_flight_since` to the `prs[]`
+entry so monitoring does not require tailing a log.
+
+**This touches the MCP surface, so the burden of proof sits here.** That surface recorded
+146 calls with zero errors in the telemetry window and the detach-plus-poll shape is why;
+nothing in this row changes it. (a) and (c) make the same poll answer correctly and add a
+field to an envelope callers already read. (b) is different: it changes what a documented
+file contains, and a consumer parser is known to read that contract. **Hold (b) until the
+consumer-notification step of CONV-B46 exists, then ship the two together** — shipping a
+contract change through the exact gap another row in this pass describes would be a poor way
+to learn the lesson. **(consumer-affecting: a `state` reachable by a new route, a new
+`prs[]` field, and for (b) a change to the result file's contract)**
+
+**Effort** S for (a) and (c) · S for (b), gated · **Source** [triage] · **Gate** CONV-B46 for (b) · **Rows** T44a, T44b, T44c
+
+### CONV-B44 — After a halt caused by a mis-authored check, `resume` deletes a branch that the corrected checks pass on.
+
+**Cause / evidence.** `resume` treats an unmerged PR branch as a partial or gate-failed
+attempt and deletes it, which is right when the *work* was what failed. It is wrong in the
+one case this corpus produced: the halt was caused by a check that could not pass (CONV-B40),
+the operator fixed the check, and the branch the corrected gate would have passed was
+destroyed by the recovery. The series was finished outside convoy to keep the verified commit
+— so, again, the ledger records no integration for content that integrated. [triage:
+2026-08-24 corrective wave #3]
+
+**Change.** When `resume` finds an unmerged PR branch **and** the series diff since the
+halted run touches only `[[checks]]`, re-gate the existing branch before deleting it, and
+integrate on green. The condition is narrow on purpose: a series edit that touched prompts
+or PR definitions means the branch was built against different instructions and the current
+delete-and-re-implement behaviour is correct.
+
+**Effort** M · **Source** [triage] · **Rows** T44d
 
 ---
 
@@ -872,6 +1157,30 @@ answer for convoy's own skill. [cross-review]
 
 **Effort** M · **Source** [research] + [cross-review] · **Gate** CRAF-B29
 
+### CONV-B46 — A consumer learns that the stream vocabulary changed by reading the changelog on purpose, and nothing routes the marker that exists.
+
+**Cause / evidence.** The versioned stream contract met its first external consumer and held:
+that consumer's parser sync against 0.8.0 found `run_abandoned` — a terminal line a later
+`convoy clean` writes for a run whose driver died — unmapped on its side, which would have
+scored a killed run as completed. A written spec with a synced test turned that into a
+fifteen-minute fix instead of a silent scoring bias, and it is the clearest evidence in the
+corpus that the engine-agnostic contract earns its keep. But the discovery was pull-only: the
+consumer found it by choosing to read the 0.8.0 changelog during a sync, not from any signal
+the stream or the release emits. The `(consumer-affecting)` marker exists and nothing routes
+it, which works while there is one attentive consumer and stops working at two. Singleton,
+and the immediate risk for the one known consumer is closed — it now pins the 0.8.0
+vocabulary with its own test. [triage: 2026-08-11 release and contract sync #1]
+
+**Change.** Held at `watch` pending a second report or a second consumer, whichever comes
+first. Two candidate shapes, and the cheap one is probably right: a release-checklist step
+that fires on a changed stream vocabulary — name the known consumers, confirm each has
+synced — versus emitting a contract-version line consumers can assert on mechanically. The
+second is more machinery than one consumer justifies. **CONV-B43(b) is gated on this row**,
+because it changes a documented file's contract and would otherwise ship through exactly the
+gap described here.
+
+**Effort** S for the checklist shape · M for a version line · **Source** [triage] · **Status** watch · **Rows** T46a
+
 ### Carried-forward watch rows
 
 Anchored, awaiting a second report or a clear trigger. Each stays valid; none has cleared
@@ -1030,6 +1339,35 @@ the one thing not to do is discover the answer from a broken scored arm. [cross-
 
 ## Shipped
 
+### Built in the 2026-08-28 delta pass (`[Unreleased]`)
+
+Four rows minted and closed in the same pass — each was small, each had its evidence
+already, and none needed a design decision first. They are listed here rather than as open
+rows because there is nothing left to build; the `[Unreleased]` status is the honest one and
+should be retargeted at the tag that serves it, since none of this reaches an installed
+consumer until a release is cut.
+
+| Row | Promotion | Shipped by |
+|---|---|---|
+| CONV-B45 | The skill's trigger stated as the **pre-condition** — a plan, spec or PR manifest already naming two or more PR-sized changes — instead of "when running a convoy series.toml", which is a condition only true after someone has chosen convoy. Both the tool-first opener and the self-referential trigger are displaced, not appended to. | `[Unreleased]` |
+| CONV-B47 | The uncovered-test advisory skips the files the workspace's own ignore rules exclude (`git check-ignore`) and names directories once the list is too long to read. Two workspaces had turned it into 526 and 474 lines of noise. Silent fallback where there is no repository or no `git`. | `[Unreleased]` |
+| CONV-B48 | `CONTRIBUTING.md` and the PR template list every command CI runs, in CI's order — they listed four of six and called it "the same set", omitting `uv lock --check`. `tests/test_doc_claims.py` now reads the workflow and fails on a documented gate that drops a step or reorders one. Fourth recurrence of that class; the first three fixes were prose. | `[Unreleased]` |
+| CONV-B50 | `GitError` read git's stderr and, finding it empty, substituted `exited 1` — while the diagnosis for the commonest of these failures (`git commit` with nothing staged) is on **stdout**. The docstring named that exact case and the code discarded it. Now the stderr tail, then the stdout tail, then the exit code. Same stream-precedence defect as CONV-B03, in the engine's own subprocess calls rather than the gate's. | `[Unreleased]` |
+| CONV-B49 | Two engine behaviours the manual was silent about: mid-series gate repair (`resume` re-reads the series file, so checks edited at a PR boundary govern the remaining PRs while integrated ones are skipped), and that writing to a driven workspace is unsafe because the engine moves `HEAD` between branches. | `[Unreleased]` |
+
+**Why CONV-B45 was a trigger rewrite and not a removal.** The measurement alone is
+ambiguous: a periodic post-hoc telemetry pass over agent transcripts for 2026-06-26..08-25
+recorded convoy reached in 16 of 129 sessions, with 271 engine invocations against 3 skill
+entries. That gap reads either as a trigger that does not fire or as a skill the operator
+routes around. The corpus settles it: more than half the feedback reports cite the skill
+document as what a series was authored from — including one that authored a correct,
+first-try series from it alone on a machine that had never run convoy — and every session in
+the corpus that actually drove a governed series went through the MCP surface, while the
+CLI-heavy sessions are maintainer and measurement work inside this repository, which needs no
+manual. A redundant skill would show the inverse. The content is load-bearing and the
+trigger was not reaching it.
+
+
 ### Since the last reconciliation (0.2.0 – 0.8.0)
 
 Reconciled against the campaign window; each row is closed on production evidence, not on
@@ -1109,6 +1447,18 @@ Recorded with reasons so they are not relitigated.
   read on the surface that actually needs it — a status reader that reports `dead`, rather
   than a reclaim on the recovery path, which is the one caller already asserting the run is
   gone.
+- **A release-checklist step that "names a hook run which cannot happen"** (2026-08-12).
+  Re-grounded and not reproduced: no checklist in the tree names a hook run, so that claim
+  resolves against nothing. The operator friction behind it is real and did have a cause —
+  five gate commands run by hand against a checklist listing four — which is CONV-B48,
+  shipped. CONV-B15 stays open on its own terms and is unaffected either way.
+- **A fix-brief hint teaching the repair spawn to suspect the check** ("if the suite passes
+  and only an environmental floor fails, report rather than patch", 2026-08-24). Declined as
+  a separate row on two grounds. It arrives one layer too late: CONV-B40(a) refuses the
+  series before a fix spawn is ever purchased, and a hint that asks a spawn to overrule its
+  own gate is the weaker instrument at twice the price. And a standing rule appended to the
+  per-prompt brief is exactly the carrier problem CONV-B12 exists to fix, so if it is ever
+  wanted it is a CONV-B12 directive, not prose bolted onto the fix prompt.
 
 ### Routed out — the fix lands outside convoy
 
@@ -1156,8 +1506,21 @@ shipped (see above) or carried forward unchanged in the watch table.
 | T19b | CONV-B21 |
 | T22a | CONV-B23 |
 | T23a, T27a, T27b | CONV-B24 |
-| T26a | shipped (Unreleased) |
+| T26a | shipped 0.8.0 |
 | T10b | declined, superseded by CONV-B02 |
+| T40a | CONV-B38 |
+| T40b | CONV-B39 |
+| T41a, T41b, T41c | CONV-B40 |
+| T42a | CONV-B41 |
+| T43a, T43b | CONV-B42 |
+| T44a, T44b, T44c | CONV-B43 |
+| T44d | CONV-B44 |
+| T45a | CONV-B45 (shipped) |
+| T46a | CONV-B46 (watch) |
+| T47a | CONV-B47 (shipped) |
+| T48a | CONV-B48 (shipped) |
+| T49a, T49b | CONV-B49 (shipped) |
+| T50a | CONV-B50 (shipped) |
 
 Rows received from the 2026-08-11 cross-project pass resolve as **KEEL-B16 → CONV-B36**
 (the spec pin). CONV-B37 was routed here from the collection's review with no foreign row
