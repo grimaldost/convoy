@@ -215,3 +215,31 @@ def test_delete_branch_failure_also_names_its_command(tmp_path: Path) -> None:
         Git(repo).delete_branch(_BASE)  # cannot delete the checked-out branch
 
     assert str(excinfo.value).startswith(f'git branch -D {_BASE}: ')
+
+
+def test_git_error_falls_back_to_stdout_when_stderr_is_empty(tmp_path: Path) -> None:
+    """`git commit` with nothing staged says why on stdout, and stderr stays empty.
+
+    Reading stderr alone turned that into a bare `exited 1`, which does not distinguish an
+    empty commit from a hook rejection or an index lock — the state an engine-side commit
+    failure was diagnosed from by hand in production.
+    """
+    repo = _init_repo(tmp_path)
+
+    with pytest.raises(GitError) as excinfo:
+        Git(repo)._run_checked('commit', '-m', 'nothing here')
+
+    message = str(excinfo.value)
+    assert message.startswith("git commit -m 'nothing here': ")
+    assert 'exited 1' not in message
+    assert 'nothing to commit' in message
+
+
+def test_git_error_prefers_stderr_over_stdout(tmp_path: Path) -> None:
+    """Adding the stdout fallback must not demote the stream git uses for real errors."""
+    repo = _init_repo(tmp_path)
+
+    with pytest.raises(GitError) as excinfo:
+        Git(repo)._run_checked('checkout', 'no-such-ref')
+
+    assert 'pathspec' in str(excinfo.value)

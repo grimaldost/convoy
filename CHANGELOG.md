@@ -13,6 +13,18 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- A failing engine-side `git` command now reports what git said on **either** stream. The
+  detail was read from stderr alone, so `git commit` with nothing staged — which says why on
+  stdout and leaves stderr empty — produced a bare `git commit -m '…': exited 1`. In
+  production an engine-side commit failed exactly that way and the message did not
+  distinguish an empty commit from a hook rejection or an index lock, so it was diagnosed by
+  inspecting the workspace by hand. Stderr, then stdout, then the exit code, which still
+  stands in when git genuinely said nothing anywhere. This is the same stream-precedence
+  mistake the gate's failure detail was corrected for in 0.8.0, in the engine's own
+  subprocess calls.
+
 ## [0.9.0] - 2026-08-12
 
 One consumer-affecting change and nothing else: the `strong` tier resolves to a different
