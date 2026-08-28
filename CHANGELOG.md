@@ -40,6 +40,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   machine with no `git`, is unchanged. Advisory paths are now POSIX-separated on every
   platform.
 
+- `CONTRIBUTING.md` and the PR template now list **every** command CI runs, in CI's
+  order. Both listed four of the six and CONTRIBUTING called it "the same set CI runs";
+  the omitted `uv lock --check` is the step whose position the same file elsewhere calls
+  load-bearing, and skipping it is how `uv.lock` recorded `convoy-engine 0.1.1` through
+  the whole of `0.2.0`. `tests/test_doc_claims.py` now reads the workflow and fails on a
+  documented gate that is missing a step or lists them out of order, so the fourth
+  recurrence of this class is the last one prose has to catch.
+
 ## [0.9.0] - 2026-08-12
 
 One consumer-affecting change and nothing else: the `strong` tier resolves to a different
