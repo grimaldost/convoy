@@ -13,6 +13,18 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Documentation
+
+- The manual now describes two engine behaviours it was silent about, both of which cost an
+  operator in production. **Mid-series gate repair**: `resume` re-reads the series file, so
+  `[[checks]]` edited between two PRs govern every PR the resumed run still has to run while
+  already-integrated PRs are skipped rather than re-gated — a supported pattern that one
+  night used to put five added checks in front of the remaining PRs of a seven-PR series
+  without re-paying for four. **A driven workspace is not safe to write to**: the engine
+  moves `HEAD` between branches for the run's duration, so an outside commit lands on
+  whichever branch is checked out at that instant. Both are engine behaviour the manual is
+  supposed to carry, not new advice.
+
 ## [0.9.0] - 2026-08-12
 
 One consumer-affecting change and nothing else: the `strong` tier resolves to a different
