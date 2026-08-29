@@ -6,7 +6,14 @@ on:
 
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    # Both OSes, because the engine's failure history is platform-shaped: the locale-decode
+    # class (cp1252 vs agent-produced UTF-8) and the path-separator class are invisible to a
+    # Linux-only leg and were each caught after the fact on a Windows machine.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

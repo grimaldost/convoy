@@ -1,0 +1,25 @@
+name: changelog
+
+# "Docs and CHANGELOG in the same change", machine-enforced. The rule held by hand through
+# every substantive change of the 2026-08-28 build round; this makes the one that would not
+# have carried an entry fail instead of merge. Pull-request only: the target branch is what
+# makes the merge-base diff meaningful. scripts/changelog_gate.py carries the full policy —
+# record-or-declare, the release-heading bump check, and the advisory consumer-affecting
+# marker warning.
+#
+# A separate workflow rather than a job in ci.yml, deliberately: tests/test_doc_claims.py
+# reads every `- run:` line of ci.yml as "the gate" a contributor reproduces locally, and
+# this check is not one a contributor runs by hand — it judges a pull request's diff, not a
+# working tree.
+
+on:
+  pull_request:
+
+jobs:
+  recorded:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the merge-base with the target branch has to exist locally
+      - run: python scripts/changelog_gate.py "origin/${{ github.base_ref }}"
