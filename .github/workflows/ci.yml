@@ -1,5 +1,9 @@
 name: ci
 
+# Least privilege: the gate only checks out and runs commands.
+permissions:
+  contents: read
+
 on:
   push:
   pull_request:

@@ -12,6 +12,10 @@ name: changelog
 # this check is not one a contributor runs by hand — it judges a pull request's diff, not a
 # working tree.
 
+# Least privilege: the gate only checks out and reads git history.
+permissions:
+  contents: read
+
 on:
   pull_request:
 

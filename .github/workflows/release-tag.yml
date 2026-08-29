@@ -17,6 +17,11 @@ name: release-tag
 # people learn to ignore. A scheduled run re-evaluates, so the alarm clears by itself the
 # next day; workflow_dispatch is there to clear it immediately.
 
+# Least privilege: the check reads tags from the checkout and the release page
+# through `gh release view`, both covered by read access to repository contents.
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: '17 7 * * *'
