@@ -53,6 +53,7 @@ from convoy.core.telemetry import (
 )
 from convoy.interface.gate_runner import GateRunner
 from convoy.interface.git import Git
+from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS
 from convoy.interface.reporter import NullReporter, Reporter
 from convoy.interface.spawn import AgentSpawn, SpawnRequest, SpawnResult
 from convoy.interface.telemetry_writer import TelemetryWriter
@@ -397,7 +398,7 @@ def run_series(
         # UTF-8 pinned, replacement over crash: by here money is already spent on the
         # series, so a stray byte in a prompt degrades the brief instead of halting it.
         brief = (Path(series.paths.prompts) / pr.prompt).read_text(
-            encoding='utf-8', errors='replace'
+            encoding=TEXT_ENCODING, errors=TEXT_ERRORS
         )
 
         # A PR's own model/tier/effort layer over [governance] here, once, and the same

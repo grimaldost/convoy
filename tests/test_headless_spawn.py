@@ -680,3 +680,21 @@ def test_an_unrecognised_subtype_on_a_successful_spawn_stays_ok(tmp_path: Path) 
     spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
 
     assert spawn.spawn(_request(), cwd=tmp_path).classification == 'ok'
+
+
+# ---------------------------------------------------------------------------
+# The suite-wide guard (tests/conftest.py)
+# ---------------------------------------------------------------------------
+
+
+def test_a_spawn_left_on_the_default_binary_is_unreachable_from_the_suite() -> None:
+    """The conftest guard's red proof: the real binary raises before anything launches.
+
+    Every other test in this module points the spawn at a stub executable, which the guard
+    passes through — this one proves the arrangement that used to cost real money (a
+    forgotten stub on a machine with a live seat) now fails loudly instead.
+    """
+    spawn = HeadlessSpawn()
+
+    with pytest.raises(RuntimeError, match='real agent spawn'):
+        spawn.spawn(_request(), cwd=Path('.'))
