@@ -57,6 +57,15 @@ def test_the_declared_exemption_needs_a_reason() -> None:
     assert len(bare[0]) == 1
 
 
+def test_the_declared_exemption_is_case_insensitive() -> None:
+    """A casing typo states the same decision; rejecting it would mislead, not protect."""
+    errors, _ = _evaluate(
+        ['src/convoy/interface/git.py'],
+        messages='chore: rename an internal\n\nchangelog: None (no observable change)\n',
+    )
+    assert errors == []
+
+
 def test_a_change_outside_the_engine_carries_no_obligation() -> None:
     errors, warnings = _evaluate(['docs/backlog.md', '.github/workflows/ci.yml'])
     assert errors == []

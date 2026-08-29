@@ -11,6 +11,7 @@ without a real agent.
 
 import json
 import os
+import shutil
 import stat
 import sys
 import time
@@ -695,6 +696,21 @@ def test_a_spawn_left_on_the_default_binary_is_unreachable_from_the_suite() -> N
     forgotten stub on a machine with a live seat) now fails loudly instead.
     """
     spawn = HeadlessSpawn()
+
+    with pytest.raises(RuntimeError, match='real agent spawn'):
+        spawn.spawn(_request(), cwd=Path('.'))
+
+
+def test_a_spawn_naming_the_real_binary_by_absolute_path_is_unreachable() -> None:
+    """The guard's second arm: an absolute path to the real binary is the same spawn.
+
+    Only provable on a machine that has the real binary; elsewhere the literal-default
+    arm is the whole surface and this skips rather than vacuously passes.
+    """
+    real = shutil.which('claude')
+    if real is None:
+        pytest.skip('no real claude binary on this machine')
+    spawn = HeadlessSpawn(claude_bin=real)
 
     with pytest.raises(RuntimeError, match='real agent spawn'):
         spawn.spawn(_request(), cwd=Path('.'))

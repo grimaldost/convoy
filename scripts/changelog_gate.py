@@ -54,8 +54,10 @@ CONTRACT_SURFACES = (
 MARKER = '(consumer-affecting)'
 
 # The reason is required, not decoration: a bare `Changelog: none` records that the rule
-# was skipped, while the parenthesis records why, which is the reviewable part.
-_TRAILER = re.compile(r'^Changelog: none \(.+\)$', re.MULTILINE)
+# was skipped, while the parenthesis records why, which is the reviewable part. Casing is
+# folded — `changelog: None (...)` states the same decision, and rejecting it over case
+# would produce the misleading error, not the safer one.
+_TRAILER = re.compile(r'^Changelog: none \(.+\)$', re.MULTILINE | re.IGNORECASE)
 _ADDED_HEADING = re.compile(r'^## \[(\d+)\.(\d+)\.(\d+)\]', re.MULTILINE)
 
 Version = tuple[int, int, int]

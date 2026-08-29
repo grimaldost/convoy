@@ -7,8 +7,9 @@ spawn-reaching path:
   fully stubbed run crosses, so it is neutralized for every test by default — a test that
   exercises the probe's wiring overrides this with its own monkeypatch, and the probe's
   own unit tests call ``seat_probe.seat_problem`` directly, which this does not touch.
-- **The spawn itself**: a :class:`HeadlessSpawn` left on the default ``claude`` binary
-  raises instead of launching. Every legitimate subprocess-path test points the spawn at a
+- **The spawn itself**: a :class:`HeadlessSpawn` left on the default ``claude`` binary —
+  or pointed at the real installed one by absolute path — raises instead of launching.
+  Every legitimate subprocess-path test points the spawn at a
   stub executable (see ``test_headless_spawn.py``), which the guard passes through
   untouched; reaching :meth:`spawn` on the real binary is only ever a forgotten stub. This
   used to be per-test convention — the exact arrangement under which a live seat silently
@@ -19,6 +20,7 @@ Without these, a machine with a live ``claude`` seat spends real money per suite
 machine without one fails with a seat problem.
 """
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -29,6 +31,12 @@ from convoy.interface.spawn import SpawnRequest, SpawnResult
 # Derived from the constructor rather than restated, so a renamed default cannot
 # quietly turn this guard into a no-op.
 _DEFAULT_BINARY = HeadlessSpawn()._claude_bin
+
+# The literal default is not the only spelling of the real binary: a spawn pointed at
+# `shutil.which('claude')` names the same executable by absolute path. Resolved once here,
+# so that arm of the guard exists exactly on the machines where the real binary does.
+_real = shutil.which(_DEFAULT_BINARY)
+_REAL_BINARY = Path(_real).resolve() if _real else None
 
 
 @pytest.fixture(autouse=True)
@@ -41,10 +49,14 @@ def _no_real_agent_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
     real_spawn = HeadlessSpawn.spawn
 
     def guarded(self: HeadlessSpawn, request: SpawnRequest, cwd: Path) -> SpawnResult:
-        if self._claude_bin == _DEFAULT_BINARY:
+        binary = self._claude_bin
+        is_real = binary == _DEFAULT_BINARY or (
+            _REAL_BINARY is not None and Path(binary).resolve() == _REAL_BINARY
+        )
+        if is_real:
             raise RuntimeError(
-                'real agent spawn reached from the unit suite: this HeadlessSpawn was left '
-                'on the default binary. Point it at a stub executable, or stub the spawn.'
+                'real agent spawn reached from the unit suite: this HeadlessSpawn names the '
+                'real binary. Point it at a stub executable, or stub the spawn.'
             )
         return real_spawn(self, request, cwd)
 
