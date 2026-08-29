@@ -654,6 +654,12 @@ tree. [triage: 2026-07-09 governance-cycle, 2026-07-06 baseline arc; review]
 default, with an explicit opt-out for wiring tests, making the guardrail document's
 existing claim true. `tests/conftest.py`.
 
+**Status.** Shipped (`[Unreleased]`, 2026-08-29). `tests/conftest.py` autouses a second
+guard: a `HeadlessSpawn` left on the default `claude` binary raises instead of launching,
+with the red proof in `tests/test_headless_spawn.py`; subprocess-path tests point the
+spawn at a stub executable, which the guard passes through. `docs/GUARDRAILS.md` now
+names the fixture instead of the convention.
+
 **Effort** S · **Source** [triage] + [review] · **Row** T36a
 
 ### CONV-B14 — The model lineup is mirrored in four places with no age tripwire.
@@ -723,6 +729,14 @@ MANT-B11 — a checked-in hooks directory holding a script git executes — and 
 exemption list in CRAF-B26 from the contributor docs, so the next person does not diagnose
 this from scratch. The four commands and the ordering constraint are unchanged; only the
 installation form moves. [operator observation; cross-review]
+
+**Status.** Shipped (`[Unreleased]`, 2026-08-29), in the `core.hooksPath` form the
+cross-review prescribes: tracked wrapper scripts under `scripts/git-hooks/` invoke
+`uv run python -m pre_commit`, so the lane runs on a machine that blocks bare executable
+shims. The config mirrors the fast half of the gate in CI's order (`uv lock --check`
+first; ty and pytest stay CI-owned), adds a commit-message lane (conventional subject, no
+attribution trailers), and `tests/test_doc_claims.py` pins the hook commands to
+`ci.yml`'s, in CI's order, so the mirror cannot drift.
 
 **Effort** S · **Source** [review] + [cross-review]
 
@@ -1180,6 +1194,27 @@ because it changes a documented file's contract and would otherwise ship through
 gap described here.
 
 **Effort** S for the checklist shape · M for a version line · **Source** [triage] · **Status** watch · **Rows** T46a
+
+### CONV-B51 — The manual's two newest behavioural claims have no mechanism pinning them.
+
+**Cause / evidence.** The 2026-08-28 delta pass put two engine behaviours into the manual
+(CONV-B49: `resume` re-reads the series file; a driven workspace is unsafe to write to)
+as prose only. `tests/test_doc_claims.py` deliberately gates names and counts, not
+meaning, so the next change to resume semantics can strand the sentences silently — the
+one addition of that wave that fixed an instance while leaving its class ungated.
+[cross-project review pass, 2026-08-29]
+
+**Change.** Pin the mechanical half of the claim: drive the stubbed run service across a
+series file mutated between two PRs and assert the added check gates the remaining PR
+while the integrated PR is not re-gated; cross-reference the test from the SKILL.md
+section. First check whether the resume section of `tests/test_headless_driver.py`
+already covers the re-gate half — if it does, the build is the cross-reference.
+
+**Status.** **Deferred** by the 2026-08-29 cross-project review pass that minted it —
+lower leverage than the guardrail wave built in its place; recorded so the deferral is a
+decision rather than an omission.
+
+**Effort** M · **Source** [cross-review]
 
 ### Carried-forward watch rows
 
