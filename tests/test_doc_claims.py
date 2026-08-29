@@ -205,3 +205,44 @@ def test_the_ci_gate_is_not_empty() -> None:
     commands = _ci_gate_commands()
     assert len(commands) >= 4, commands
     assert 'uv lock --check' in commands
+
+
+# The commit-time lane (.pre-commit-config.yaml) mirrors the fast half of the gate. The
+# mirror is the drift risk: CONTRIBUTING once said "the same set CI runs" over four of six
+# commands, and a hook lane can rot the same way while looking armed.
+
+
+def _commit_lane_commands() -> list[str]:
+    """Every hook ``entry`` in .pre-commit-config.yaml that runs the project's tooling.
+
+    Read from the config in file order, same line-regex approach as ``_ci_gate_commands``
+    and for the same reason. The ``uv `` prefix is the boundary between the gate mirror
+    (which must match CI) and the commit-message lane (subject shape, attribution ban —
+    checks CI has no seat for).
+    """
+    config = _text('.pre-commit-config.yaml')
+    entries = [match.group(1).strip() for match in re.finditer(r'^\s*entry: (.+)$', config, re.M)]
+    return [entry for entry in entries if entry.startswith('uv ')]
+
+
+def test_every_commit_lane_command_is_a_ci_gate_command() -> None:
+    """The hook lane may only run what CI runs; a hook-only command would gate commits on
+    something no PR is ever gated on, and a reworded one would drift from the gate silently."""
+    unknown = [command for command in _commit_lane_commands() if command not in _ci_gate_commands()]
+    assert not unknown, f'.pre-commit-config.yaml runs commands CI does not: {unknown}'
+
+
+def test_the_commit_lane_keeps_cis_order() -> None:
+    """`uv lock --check` before anything that would repair the lock — CI's argument, here too."""
+    gate = _ci_gate_commands()
+    positions = [gate.index(command) for command in _commit_lane_commands()]
+    assert positions == sorted(positions), (
+        '.pre-commit-config.yaml runs the gate commands in a different order than ci.yml'
+    )
+
+
+def test_the_commit_lane_is_not_empty() -> None:
+    """Non-vacuity guard: an unparsed config would make both checks above pass silently."""
+    commands = _commit_lane_commands()
+    assert 'uv lock --check' in commands
+    assert len(commands) >= 3, commands

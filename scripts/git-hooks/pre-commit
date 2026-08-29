@@ -1,0 +1,16 @@
+#!/bin/sh
+# Commit-time gate, in the form git can always run.
+#
+# `pre-commit install` writes a hook that shells out to the bare `pre-commit`
+# executable shim; a machine that blocks unmanaged executable shims silently
+# never runs it, which leaves `.git/hooks/` looking armed while enforcing
+# nothing. Going through `uv run python -m pre_commit` uses the project's own
+# pinned interpreter and dependencies and avoids the shim entirely.
+#
+# Install (one-off, per clone):
+#     git config core.hooksPath scripts/git-hooks
+#
+# `git commit --no-verify` bypasses this for one commit; CI runs the full gate
+# behind it either way.
+set -e
+exec uv run python -m pre_commit run --config .pre-commit-config.yaml --hook-stage pre-commit

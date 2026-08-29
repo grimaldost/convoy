@@ -1,0 +1,77 @@
+# The commit-time lane: the fast half of the gate, in CI's order, plus two
+# commit-message checks CI has no seat for.
+#
+# Local `language: system` hooks drive the project's own uv-pinned tools, so no
+# hook downloads a second ruff and the versions always match the lockfile's.
+# `ty check` and `pytest` are deliberately absent: they are the slow half of the
+# gate, per-commit friction discourages small commits, and CI owns them.
+#
+# Install (one-off, per clone):
+#     git config core.hooksPath scripts/git-hooks
+#
+# Not `pre-commit install`: that writes hooks which shell out to the bare
+# `pre-commit` executable shim, and a machine that blocks unmanaged executable
+# shims runs nothing while `.git/hooks/` looks armed — worse than no hooks. The
+# tracked scripts in scripts/git-hooks/ go through `uv run python -m pre_commit`
+# instead: the project's own pinned interpreter, no shim.
+#
+# Run the lane by hand:
+#     uv run python -m pre_commit run --all-files
+#
+# tests/test_doc_claims.py reads this file: every `entry` that starts with `uv `
+# must be one of ci.yml's gate commands, in CI's order, so the lane cannot drift
+# from the gate it mirrors.
+repos:
+  - repo: local
+    hooks:
+      # First, before anything that would rewrite the lock: `--check` fails on a
+      # stale lockfile instead of repairing it (the same ordering argument as CI's).
+      - id: uv-lock-check
+        stages: [pre-commit]
+        name: uv lock --check
+        entry: uv lock --check
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: ruff-check
+        stages: [pre-commit]
+        name: ruff check
+        entry: uv run ruff check src tests
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: ruff-format-check
+        stages: [pre-commit]
+        name: ruff format (check)
+        entry: uv run ruff format --check src tests
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  # Commit-message lane (the commit-msg wrapper in scripts/git-hooks/ runs it).
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.0.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - feat
+          - fix
+          - docs
+          - test
+          - refactor
+          - perf
+          - chore
+          - build
+          - ci
+          - release
+
+  - repo: local
+    hooks:
+      - id: no-ai-attribution
+        name: reject AI attribution trailers
+        entry: bash -c 'if grep -Ei "^(Co-Authored-By|Co-authored-by):.*(Claude|GPT|Anthropic|noreply@anthropic)" "$1"; then echo "Commit message carries an AI attribution trailer; the git conventions forbid these. Remove the line and re-commit."; exit 1; fi' --
+        language: system
+        stages: [commit-msg]

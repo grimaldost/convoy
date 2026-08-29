@@ -1,0 +1,6 @@
+#!/bin/sh
+# Commit-message lane: conventional subject shape, and no AI attribution
+# trailers. Same installation and same shim rationale as ./pre-commit; git
+# passes the message file as $1.
+set -e
+exec uv run python -m pre_commit run --config .pre-commit-config.yaml --hook-stage commit-msg --commit-msg-filename "$1"

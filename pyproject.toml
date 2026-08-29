@@ -40,6 +40,9 @@ packages = ['src/convoy']
 dev = [
     { include-group = 'lint' },
     { include-group = 'test' },
+    # The commit-time lane's runner; invoked as `uv run python -m pre_commit` (see
+    # .pre-commit-config.yaml for why never the bare shim).
+    'pre-commit>=4.0',
 ]
 lint = [
     'ruff>=0.15',
