@@ -26,9 +26,9 @@ platform locale default.
 `{0x81, 0x8D, 0x8F, 0x90, 0x9D}` killed a production run after its green PRs.
 
 *Enforced by:* the `PLW1514` (unspecified-encoding) ruff rule in `pyproject.toml`;
-one decode policy — `TEXT_ENCODING`/`TEXT_ERRORS`, defined in `interface/proc.py`
-(two spawn sites still carry matching literals; folding them onto the constants
-is a cleanup candidate);
+one decode policy — `TEXT_ENCODING`/`TEXT_ERRORS`, defined in `interface/proc.py`,
+with `tests/test_proc.py::test_the_decode_policy_is_spelled_once` failing on a
+`'replace'` literal respelled anywhere outside `proc.py` and `streams.py`;
 `interface/streams.py::harden_std_streams` at both entry points, with
 `tests/test_streams.py` and the ≥0x80-byte regression tests.
 
@@ -49,10 +49,12 @@ minutes, obvious in `uv run pytest --durations=12` against a suite whose slowest
 cases are the deliberate subprocess-timeout tests at ~1–3 s. Re-measure the band
 when quoting it; a bare number here rots as the suite grows.
 
-*Enforced by:* the autouse guard in `tests/conftest.py` makes the real seat
-probe unreachable by default (wiring tests override it explicitly); the spawn
-path itself is stubbed per test by convention — review-enforced, a
-mechanization candidate.
+*Enforced by:* two autouse guards in `tests/conftest.py`. The real seat probe is
+unreachable by default (wiring tests override it explicitly), and a
+`HeadlessSpawn` left on the default `claude` binary raises instead of launching —
+a test that exercises the subprocess path points the spawn at a stub executable,
+which the guard passes through. The guard's own red proof lives in
+`tests/test_headless_spawn.py`.
 
 ### Every subprocess is hermetic
 

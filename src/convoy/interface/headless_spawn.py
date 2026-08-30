@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from convoy.interface.proc import kill_process_tree
+from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS, kill_process_tree
 from convoy.interface.spawn import SpawnEconomy, SpawnRequest, SpawnResult
 
 # Host environment variables that would divert a spawn off the isolated credential: an API
@@ -405,8 +405,8 @@ class HeadlessSpawn:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            encoding='utf-8',
-            errors='replace',
+            encoding=TEXT_ENCODING,
+            errors=TEXT_ERRORS,
             env=env,
             creationflags=creationflags,
             start_new_session=new_session,

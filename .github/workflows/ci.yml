@@ -1,12 +1,23 @@
 name: ci
 
+# Least privilege: the gate only checks out and runs commands.
+permissions:
+  contents: read
+
 on:
   push:
   pull_request:
 
 jobs:
-  gate:
-    runs-on: ubuntu-latest
+  checks:
+    # Both OSes, because the engine's failure history is platform-shaped: the locale-decode
+    # class (cp1252 vs agent-produced UTF-8) and the path-separator class are invisible to a
+    # Linux-only leg and were each caught after the fact on a Windows machine.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -23,3 +34,26 @@ jobs:
       - run: uv run ruff format --check src tests
       - run: uv run ty check src
       - run: uv run pytest
+
+  # The one status check the branch ruleset requires, by the exact context `gate`.
+  #
+  # A matrix job does not report that context: it reports one check per leg
+  # (`gate (ubuntu-latest)`, `gate (windows-latest)`). So the moment the gate gained its
+  # second operating system the required context stopped being reported at all, and every
+  # pull request became unmergeable with every check green — the change breaking the
+  # requirement it had to satisfy. This job is that context. It runs no gate command; it
+  # only asserts that every leg passed.
+  #
+  # Kept here rather than re-pointing the ruleset at the two leg names, so the matrix can
+  # gain or lose an operating system without the merge requirement having to be edited
+  # again — and so the next person to add a leg does not rediscover this by being blocked.
+  gate:
+    needs: checks
+    # Without this the aggregate is SKIPPED when a leg goes red, and a skipped required
+    # check never fails a pull request — it just never arrives, which is the same silence
+    # this job exists to remove.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every leg of the matrix must have succeeded
+        run: '[ "${{ needs.checks.result }}" = "success" ]'

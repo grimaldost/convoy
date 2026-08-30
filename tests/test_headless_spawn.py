@@ -11,6 +11,7 @@ without a real agent.
 
 import json
 import os
+import shutil
 import stat
 import sys
 import time
@@ -680,3 +681,36 @@ def test_an_unrecognised_subtype_on_a_successful_spawn_stays_ok(tmp_path: Path) 
     spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
 
     assert spawn.spawn(_request(), cwd=tmp_path).classification == 'ok'
+
+
+# ---------------------------------------------------------------------------
+# The suite-wide guard (tests/conftest.py)
+# ---------------------------------------------------------------------------
+
+
+def test_a_spawn_left_on_the_default_binary_is_unreachable_from_the_suite() -> None:
+    """The conftest guard's red proof: the real binary raises before anything launches.
+
+    Every other test in this module points the spawn at a stub executable, which the guard
+    passes through — this one proves the arrangement that used to cost real money (a
+    forgotten stub on a machine with a live seat) now fails loudly instead.
+    """
+    spawn = HeadlessSpawn()
+
+    with pytest.raises(RuntimeError, match='real agent spawn'):
+        spawn.spawn(_request(), cwd=Path('.'))
+
+
+def test_a_spawn_naming_the_real_binary_by_absolute_path_is_unreachable() -> None:
+    """The guard's second arm: an absolute path to the real binary is the same spawn.
+
+    Only provable on a machine that has the real binary; elsewhere the literal-default
+    arm is the whole surface and this skips rather than vacuously passes.
+    """
+    real = shutil.which('claude')
+    if real is None:
+        pytest.skip('no real claude binary on this machine')
+    spawn = HeadlessSpawn(claude_bin=real)
+
+    with pytest.raises(RuntimeError, match='real agent spawn'):
+        spawn.spawn(_request(), cwd=Path('.'))

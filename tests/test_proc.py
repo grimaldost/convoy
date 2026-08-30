@@ -8,6 +8,7 @@ grandchild and it was not orphaned.
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -170,3 +171,27 @@ def test_a_nonsense_pid_is_not_alive() -> None:
     # reaching a signal call.
     assert process_is_alive(0) is False
     assert process_is_alive(-1) is False
+
+
+# ---------------------------------------------------------------------------
+# The decode policy is spelled once
+# ---------------------------------------------------------------------------
+
+
+def test_the_decode_policy_is_spelled_once() -> None:
+    """``TEXT_ENCODING``/``TEXT_ERRORS`` in proc.py are the one statement of the policy.
+
+    The guardrail document carried "two spawn sites still carry matching literals" as a
+    standing cleanup candidate for two releases; this pins the fold. ``streams.py`` is the
+    other legitimate speller — ``harden_std_streams`` runs at the entry points, before any
+    import of this module is guaranteed. Everything else imports the constants.
+    """
+    package_root = Path(__file__).resolve().parent.parent / 'src' / 'convoy'
+    allowed = {'proc.py', 'streams.py'}
+    offenders = [
+        str(path.relative_to(package_root))
+        for path in sorted(package_root.rglob('*.py'))
+        if path.name not in allowed
+        and re.search(r'errors\s*=\s*[\'"]replace[\'"]', path.read_text(encoding='utf-8'))
+    ]
+    assert not offenders, f'the decode policy is respelled as a literal in: {offenders}'

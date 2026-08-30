@@ -10,7 +10,16 @@ Requires Python 3.14 and [uv](https://docs.astral.sh/uv/):
 
 ```
 uv sync
+git config core.hooksPath scripts/git-hooks
 ```
+
+The second line arms the commit-time lane: tracked hook scripts that run the
+fast half of the gate (`uv lock --check`, both ruff checks) before each commit,
+and check the message shape (conventional subject, no attribution trailers) at
+commit time. The scripts go through `uv run python -m pre_commit`, never the
+bare `pre-commit` shim — on a machine that blocks unmanaged executable shims,
+the shim-installed form silently never runs (see `.pre-commit-config.yaml`).
+Run the whole lane by hand with `uv run python -m pre_commit run --all-files`.
 
 ## Quality gates
 
@@ -46,6 +55,14 @@ behavior changes, docs and CHANGELOG in the same change, the
 subjects, no attribution trailers). The PR template carries the checklist; CI
 runs the same gates as above.
 
+The CHANGELOG half of that discipline is machine-enforced: the `changelog`
+workflow fails a PR whose diff touches `src/` without touching `CHANGELOG.md`,
+unless a commit in the range carries the trailer `Changelog: none (<reason>)`
+— the opt-out for a change nothing a changelog reader could notice. It also
+warns, without failing, when a contract-surface file changes and the entry
+never says **(consumer-affecting)**; `scripts/changelog_gate.py` carries the
+policy.
+
 ## Release discipline
 
 Pre-1.0, changes accumulate under `[Unreleased]` and are cut into tagged
@@ -70,8 +87,9 @@ Cadence: cut a release after each backlog build round (a batch of
    runs pytest, so the file is repaired before a test could read it — which is why
    CI runs `uv lock --check` ahead of every step that would rewrite it.
 3. Tag `v0.x.y` on the **release PR's merge commit**, never `main`'s tip (the tip
-   may already carry post-release work), and push the tag. Shape the message like
-   the existing tags: `convoy 0.x.y`, a blank line, then what it serves and which
+   may already carry post-release work) — annotated, so the tag records its own
+   tagger and date: `git tag -a v0.x.y <release-merge-commit>` — and push the
+   tag. Shape the message like the existing tags: `convoy 0.x.y`, a blank line, then what it serves and which
    parts are consumer-affecting.
 4. Publish the GitHub release for that tag, with the version's `CHANGELOG.md`
    section as the body:

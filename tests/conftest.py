@@ -1,17 +1,63 @@
 """Suite-wide guards.
 
-No unit test may reach a real agent spawn. ``run_series`` is stubbed per test by
-convention; the seat probe is the one other spawn-reaching path inside
-``run_series_headless``, so it is neutralized here for every test by default — a test
-that exercises the probe's wiring overrides this with its own monkeypatch, and the
-probe's own unit tests call ``seat_probe.seat_problem`` directly, which this does not
-touch. Without this guard, a machine with a live ``claude`` seat silently spends real
-money per CLI test, and a machine without one (CI) fails them with a seat problem.
+No unit test may reach a real agent spawn. Two autouse guards hold that, one per
+spawn-reaching path:
+
+- **The seat probe** is the spawn-reaching path inside ``run_series_headless`` that even a
+  fully stubbed run crosses, so it is neutralized for every test by default — a test that
+  exercises the probe's wiring overrides this with its own monkeypatch, and the probe's
+  own unit tests call ``seat_probe.seat_problem`` directly, which this does not touch.
+- **The spawn itself**: a :class:`HeadlessSpawn` left on the default ``claude`` binary —
+  or pointed at the real installed one by absolute path — raises instead of launching.
+  Every legitimate subprocess-path test points the spawn at a
+  stub executable (see ``test_headless_spawn.py``), which the guard passes through
+  untouched; reaching :meth:`spawn` on the real binary is only ever a forgotten stub. This
+  used to be per-test convention — the exact arrangement under which a live seat silently
+  turned five CLI tests into five real spawns per suite pass, and a seatless CI runner
+  failed the same five.
+
+Without these, a machine with a live ``claude`` seat spends real money per suite run and a
+machine without one fails with a seat problem.
 """
 
+import shutil
+from pathlib import Path
+
 import pytest
+
+from convoy.interface.headless_spawn import HeadlessSpawn
+from convoy.interface.spawn import SpawnRequest, SpawnResult
+
+# Derived from the constructor rather than restated, so a renamed default cannot
+# quietly turn this guard into a no-op.
+_DEFAULT_BINARY = HeadlessSpawn()._claude_bin
+
+# The literal default is not the only spelling of the real binary: a spawn pointed at
+# `shutil.which('claude')` names the same executable by absolute path. Resolved once here,
+# so that arm of the guard exists exactly on the machines where the real binary does.
+_real = shutil.which(_DEFAULT_BINARY)
+_REAL_BINARY = Path(_real).resolve() if _real else None
 
 
 @pytest.fixture(autouse=True)
 def _no_real_seat_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr('convoy.interface.run_service.seat_problem', lambda *_a, **_k: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_agent_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_spawn = HeadlessSpawn.spawn
+
+    def guarded(self: HeadlessSpawn, request: SpawnRequest, cwd: Path) -> SpawnResult:
+        binary = self._claude_bin
+        is_real = binary == _DEFAULT_BINARY or (
+            _REAL_BINARY is not None and Path(binary).resolve() == _REAL_BINARY
+        )
+        if is_real:
+            raise RuntimeError(
+                'real agent spawn reached from the unit suite: this HeadlessSpawn names the '
+                'real binary. Point it at a stub executable, or stub the spawn.'
+            )
+        return real_spawn(self, request, cwd)
+
+    monkeypatch.setattr(HeadlessSpawn, 'spawn', guarded)

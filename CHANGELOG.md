@@ -13,6 +13,63 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+The guardrail build round: nothing in the engine's contract moves — no new event, field,
+`outcome`, `error_kind`, exit code or series.toml key, and therefore nothing marked
+consumer-affecting. What changes is what enforces the rules the repository already had:
+two review-enforced guardrails become mechanisms, two prose disciplines become gates, and
+CI gains the second operating system the engine's failure history keeps naming.
+
+### Added
+
+- A commit-time lane. `.pre-commit-config.yaml` runs the fast half of the gate — `uv lock
+  --check`, then both ruff checks, in CI's order — plus a commit-message lane: the
+  conventional subject shape, and a rejection of AI-attribution trailers. Installed via
+  the tracked wrapper scripts in `scripts/git-hooks/` (`git config core.hooksPath
+  scripts/git-hooks`), which go through `uv run python -m pre_commit` rather than the
+  bare `pre-commit` shim a locked-down machine silently never runs. `ty check` and
+  `pytest` stay CI-owned deliberately: the slow half of the gate does not belong in front
+  of every commit. `tests/test_doc_claims.py` reads the hook config the way it already
+  reads `ci.yml`, so the lane cannot drift from the gate it mirrors.
+
+- The changelog rule is now a gate. "Docs and CHANGELOG in the same change" was prose in
+  `AGENTS.md` and `CONTRIBUTING.md`; the last build round followed it five times out of
+  five, and nothing would have caught the sixth. The `changelog` workflow
+  (`scripts/changelog_gate.py`) fails a PR that touches `src/` without touching
+  `CHANGELOG.md` unless a commit declares the exemption (`Changelog: none (<reason>)`),
+  pins an added release heading to an actual version bump, and — advisory, a warning
+  that never fails the job until it has proven quiet on ordinary PRs — flags a
+  contract-surface diff whose entry never says **(consumer-affecting)**.
+
+- The unit suite now hard-fails a real agent spawn. The spawn path was stubbed per test
+  by convention — the arrangement under which a live seat once turned five CLI tests into
+  five real spawns per suite pass. A second autouse guard in `tests/conftest.py` makes a
+  `HeadlessSpawn` left on the default `claude` binary raise instead of launch; subprocess
+  tests point the spawn at a stub executable, which the guard passes through. The
+  guardrail document now names the fixture instead of the convention.
+
+- CI runs the gate on Windows as well as Linux. The engine's failure history is
+  platform-shaped — the locale-decode class and the path-separator class were each caught
+  after merge, on a Windows machine, invisible to a Linux-only leg.
+
+  The matrix arrives behind an aggregating job that keeps the name. A matrix job reports one
+  check per leg (`gate (ubuntu-latest)`, `gate (windows-latest)`) and never the bare `gate`
+  context the branch ruleset requires, so adding the second operating system stopped that
+  context from being reported at all and left this pull request unmergeable with all eight of
+  its checks green — the change breaking the requirement it had to satisfy. The matrix job is
+  now `checks`, and a plain `gate` job depending on it asserts every leg passed. The name is
+  kept here rather than re-pointing the ruleset at the two leg names, so the matrix can gain
+  or lose an operating system without the merge requirement being edited again.
+  `tests/test_doc_claims.py` asserts the three properties that ruleset depends on — a `gate`
+  job exists, is not itself a matrix, and carries `needs: checks` with `if: always()` — because
+  the ruleset lives in repository settings and is invisible from the tree.
+
+### Changed
+
+- The two spawn sites that spelled the decode policy as literals now import
+  `TEXT_ENCODING`/`TEXT_ERRORS` from `interface/proc.py`, and `tests/test_proc.py` fails
+  on the next literal respelled outside `proc.py` and `streams.py` — the guardrail's
+  "one decode policy" sentence is now true, and mechanical.
+
 ## [0.9.1] - 2026-08-28
 
 The delta triage build round: nothing in the engine's contract moves, so this is a patch

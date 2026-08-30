@@ -71,7 +71,9 @@ concrete dependency. Type everything; `ty` must pass.
 - Docs are part of the change, not an afterthought: a PR that changes behavior
   updates the docs that describe it in the same PR.
 - `CHANGELOG.md` (Keep a Changelog, pre-1.0 `[Unreleased]`) gets an entry for any
-  notable change. An addition to a public protocol a consumer keys on — a new exit
+  notable change; the `changelog` workflow enforces this for any PR touching
+  `src/`, and a change that genuinely warrants no entry declares it with a
+  `Changelog: none (<reason>)` commit trailer. An addition to a public protocol a consumer keys on — a new exit
   code, telemetry `outcome`/`error_kind` value, event, field, or series.toml key —
   is marked **(consumer-affecting)** even when additive. See
   [docs/design/02-formats.md](docs/design/02-formats.md).
