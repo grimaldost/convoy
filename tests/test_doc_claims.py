@@ -139,14 +139,25 @@ def test_the_marketplace_entry_is_the_one_the_installer_reads() -> None:
 
 
 def _ci_gate_commands() -> list[str]:
-    """Every command CI runs, in the order CI runs them.
+    """Every command CI's `checks` job runs, in the order CI runs them.
 
     Read from the workflow rather than restated here, so the expectation cannot be the thing
-    that goes stale. Parsed with a line regex instead of a YAML dependency: the file is one
-    job of plain `- run:` steps, and a parser is not what this test is about.
+    that goes stale. Parsed with a line regex instead of a YAML dependency: the job is plain
+    `- run:` steps, and a parser is not what this test is about.
+
+    Scoped to `checks` rather than to the whole file. The workflow's other job is the `gate`
+    aggregator the branch ruleset requires by name; its one step asserts the matrix result
+    and is not a command a contributor reproduces locally. Reading the file whole would make
+    that assertion "a command CI runs" and demand the contributor docs list it — the same
+    reasoning that keeps the changelog gate in a workflow of its own.
     """
     workflow = _text('.github', 'workflows', 'ci.yml')
-    return [match.group(1).strip() for match in re.finditer(r'^\s*- run: (.+)$', workflow, re.M)]
+    job = re.search(r'^  checks:\n(.*?)(?=^  \S|\Z)', workflow, re.M | re.S)
+    if job is None:
+        return []  # the non-vacuity guard below owns this failure
+    return [
+        match.group(1).strip() for match in re.finditer(r'^\s*- run: (.+)$', job.group(1), re.M)
+    ]
 
 
 def _gate_block(body: str) -> str | None:
@@ -246,3 +257,35 @@ def test_the_commit_lane_is_not_empty() -> None:
     commands = _commit_lane_commands()
     assert 'uv lock --check' in commands
     assert len(commands) >= 3, commands
+
+
+def test_the_required_status_check_context_is_a_plain_job_named_gate() -> None:
+    """The branch ruleset requires one context, `gate`, and a matrix job never reports it.
+
+    When the gate gained its second operating system the reported checks became
+    `gate (ubuntu-latest)` and `gate (windows-latest)`; the bare `gate` context stopped
+    existing, and the pull request that made the change sat unmergeable with all eight of
+    its checks green. The aggregator job restores that context. What is asserted here is
+    the set of properties the ruleset silently depends on — the ruleset lives in repository
+    settings and is invisible from the tree, so the next person to reshape the matrix has
+    no way to know it is watching.
+    """
+    workflow = _text('.github', 'workflows', 'ci.yml')
+    job = re.search(r'^  gate:\n(.*?)(?=^  \S|\Z)', workflow, re.M | re.S)
+    assert job is not None, (
+        'ci.yml declares no job named `gate`, so the required status check is never reported '
+        'and every pull request blocks with its checks green'
+    )
+    body = job.group(1)
+    assert 'strategy:' not in body and 'matrix:' not in body, (
+        'the `gate` job is a matrix, so it reports `gate (<leg>)` per leg and never the bare '
+        '`gate` context the ruleset requires'
+    )
+    assert re.search(r'^    needs: checks$', body, re.M), (
+        'the `gate` aggregate must depend on `checks`, or it reports success without the '
+        'matrix having run'
+    )
+    assert re.search(r'^    if: always\(\)$', body, re.M), (
+        'without `if: always()` a red leg leaves the aggregate SKIPPED, and a skipped '
+        'required check never fails a pull request — it just never arrives'
+    )

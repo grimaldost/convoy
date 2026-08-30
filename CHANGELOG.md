@@ -51,6 +51,18 @@ CI gains the second operating system the engine's failure history keeps naming.
   platform-shaped — the locale-decode class and the path-separator class were each caught
   after merge, on a Windows machine, invisible to a Linux-only leg.
 
+  The matrix arrives behind an aggregating job that keeps the name. A matrix job reports one
+  check per leg (`gate (ubuntu-latest)`, `gate (windows-latest)`) and never the bare `gate`
+  context the branch ruleset requires, so adding the second operating system stopped that
+  context from being reported at all and left this pull request unmergeable with all eight of
+  its checks green — the change breaking the requirement it had to satisfy. The matrix job is
+  now `checks`, and a plain `gate` job depending on it asserts every leg passed. The name is
+  kept here rather than re-pointing the ruleset at the two leg names, so the matrix can gain
+  or lose an operating system without the merge requirement being edited again.
+  `tests/test_doc_claims.py` asserts the three properties that ruleset depends on — a `gate`
+  job exists, is not itself a matrix, and carries `needs: checks` with `if: always()` — because
+  the ruleset lives in repository settings and is invisible from the tree.
+
 ### Changed
 
 - The two spawn sites that spelled the decode policy as literals now import
