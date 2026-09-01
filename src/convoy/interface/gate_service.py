@@ -155,6 +155,12 @@ def gate_envelope(spec: GateSpec, workspace: Path, outcome: GateOutcome) -> dict
     reassembling one from the per-check fields. ``convoy_version`` names the engine that
     produced the envelope, so a stored verdict stays interpretable when the shape later
     grows.
+
+    ``repair_brief`` is deliberately uncapped, unlike the neighbouring ``checks`` list:
+    the list is a record, and a record can report what it dropped, while the brief is an
+    instruction to repair every blocking red. A brief missing some of them would send a
+    fix at part of the problem while reading as the whole of it. A gate wide enough for
+    the size to matter has a spec problem the cap would only hide.
     """
     results = outcome.verdict.results
     passed = sum(1 for result in results if result.passed)

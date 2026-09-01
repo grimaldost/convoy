@@ -688,6 +688,21 @@ def test_fix_brief_is_the_brief_plus_the_shared_repair_section() -> None:
     assert brief == 'Implement PR-1.' + '\n\n' + repair_brief(verdict)
 
 
+def test_fix_brief_on_a_green_verdict_appends_no_section() -> None:
+    """The docstring's "only ever called on a blocking red" is pinned, not just asserted.
+
+    The sole call site is inside the fix loop's ``while verdict.blocking_red``, so this
+    shape is unreachable in production. It is pinned anyway: an unguarded caller added
+    later would otherwise append an empty headed section to a brief with nothing wrong,
+    and no test would say so.
+    """
+    passing = CheckResult(check=Check(name='suite', run='x', blocking=True), passed=True, detail='')
+    verdict = decide([passing])
+
+    assert repair_brief(verdict) == ''
+    assert _fix_brief('Implement PR-1.', verdict) == 'Implement PR-1.\n\n'
+
+
 def test_repair_hint_reaches_the_fix_spawn_brief(harness: Harness) -> None:
     """The recipe declared on the failing check is briefed to the fix spawn that repairs it."""
     hint = 'create fixed.marker in the workspace root'

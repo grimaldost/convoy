@@ -142,6 +142,13 @@ def test_the_spec_timeout_governs_the_run(tmp_path: Path) -> None:
 
 
 def test_envelope_shape_is_stable(tmp_path: Path) -> None:
+    """Every key and its value, except the two a machine's own output decides.
+
+    ``repair_brief`` is popped rather than compared against itself: its value belongs to
+    ``test_envelope_repair_brief_is_the_run_s_own_fix_section``, and an entry that reads
+    the envelope back is true by construction, so it would pin the key's presence while
+    letting any value regression through. The pop still fails loudly if the key is gone.
+    """
     spec = _spec(
         _check('a', _OK),
         _check('bad', _RED, phases=('core',)),
@@ -149,6 +156,7 @@ def test_envelope_shape_is_stable(tmp_path: Path) -> None:
     )
     outcome = run_gate(spec, tmp_path, phases=('core',))
     envelope = gate_envelope(spec, tmp_path, outcome)
+    brief = envelope.pop('repair_brief')
     assert envelope == {
         'ok': False,
         'outcome': 'blocked',
@@ -179,7 +187,6 @@ def test_envelope_shape_is_stable(tmp_path: Path) -> None:
         ],
         'blocking_red': True,
         'independent_red': False,
-        'repair_brief': envelope['repair_brief'],
         'counts': {'total': 3, 'selected': 2, 'passed': 1, 'failed': 1},
         'advisories': [],
         'truncated': {'any': False, 'checks': 0},
@@ -187,8 +194,8 @@ def test_envelope_shape_is_stable(tmp_path: Path) -> None:
         'convoy_version': __version__,
     }
     assert 'boom-marker' in envelope['checks'][1]['detail']
-    assert envelope['repair_brief'].startswith('## Failing checks to repair')
-    assert 'bad' in envelope['repair_brief']
+    assert brief.startswith('## Failing checks to repair')
+    assert 'bad' in brief
 
 
 def test_envelope_repair_brief_is_empty_on_a_green_gate(tmp_path: Path) -> None:
