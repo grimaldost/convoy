@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from convoy import __version__
 from convoy.core.gate import (
     AdvisoryOnlySelectionError,
     EmptySelectionError,
@@ -34,6 +35,7 @@ from convoy.core.gate import (
     UnknownPhaseError,
     checks_for_phases,
     decide,
+    repair_brief,
 )
 from convoy.core.spec import Check, GateSpec
 from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK, EXIT_USAGE
@@ -133,6 +135,14 @@ def gate_envelope(spec: GateSpec, workspace: Path, outcome: GateOutcome) -> dict
     outside the invoking shell. ``advisories`` is always present and currently always
     empty — the same read-unconditionally guarantee every other convoy envelope gives,
     reserved so a future non-fatal remark is an addition, not a shape change.
+
+    Two fields serve a caller that orchestrates its own repairs. ``repair_brief`` is the
+    ready-to-append failing-checks section — :func:`convoy.core.gate.repair_brief`, the
+    same text the run's own fix loop briefs a fix spawn with, and ``''`` on a green gate
+    — so an external orchestrator appends it to its implementer's brief instead of
+    reassembling one from the per-check fields. ``convoy_version`` names the engine that
+    produced the envelope, so a stored verdict stays interpretable when the shape later
+    grows.
     """
     results = outcome.verdict.results
     passed = sum(1 for result in results if result.passed)
@@ -158,6 +168,7 @@ def gate_envelope(spec: GateSpec, workspace: Path, outcome: GateOutcome) -> dict
         ],
         'blocking_red': outcome.verdict.blocking_red,
         'independent_red': outcome.verdict.independent_red,
+        'repair_brief': repair_brief(outcome.verdict),
         'counts': {
             'total': len(spec.checks),
             'selected': len(results),
@@ -170,6 +181,7 @@ def gate_envelope(spec: GateSpec, workspace: Path, outcome: GateOutcome) -> dict
             'checks': max(0, len(results) - _CHECK_CAP),
         },
         'exit_code': outcome.exit_code,
+        'convoy_version': __version__,
     }
 
 

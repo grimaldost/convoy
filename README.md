@@ -150,7 +150,9 @@ gate standalone — without shelling out:
 - **`convoy_gate(series_file, workspace, phases=[])`** — run the series'
   `[[checks]]` against a workspace once and return the gate envelope: per-check
   verdicts with structured failure facts (`exit_code`, `timed_out`) and details,
-  `blocking_red` / `independent_red`, and the CLI-equivalent exit code. The gate
+  `blocking_red` / `independent_red`, a `repair_brief` ready to append to an
+  implementer's brief (the same section convoy briefs its own fix spawn with),
+  `convoy_version`, and the CLI-equivalent exit code. The gate
   standalone, for verifying work produced outside convoy; no spawn, no git
   mutation, no telemetry. Accepts a full series.toml or a minimal `[series] id` +
   `[[checks]]` file. An invocation that cannot answer — an unknown phase tag, a

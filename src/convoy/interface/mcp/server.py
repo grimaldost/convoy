@@ -400,9 +400,11 @@ async def convoy_gate(
     Returns the gate envelope: ``ok``, ``outcome`` (``completed`` | ``blocked`` |
     ``usage``), ``series_id``, ``workspace``, ``phases``, per-check verdicts with a
     failure ``detail`` a repair can be briefed with, ``blocking_red`` /
-    ``independent_red``, ``counts``, and the CLI-equivalent ``exit_code`` (0 green — a
-    non-blocking red advises without blocking — 1 blocking red). The CLI twin is
-    ``convoy gate``; both emit this same envelope.
+    ``independent_red``, ``repair_brief`` (the ready-to-append failing-checks section,
+    the same text convoy briefs its own fix spawn with; ``''`` when green), ``counts``,
+    the CLI-equivalent ``exit_code`` (0 green — a non-blocking red advises without
+    blocking — 1 blocking red), and ``convoy_version``. The CLI twin is ``convoy gate``;
+    both emit this same envelope.
     """
     return await asyncio.to_thread(_gate_impl, series_file, workspace, phases or [])
 

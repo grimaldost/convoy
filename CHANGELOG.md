@@ -11,6 +11,20 @@ marked
 engine knows to sync rather than silently mis-handle the new value. See the versioning
 discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
+## [Unreleased]
+
+### Added
+
+- The gate envelope carries `repair_brief` and `convoy_version`
+  **(consumer-affecting)**. `repair_brief` is the failing-checks section — each blocking
+  red's name, `detail` and declared `repair_hint`, plus the independence note — in the
+  exact form the run's own fix loop appends to a fix spawn's brief, and `''` when the
+  gate is green. It was previously private to the driver, so an orchestrator that ran
+  the gate standalone and repaired the red itself had to reassemble the same text from
+  the per-check fields; the section is now `core.gate.repair_brief`, one pure function
+  both paths read. `convoy_version` names the engine that produced the verdict, so a
+  stored envelope stays interpretable as the shape grows.
+
 ## [0.10.0] - 2026-09-01
 
 The round the gate stopped being part of the run. Convoy's most valuable mechanism — the

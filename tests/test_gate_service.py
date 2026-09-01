@@ -12,11 +12,13 @@ from pathlib import Path
 
 import pytest
 
+from convoy import __version__
 from convoy.core.gate import (
     AdvisoryOnlySelectionError,
     EmptySelectionError,
     IsolationRefusedError,
     UnknownPhaseError,
+    repair_brief,
 )
 from convoy.core.spec import Check, GateSpec
 from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK
@@ -177,12 +179,31 @@ def test_envelope_shape_is_stable(tmp_path: Path) -> None:
         ],
         'blocking_red': True,
         'independent_red': False,
+        'repair_brief': envelope['repair_brief'],
         'counts': {'total': 3, 'selected': 2, 'passed': 1, 'failed': 1},
         'advisories': [],
         'truncated': {'any': False, 'checks': 0},
         'exit_code': EXIT_BLOCKED,
+        'convoy_version': __version__,
     }
     assert 'boom-marker' in envelope['checks'][1]['detail']
+    assert envelope['repair_brief'].startswith('## Failing checks to repair')
+    assert 'bad' in envelope['repair_brief']
+
+
+def test_envelope_repair_brief_is_empty_on_a_green_gate(tmp_path: Path) -> None:
+    """Nothing blocking failed, so there is nothing to brief a repair with."""
+    spec = _spec(_check('a', _OK))
+    envelope = gate_envelope(spec, tmp_path, run_gate(spec, tmp_path))
+    assert envelope['repair_brief'] == ''
+
+
+def test_envelope_repair_brief_is_the_run_s_own_fix_section(tmp_path: Path) -> None:
+    """The envelope hands out exactly the section the run's fix loop briefs a repair with."""
+    spec = _spec(_check('bad', _RED))
+    outcome = run_gate(spec, tmp_path)
+    envelope = gate_envelope(spec, tmp_path, outcome)
+    assert envelope['repair_brief'] == repair_brief(outcome.verdict)
 
 
 def test_envelope_green_outcome_word(tmp_path: Path) -> None:

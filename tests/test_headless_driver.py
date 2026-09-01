@@ -24,7 +24,7 @@ from typing import cast
 import pytest
 from test_reporter import RecordingReporter
 
-from convoy.core.gate import CheckResult, decide
+from convoy.core.gate import CheckResult, decide, repair_brief
 from convoy.core.preflight import Advisory
 from convoy.core.spec import (
     PR,
@@ -644,6 +644,48 @@ def test_fix_brief_carries_a_declared_repair_hint() -> None:
 
     assert 'repair hint: run scripts/generate_references.py and commit the diff' in brief
     assert brief.count('repair hint:') == 1  # the hintless check gained no line
+
+
+def test_fix_brief_is_the_brief_plus_the_shared_repair_section() -> None:
+    """The composed fix brief is byte-identical to what the driver built before extraction.
+
+    The section text now lives in :func:`convoy.core.gate.repair_brief`, shared with the
+    gate envelope. This pins the composed result against the literal the driver produced
+    beforehand, so an edit to the shared section that changes what a fix spawn reads
+    cannot pass unnoticed.
+    """
+    oracle = Check(
+        name='oracle',
+        run='x',
+        blocking=True,
+        independent=True,
+        repair_hint='regenerate the fixtures',
+    )
+    bare = Check(name='suite', run='x', blocking=True)
+    advice = Check(name='advice', run='x', blocking=False)
+    verdict = decide(
+        [
+            CheckResult(check=oracle, passed=False, detail='exited 1: 2 failed'),
+            CheckResult(check=bare, passed=False, detail='exited 1: 3 failed'),
+            CheckResult(check=advice, passed=False, detail='exited 1: nit'),
+        ]
+    )
+
+    brief = _fix_brief('Implement PR-1.', verdict)
+
+    assert brief == (
+        'Implement PR-1.\n'
+        '\n'
+        '## Failing checks to repair\n'
+        '\n'
+        'At least one failing check is independent (author-supplied, unreachable '
+        'by you) — its red is a trustworthy signal.\n'
+        '\n'
+        '- oracle: exited 1: 2 failed\n'
+        '  repair hint: regenerate the fixtures\n'
+        '- suite: exited 1: 3 failed'
+    )
+    assert brief == 'Implement PR-1.' + '\n\n' + repair_brief(verdict)
 
 
 def test_repair_hint_reaches_the_fix_spawn_brief(harness: Harness) -> None:
