@@ -20,6 +20,7 @@ from convoy.interface.drivers.headless import (
     format_problems,
     make_run_id,
 )
+from convoy.interface.fs_probe import isolation_result
 from convoy.interface.gate_service import gate_envelope, gate_usage_envelope, run_gate
 from convoy.interface.git import Git, GitError
 from convoy.interface.preflight_probe import preflight
@@ -60,13 +61,22 @@ def root(
     """convoy — governed, measurable multi-PR execution."""
 
 
+def _read_or_exit(series_file: Path) -> str:
+    """Read ``series_file`` as UTF-8, or exit ``EXIT_USAGE`` with a message."""
+    try:
+        return series_file.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError) as exc:
+        # UnicodeDecodeError: the read is pinned to UTF-8, so a legacy-encoded file is a
+        # usage error like malformed TOML — never an uncaught traceback.
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(EXIT_USAGE) from exc
+
+
 def _load_or_exit(series_file: Path) -> Series:
     """Read and structurally parse ``series_file``, or exit ``EXIT_USAGE`` with a message."""
     try:
-        return load_series(series_file.read_text(encoding='utf-8'))
-    except (OSError, UnicodeDecodeError, SpecError) as exc:
-        # UnicodeDecodeError: the read is pinned to UTF-8, so a legacy-encoded file is a
-        # usage error like malformed TOML — never an uncaught traceback.
+        return load_series(_read_or_exit(series_file))
+    except SpecError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
 
@@ -99,6 +109,33 @@ def _workspace_or_exit(workspace: Path | None) -> Path:
     return resolved
 
 
+def _validate_gate_only_or_exit(text: str, workspace: Path | None, series_error: SpecError) -> None:
+    """Validate ``text`` as a gate-only file, or re-raise the series failure it really is.
+
+    Reached only when :func:`load_series` has already refused ``text``. When
+    :func:`load_gate_spec` accepts the same bytes the file is a gate, not a broken
+    series, and the pre-flight that remains meaningful is the isolation probe: a
+    blocking independent check whose oracle is in-tree or absent would make the gate
+    self-graded, which is the one defect ``convoy gate`` refuses at run time and the one
+    a caller wants told before the checks cost anything. When both loaders refuse,
+    ``series_error`` is reported unchanged — a file that meant to be a series should not
+    be told it is a bad gate.
+    """
+    try:
+        spec = load_gate_spec(text)
+    except SpecError as exc:
+        typer.echo(str(series_error), err=True)
+        raise typer.Exit(EXIT_USAGE) from exc
+    target = _workspace_or_exit(workspace)
+    refused = [result for check in spec.checks if (result := isolation_result(target, check))]
+    if refused:
+        lines = [f'{len(refused)} problem(s) found:']
+        lines += [f'  - [[checks]] {r.check.name!r} [isolation] {r.detail}' for r in refused]
+        typer.echo('\n'.join(lines), err=True)
+        raise typer.Exit(EXIT_USAGE)
+    typer.echo('ok (gate-only)')
+
+
 @app.command()
 def validate(
     series_file: Path,
@@ -115,8 +152,23 @@ def validate(
     Advisories (a PR that phase-scoped checks leave ungated) print to stderr and do NOT
     change the exit code: stdout stays ``ok`` and the exit stays 0, because an advisory
     describes an unusual series, not an invalid one.
+
+    A **gate-only** file — one carrying just ``[series] id`` and ``[[checks]]``, the
+    input ``convoy gate`` accepts — is validated as the gate it is rather than rejected
+    as a series missing its orchestration sections. It gets the one pre-flight rule that
+    still applies without a run: every blocking independent check must back its
+    isolation, the same fail-closed probe the gate itself runs. Stdout then says ``ok
+    (gate-only)``, naming the narrower answer so a full series that quietly lost a
+    section is not read as validated. A file that is neither is reported as the broken
+    series it looks like — the series loader's message, which is the more informative of
+    the two.
     """
-    series = _load_or_exit(series_file)
+    text = _read_or_exit(series_file)
+    try:
+        series = load_series(text)
+    except SpecError as series_error:
+        _validate_gate_only_or_exit(text, workspace, series_error)
+        return
     report = preflight(series, _workspace_or_exit(workspace))
     if report.advisories:
         typer.echo(format_advisories(report.advisories), err=True)
