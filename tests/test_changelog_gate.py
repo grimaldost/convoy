@@ -135,3 +135,46 @@ def test_the_contract_surface_list_names_files_that_exist() -> None:
     """Non-vacuity: a renamed surface file would retire the advisory without a sound."""
     missing = [path for path in gate.CONTRACT_SURFACES if not (_ROOT / path).is_file()]
     assert not missing, f'CONTRACT_SURFACES names files that do not exist: {missing}'
+
+
+# --- the section-heading vocabulary ------------------------------------------
+
+
+def test_a_heading_outside_the_vocabulary_fails() -> None:
+    """The red proof: `### Documentation` reached main once; the gate must say no."""
+    errors, _ = _evaluate(
+        ['src/convoy/interface/git.py', 'CHANGELOG.md'],
+        changelog_added='### Documentation\n\n- Described a behaviour.\n',
+    )
+    assert len(errors) == 1
+    assert 'Documentation' in errors[0]
+    assert 'Added / Changed / Deprecated / Removed / Fixed / Security' in errors[0]
+
+
+def test_every_keep_a_changelog_heading_passes() -> None:
+    added = '\n'.join(f'### {word}' for word in gate.SECTION_VOCABULARY)
+    errors, _ = _evaluate(
+        ['src/convoy/interface/git.py', 'CHANGELOG.md'],
+        changelog_added=added + '\n',
+    )
+    assert errors == []
+
+
+def test_deeper_and_shallower_headings_are_not_section_headings() -> None:
+    """`## [0.9.1]` and `#### detail` are other grammar; only `### ` carries the vocabulary."""
+    errors, _ = _evaluate(
+        ['src/convoy/interface/git.py', 'CHANGELOG.md'],
+        changelog_added='## [0.9.2] - 2026-09-01\n#### a nested note\n- a bullet\n',
+        base_version=(0, 9, 1),
+        head_version=(0, 9, 2),
+    )
+    assert errors == []
+
+
+def test_the_vocabulary_check_reads_only_the_added_lines() -> None:
+    """History is grandfathered: an empty diff of CHANGELOG.md raises nothing."""
+    errors, _ = _evaluate(
+        ['src/convoy/interface/git.py', 'CHANGELOG.md'],
+        changelog_added='- an ordinary bullet under an existing heading\n',
+    )
+    assert errors == []

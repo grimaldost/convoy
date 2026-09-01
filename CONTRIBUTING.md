@@ -58,7 +58,9 @@ runs the same gates as above.
 The CHANGELOG half of that discipline is machine-enforced: the `changelog`
 workflow fails a PR whose diff touches `src/` without touching `CHANGELOG.md`,
 unless a commit in the range carries the trailer `Changelog: none (<reason>)`
-— the opt-out for a change nothing a changelog reader could notice. It also
+— the opt-out for a change nothing a changelog reader could notice. It fails
+an added `### ` section heading outside the Keep a Changelog vocabulary
+(Added / Changed / Deprecated / Removed / Fixed / Security). It also
 warns, without failing, when a contract-surface file changes and the entry
 never says **(consumer-affecting)**; `scripts/changelog_gate.py` carries the
 policy.
