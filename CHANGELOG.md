@@ -70,17 +70,35 @@ CI gains the second operating system the engine's failure history keeps naming.
   lock and no telemetry. The engine always had the primitive (`SubprocessGateRunner`
   had exactly one production call site, inside the per-PR loop); this exposes it, for
   verifying work produced outside convoy instead of letting the implementer self-report.
-  Both surfaces emit one envelope from one fold (`interface/gate_service.py`):
-  per-check verdicts with failure details, `blocking_red` / `independent_red`, counts,
-  and the CLI-equivalent exit code — 0 green, 1 blocking red, 3 usage, reusing the
-  run's own codes and outcome words (`completed` / `blocked` / `usage`).
-  `series_file` may be a full series.toml or a minimal file carrying only
+  Both surfaces emit the same envelopes from one fold (`interface/gate_service.py`),
+  the failure paths included: per-check verdicts with structured failure facts
+  (`exit_code`, `timed_out`) beside the prose `detail`, `blocking_red` /
+  `independent_red`, counts (`total` / `selected` / `passed` / `failed`), an
+  always-present `advisories` list, the run envelope's `truncated` report (the
+  per-check list caps at 50), and the CLI-equivalent `exit_code` — 0 green, 1 blocking
+  red, 3 usage, reusing the run's own codes and outcome words (`completed` / `blocked`
+  / `usage`). `series_file` may be a full series.toml or a minimal file carrying only
   `[series] id` and `[[checks]]` (`load_gate_spec`; a missing
-  `[governance] timeout_seconds` defaults to the runner's 300s). `--phase TAG`
-  (repeatable; MCP `phases`) runs exactly the checks a PR carrying those tags would be
-  gated on; a selection of zero checks is refused as a usage error rather than answered
-  green, because a gate-only caller asked a question and a green from nothing is a
-  vacuous assurance.
+  `[governance] timeout_seconds` defaults to the runner's 300s; duplicate check names,
+  an empty `[[checks]]`, and a malformed `[governance]` are refused at load). `--phase
+  TAG` (repeatable; MCP `phases`) runs exactly the checks a PR carrying those tags
+  would be gated on. An invocation that cannot produce a meaningful answer is refused
+  as `usage`, never answered green: a phase tag no check declares (the run-side
+  pre-flight treats the same typo as a blocking problem — a silently narrowed gate
+  still looks gated), a selection with no blocking check, an empty selection, and a
+  blocking independent check whose isolation is not backed (a red there would point a
+  repair loop keyed on `independent_red` at a spec defect no repair can fix — the run
+  classifies it as pre-flight usage, and now so does the gate).
+
+- `Check` results carry the structured half of their prose: `CheckResult` gains
+  `exit_code` (the command's own, `None` on a timeout) and `timed_out`, populated by
+  the gate runner. **(consumer-affecting)** for the gate envelope's `checks[]` entries;
+  telemetry lines are unchanged.
+
+- `[governance] timeout_seconds` must now be positive in both loaders. A `0` loaded as
+  "every check times out instantly", which reads as a full red gate — a one-character
+  typo masquerading as a code failure, with no pre-flight in between on the gate-only
+  path.
 
 ### Changed
 

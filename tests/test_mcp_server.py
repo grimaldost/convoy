@@ -974,15 +974,25 @@ def test_convoy_gate_red_envelope(tmp_path: Path) -> None:
 
 
 def test_convoy_gate_matches_the_cli_envelope(tmp_path: Path) -> None:
-    """The parity doctrine, asserted: both surfaces emit the same fold's object."""
-    from convoy.core.spec import load_gate_spec
-    from convoy.interface.gate_service import gate_envelope, run_gate
+    """The parity doctrine, asserted end to end: BOTH surfaces are actually invoked.
+
+    The earlier form of this test recomputed the expected object from the same
+    `gate_service` primitives the MCP tool calls, which could never catch a CLI-side
+    divergence. This one runs `convoy gate --json` through the CLI runner and the MCP
+    tool against the identical fixture and compares the parsed objects.
+    """
+    from typer.testing import CliRunner
+
+    import convoy.interface.cli as cli
 
     series_file = tmp_path / 'gate.toml'
     series_file.write_text(_gate_only_toml(red=True), encoding='utf-8')
-    spec = load_gate_spec(series_file.read_text(encoding='utf-8'))
-    expected = gate_envelope(spec, tmp_path, (), run_gate(spec, tmp_path))
-    assert asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path))) == expected
+    cli_result = CliRunner().invoke(
+        cli.app, ['gate', str(series_file), '--workspace', str(tmp_path), '--json']
+    )
+    mcp_result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path)))
+    assert json.loads(cli_result.stdout) == mcp_result
+    assert cli_result.exit_code == mcp_result['exit_code']
 
 
 def test_convoy_gate_bad_spec_is_a_usage_result_not_an_exception(tmp_path: Path) -> None:
@@ -991,10 +1001,12 @@ def test_convoy_gate_bad_spec_is_a_usage_result_not_an_exception(tmp_path: Path)
     result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path)))
     assert result['ok'] is False
     assert result['outcome'] == 'usage'
+    assert result['error_kind'] == 'spec'
+    assert result['exit_code'] == 3
     assert 'checks' in result['error']
 
 
-def test_convoy_gate_empty_selection_is_a_usage_result(tmp_path: Path) -> None:
+def test_convoy_gate_unknown_phase_is_a_usage_result(tmp_path: Path) -> None:
     text = (
         '[series]\nid = "scoped"\n\n'
         '[[checks]]\nname = "core-only"\nrun = "x"\nblocking = true\n'
@@ -1005,4 +1017,24 @@ def test_convoy_gate_empty_selection_is_a_usage_result(tmp_path: Path) -> None:
     result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path), phases=['nope']))
     assert result['ok'] is False
     assert result['outcome'] == 'usage'
-    assert 'selects no checks' in result['error']
+    # Once mislabeled 'filesystem' by error_kind's OSError catch-all.
+    assert result['error_kind'] == 'spec'
+    assert result['series_id'] == 'scoped'
+    assert result['exit_code'] == 3
+    assert "'nope'" in result['error']
+
+
+def test_convoy_gate_bad_workspace_is_a_usage_result_not_an_exception(tmp_path: Path) -> None:
+    """A missing workspace (or one that is a file) surfaces from Popen as OSError.
+
+    An exception escaping `_gate_impl` becomes a protocol-level tool error with no
+    outcome to branch on — the most likely caller mistake must come back as data.
+    """
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_only_toml(), encoding='utf-8')
+    for bad in (str(tmp_path / 'absent'), str(series_file)):
+        result = asyncio.run(srv.convoy_gate(str(series_file), bad))
+        assert result['ok'] is False, bad
+        assert result['outcome'] == 'usage', bad
+        assert result['error_kind'] == 'filesystem', bad
+        assert result['exit_code'] == 3, bad

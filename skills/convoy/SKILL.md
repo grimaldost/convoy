@@ -257,12 +257,16 @@ not there for the run.
 written, and the `series_file` / `workspace` to hand straight to `convoy_run`.
 
 **`convoy_gate`** — the gate envelope: `ok`, `outcome` (`completed` | `blocked` |
-`usage`), `series_id`, `workspace`, `phases`, `checks` (one `{name, passed, blocking,
-independent, phases, detail}` per selected check, `detail` carrying the failure tail a
-repair can be briefed with), `blocking_red`, `independent_red`, `counts`
-(`{selected, passed, failed}`), and the CLI-equivalent `exit_code` (0 green — a
-non-blocking red advises without blocking — 1 blocking red). The CLI twin `convoy gate
---json` prints this same object.
+`usage`), `series_id`, `workspace` (resolved absolute), `phases`, `checks` (one
+`{name, passed, blocking, independent, phases, exit_code, timed_out, detail}` per
+selected check — the structured fields for branching, `detail` carrying the failure
+tail a repair can be briefed with; capped at 50 with a `truncated` report), `blocking_red`,
+`independent_red`, `counts` (`{total, selected, passed, failed}`), `advisories` (always
+present, currently always empty), and the CLI-equivalent `exit_code` (0 green — a
+non-blocking red advises without blocking — 1 blocking red). A refused invocation
+returns the usage envelope instead: `{ok: false, outcome: "usage", error_kind, error,
+exit_code: 3, series_id?}`. The CLI twin `convoy gate --json` prints these same
+objects, usage paths included.
 
 ## The gate without the run
 
@@ -280,12 +284,22 @@ courtroom. The `[[checks]]` semantics are identical to a run's, so a series file
 authored for `convoy_run` gates the same way standalone, and a minimal file carrying
 only `[series] id` and `[[checks]]` is enough when no run is ever intended.
 
-Two rules differ from a run, both deliberate. A phase selection that matches zero
-checks is refused (`outcome: "usage"`) rather than answered green — an ungated PR
-inside a series is the author's declared choice, but a gate-only caller asked a
-question and a green from nothing is a vacuous assurance. And no workspace lock is
-taken: gating a tree a `convoy_run` is actively driving gates whatever that driver has
-checked out at that instant.
+Some rules differ from a run, all deliberate, with one thread: a gate-only caller
+asked a question, and an invocation that cannot produce a meaningful answer is refused
+(`outcome: "usage"`) rather than answered. Four refusals: a phase tag no check
+declares (a typo must not silently narrow the gate to the unscoped checks and go
+green); a selection with no blocking check (nothing in it can say no, so `completed`
+would assure nothing — inside a series the same condition is the author's declared
+choice and pre-flight merely advises); an empty selection; and a blocking independent
+check whose isolation is not backed (the run reports that identical defect at
+pre-flight — calling it a red would point a repair loop keyed on `independent_red` at
+a spec misconfiguration no repair can fix).
+
+And no workspace lock is taken. Convoy itself writes nothing to the tree — but the
+check commands run in it and routinely do (caches, build output), so never gate a
+workspace a `convoy_run` is actively driving: beyond gating whatever that driver has
+checked out at that instant, the run's commit step stages the whole tree and can
+commit a concurrent gate's artifacts into a scored branch.
 
 ## Authoring a series.toml
 

@@ -149,10 +149,13 @@ gate standalone — without shelling out:
   paths.
 - **`convoy_gate(series_file, workspace, phases=[])`** — run the series'
   `[[checks]]` against a workspace once and return the gate envelope: per-check
-  verdicts with failure details, `blocking_red` / `independent_red`, and the
-  CLI-equivalent exit code. The gate standalone, for verifying work produced
-  outside convoy; no spawn, no git mutation, no telemetry. Accepts a full
-  series.toml or a minimal `[series] id` + `[[checks]]` file.
+  verdicts with structured failure facts (`exit_code`, `timed_out`) and details,
+  `blocking_red` / `independent_red`, and the CLI-equivalent exit code. The gate
+  standalone, for verifying work produced outside convoy; no spawn, no git
+  mutation, no telemetry. Accepts a full series.toml or a minimal `[series] id` +
+  `[[checks]]` file. An invocation that cannot answer — an unknown phase tag, a
+  selection with no blocking check, unbacked isolation — returns a `usage`
+  envelope, never a narrowed green.
 - **`convoy_run(series_file, workspace, dry_run=false, config_isolation=true,
   reset=false, resume=false, detach=false)`** — run a series and return a
   structured summary: outcome, exit code, per-spawn economy totals, and a per-PR
@@ -175,7 +178,7 @@ background shell, same engine. Either way, follow it with `convoy status` /
 | Verb | What | Notable flags |
 |------|------|---------------|
 | `convoy validate <series.toml>` | Free preflight (no git mutation, no spawn) | `--workspace <dir>` / `-w` (default: cwd) |
-| `convoy gate <series.toml>` | Run the series' `[[checks]]` against the workspace once — the gate standalone, for verifying work produced outside convoy. No spawn, no branch, no merge; the same fail-closed independence guard and verdict rules as a run. Accepts a full series.toml or a minimal `[series] id` + `[[checks]]` file. Exit 0 green / 1 blocking red / 3 usage | `--workspace <dir>` / `-w` (default: cwd), `--phase <tag>` (repeatable; run what a PR carrying the tag would be gated on — zero selected checks is refused, not answered green), `--json` (print the gate envelope to stdout as one JSON object) |
+| `convoy gate <series.toml>` | Run the series' `[[checks]]` against the workspace once — the gate standalone, for verifying work produced outside convoy. No spawn, no branch, no merge; the same fail-closed independence guard and verdict rules as a run. Accepts a full series.toml or a minimal `[series] id` + `[[checks]]` file. Exit 0 green / 1 blocking red / 3 usage — an invocation that cannot answer (an unknown phase tag, a selection with no blocking check, unbacked isolation) is refused as usage, never narrowed to a green | `--workspace <dir>` / `-w` (default: cwd), `--phase <tag>` (repeatable; run what a PR carrying the tag would be gated on), `--json` (print the gate envelope — usage paths included — to stdout as one JSON object) |
 | `convoy run <series.toml>` | Run the series against the workspace | `--workspace <dir>` / `-w` (default: cwd), `--json` (print the run summary to stdout as one JSON object), `--resume` (continue the integration branch, skipping PRs already merged into it), `--fresh` (reset to base, delete prior series branches first), `--run-id <id>` (pin the run id instead of minting one), `--quiet`, `--no-config-isolation` |
 | `convoy clean <series.toml>` | **Destructive** recovery after a halted or killed run: discard uncommitted changes, delete untracked files, return to base, delete the series' branches, remove a stale run lock | `--dry-run` / `-n` (print the plan, change nothing), `--workspace <dir>` / `-w` |
 | `convoy status <series.toml>` | Report a run's state and economy so far — including one still in progress. Reads the ledger only; spends nothing | `--run-id` (default: the latest run), `--json` |

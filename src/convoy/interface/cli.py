@@ -10,16 +10,17 @@ from typing import Annotated
 import typer
 
 from convoy import __version__
+from convoy.core.gate import GateUsageError
 from convoy.core.governance import GovernanceError
 from convoy.core.preflight import Problem
-from convoy.core.spec import GateSpec, Series, SpecError, load_gate_spec, load_series
+from convoy.core.spec import Series, SpecError, load_gate_spec, load_series
 from convoy.interface.drivers.headless import (
     EXIT_USAGE,
     format_advisories,
     format_problems,
     make_run_id,
 )
-from convoy.interface.gate_service import EmptySelectionError, gate_envelope, run_gate
+from convoy.interface.gate_service import gate_envelope, gate_usage_envelope, run_gate
 from convoy.interface.git import Git, GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
@@ -125,13 +126,22 @@ def validate(
     typer.echo('ok')
 
 
-def _load_gate_or_exit(series_file: Path) -> GateSpec:
-    """Read and parse ``series_file`` as a gate spec, or exit ``EXIT_USAGE`` with a message."""
-    try:
-        return load_gate_spec(series_file.read_text(encoding='utf-8'))
-    except (OSError, UnicodeDecodeError, SpecError) as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(EXIT_USAGE) from exc
+def _gate_usage_exit(
+    exc: Exception, json_summary: bool, series_id: str | None = None
+) -> typer.Exit:
+    """Report a gate usage failure on both channels and build the ``EXIT_USAGE`` exit.
+
+    Under ``--json`` stdout still carries exactly one parseable object — the same usage
+    envelope the MCP tool returns — because the failure case is the one a machine
+    consumer most needs to classify (the reasoning ``run``'s ``_emit_failure_json``
+    already records).
+    """
+    if json_summary:
+        typer.echo(
+            json.dumps(gate_usage_envelope(exc, error_kind=error_kind(exc), series_id=series_id))
+        )
+    typer.echo(str(exc), err=True)
+    return typer.Exit(EXIT_USAGE)
 
 
 @app.command()
@@ -147,8 +157,8 @@ def gate(
             help=(
                 'Run the checks a PR carrying this phase tag would be gated on — the '
                 'unscoped checks plus the ones scoped to it. Repeatable (tags union). '
-                'Without it, the whole gate runs. A selection of zero checks is refused '
-                'rather than answered green.'
+                'Without it, the whole gate runs. A tag no check declares is refused '
+                '(usage), not silently narrowed to a green.'
             ),
         ),
     ]
@@ -173,19 +183,30 @@ def gate(
     minimal file carrying only ``[series] id`` and ``[[checks]]``.
 
     Per-check narration goes to stderr; stdout carries the outcome word (``completed`` /
-    ``blocked``), or exactly one JSON object under ``--json``. Exit codes are the run's
-    own: 0 green (a non-blocking red advises without blocking), 1 blocking red, 3 usage.
-    Nothing is written to the workspace and no lock is taken — gating a tree another
-    process is actively driving gates whatever that driver has checked out.
+    ``blocked``), or exactly one JSON object under ``--json`` — on the usage paths too,
+    where the object is the same usage envelope the MCP tool returns. Exit codes are
+    the run's own: 0 green (a non-blocking red advises without blocking), 1 blocking
+    red, 3 usage. Convoy writes nothing to the workspace and takes no lock — but the
+    check commands run in the tree and may write (caches, build output), so do not gate
+    a workspace a ``convoy run`` is actively driving: beyond gating whatever that
+    driver has checked out, the run's commit step stages the whole tree and can commit
+    a concurrent gate's artifacts into a scored branch.
     """
-    spec = _load_gate_or_exit(series_file)
+    try:
+        spec = load_gate_spec(series_file.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, SpecError) as exc:
+        raise _gate_usage_exit(exc, json_summary) from exc
     target = _workspace_or_exit(workspace)
     phases = tuple(phase or ())
     try:
         outcome = run_gate(spec, target, phases)
-    except EmptySelectionError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(EXIT_USAGE) from exc
+    except GateUsageError as exc:
+        raise _gate_usage_exit(exc, json_summary, spec.id) from exc
+    except OSError as exc:
+        # A workspace vanishing mid-gate, a dead mount, an unspawnable shell: a usage
+        # failure, never a traceback — and never exit 1, which would read as a blocking
+        # red to a caller watching only the exit code (same rule as `run`).
+        raise _gate_usage_exit(exc, json_summary, spec.id) from exc
 
     for result in outcome.verdict.results:
         mark = 'ok ' if result.passed else 'RED'
@@ -195,7 +216,7 @@ def gate(
         typer.echo(line, err=True)
 
     if json_summary:
-        typer.echo(json.dumps(gate_envelope(spec, target, phases, outcome)))
+        typer.echo(json.dumps(gate_envelope(spec, target, outcome)))
     else:
         typer.echo('blocked' if outcome.verdict.blocking_red else 'completed')
     raise typer.Exit(outcome.exit_code)

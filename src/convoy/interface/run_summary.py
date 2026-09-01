@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from convoy.core.gate import GateUsageError
 from convoy.core.governance import GovernanceError
 from convoy.core.spec import Series, SpecError
 from convoy.interface import detached
@@ -397,11 +398,12 @@ def detached_result(outputs: Path, run_id: str) -> dict[str, Any] | None:
 def error_kind(exc: Exception) -> str:
     """Classify a could-not-start failure so an agent can branch on it, not parse a string.
 
-    One of ``spec`` (invalid, malformed, or undecodable series), ``governance``
+    One of ``spec`` (invalid, malformed, or undecodable series — including a gate-only
+    invocation the spec cannot answer, a ``GateUsageError``), ``governance``
     (unresolvable model/tier at runtime), ``git`` (a git operation failed), ``busy``
     (another run holds the workspace lock), or ``filesystem`` (any other ``OSError``).
     """
-    if isinstance(exc, SpecError | UnicodeDecodeError):
+    if isinstance(exc, SpecError | UnicodeDecodeError | GateUsageError):
         return 'spec'
     if isinstance(exc, GovernanceError):
         return 'governance'

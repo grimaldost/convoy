@@ -15,11 +15,61 @@ from dataclasses import dataclass
 from convoy.core.spec import PR, Check
 
 
+class GateUsageError(ValueError):
+    """A gate-only invocation that cannot yield a meaningful verdict.
+
+    The gate-only service refuses these before running anything — the caller asked a
+    question the given spec + arguments cannot answer, which is a usage defect, not a
+    red gate. Defined here (pure, data-only) so the classification that maps them to a
+    ``usage`` outcome can live anywhere without importing the service.
+    """
+
+
+class EmptySelectionError(GateUsageError):
+    """The selection is empty — a vacuous green, refused fail-closed."""
+
+
+class UnknownPhaseError(GateUsageError):
+    """A requested phase tag appears on no check — the named gate cannot run.
+
+    The run-side twin is pre-flight's ``check_phases`` problem: a tag typo silently
+    disabling a check is worse than a missing check, because the result still looks
+    gated. Without this, a typo'd tag selects only the unscoped checks and reports
+    green while the check the caller named the phase FOR never ran.
+    """
+
+
+class AdvisoryOnlySelectionError(GateUsageError):
+    """The selection contains no blocking check — nothing can block, so nothing gates.
+
+    Inside a series an ungated PR is the author's declared choice and pre-flight
+    advises about it; a gate-only caller asked a question, and ``ok: true`` from a
+    selection that cannot say no is the vacuous assurance this surface refuses.
+    """
+
+
+class IsolationRefusedError(GateUsageError):
+    """A blocking independent check's isolation cannot be backed — a spec defect.
+
+    The run reports this identical defect as a pre-flight ``usage`` problem before
+    anything executes; the gate-only surface classifies it the same way rather than
+    synthesizing a failing check result, so a consumer told ``blocked`` can trust the
+    WORK is bad, never the gate spec — and an auto-repair loop keyed on
+    ``independent_red`` is never launched against a misconfiguration it cannot fix.
+    """
+
+
 @dataclass(frozen=True)
 class CheckResult:
     check: Check
     passed: bool
     detail: str
+    # The structured half of ``detail``, for a consumer that branches rather than
+    # parses prose: the command's process exit code (``None`` when it never ran to an
+    # exit — a timeout, or an isolation-refused synthetic result) and whether the
+    # timeout fired. Defaulted so existing constructors and telemetry are unchanged.
+    exit_code: int | None = None
+    timed_out: bool = False
 
 
 @dataclass(frozen=True)

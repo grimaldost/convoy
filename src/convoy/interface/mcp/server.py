@@ -29,11 +29,12 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from convoy.core.gate import GateUsageError
 from convoy.core.governance import GovernanceError
 from convoy.core.spec import Series, SpecError, load_gate_spec, load_series
 from convoy.interface.detached import launch_detached
 from convoy.interface.drivers.headless import make_run_id
-from convoy.interface.gate_service import EmptySelectionError, gate_envelope, run_gate
+from convoy.interface.gate_service import gate_envelope, gate_usage_envelope, run_gate
 from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.run_service import PreflightError, run_series_headless, start_report
@@ -333,17 +334,22 @@ async def convoy_run(
 
 
 def _gate_impl(series_file: str, workspace: str, phases: list[str]) -> dict[str, Any]:
-    """Load the gate spec and run the checks once, shaping a result (sync)."""
+    """Load the gate spec and run the checks once, shaping a result (sync).
+
+    Every failure returns a usage envelope, never raises: an exception escaping here
+    becomes a protocol-level tool error with no ``outcome`` to branch on. ``OSError``
+    around ``run_gate`` is the workspace-shaped one — a path that is missing or a file
+    surfaces from ``Popen(cwd=...)``, and it is the single most likely caller mistake.
+    """
     try:
         spec = load_gate_spec(Path(series_file).read_text(encoding='utf-8'))
     except (OSError, UnicodeDecodeError, SpecError) as exc:
-        return {'ok': False, 'outcome': 'usage', 'error_kind': error_kind(exc), 'error': str(exc)}
-    tags = tuple(phases)
+        return gate_usage_envelope(exc, error_kind=error_kind(exc))
     try:
-        outcome = run_gate(spec, Path(workspace), tags)
-    except EmptySelectionError as exc:
-        return {'ok': False, 'outcome': 'usage', 'error_kind': error_kind(exc), 'error': str(exc)}
-    return gate_envelope(spec, Path(workspace), tags, outcome)
+        outcome = run_gate(spec, Path(workspace), tuple(phases))
+    except (GateUsageError, OSError) as exc:
+        return gate_usage_envelope(exc, error_kind=error_kind(exc), series_id=spec.id)
+    return gate_envelope(spec, Path(workspace), outcome)
 
 
 async def convoy_gate(
@@ -363,8 +369,11 @@ async def convoy_gate(
         Field(
             description=(
                 'Absolute path to the tree to gate — the workspace the check commands run '
-                'in. Nothing is written to it, no branch is created and no lock is taken; '
-                'gating a tree another process is driving gates whatever is checked out.'
+                'in. Convoy writes nothing, creates no branch and takes no lock, but the '
+                'check commands themselves run in the tree and may write (caches, build '
+                'output) — so never gate a workspace a convoy_run is actively driving: '
+                'its commit step stages the whole tree and can commit gate artifacts '
+                'into a scored branch.'
             )
         ),
     ],
@@ -374,8 +383,8 @@ async def convoy_gate(
             description=(
                 'Optional phase tags. Empty runs the whole gate; tags run exactly the '
                 'checks a PR carrying them would be gated on (the unscoped checks plus '
-                'the ones scoped to a named tag). Tags that select zero checks are '
-                'refused as a usage error rather than answered green.'
+                'the ones scoped to a named tag). A tag no check declares is refused as '
+                'a usage error, not silently narrowed to a green.'
             )
         ),
     ] = None,

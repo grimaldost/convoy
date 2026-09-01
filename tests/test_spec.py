@@ -389,7 +389,7 @@ def _series(draw: st.DrawFn) -> Series:
     governance = Governance(
         effort=draw(st.sampled_from(sorted(EFFORT_LEVELS))),
         permission_mode=draw(st.sampled_from(sorted(PERMISSION_MODES))),
-        timeout_seconds=draw(st.integers(min_value=0, max_value=86_400)),
+        timeout_seconds=draw(st.integers(min_value=1, max_value=86_400)),
         budgets=Budgets(implementation=draw(_MONEY), review=draw(_MONEY), fix=draw(_MONEY)),
         tools=Tools(
             implementation=draw(_TOOL_LIST),
@@ -633,3 +633,42 @@ def test_gate_spec_rejects_bad_toml() -> None:
 def test_gate_spec_reads_a_governance_timeout_when_present() -> None:
     text = GATE_ONLY_TOML + '\n[governance]\ntimeout_seconds = 7\n'
     assert load_gate_spec(text).timeout_seconds == 7
+
+
+def test_gate_spec_rejects_an_empty_checks_array() -> None:
+    """`checks = []` is present-but-empty — the docstring's claim, made true."""
+    with pytest.raises(SpecError, match='at least one check'):
+        load_gate_spec('checks = []\n\n[series]\nid = "empty"\n')
+
+
+def test_gate_spec_requires_id_even_when_series_table_is_present() -> None:
+    with pytest.raises(SpecError, match="missing required field 'id'"):
+        load_gate_spec('[series]\n\n[[checks]]\nname = "a"\nrun = "x"\nblocking = true\n')
+
+
+def test_gate_spec_rejects_duplicate_check_names() -> None:
+    text = (
+        '[series]\nid = "dup"\n\n'
+        '[[checks]]\nname = "t"\nrun = "x"\nblocking = true\n\n'
+        '[[checks]]\nname = "t"\nrun = "y"\nblocking = true\n'
+    )
+    with pytest.raises(SpecError, match='duplicate check name'):
+        load_gate_spec(text)
+
+
+def test_gate_spec_rejects_a_malformed_governance_section() -> None:
+    """Ignoring orchestration fields is deliberate; accepting a malformed section is not."""
+    with pytest.raises(SpecError, match=r'\[governance\] must be a table'):
+        load_gate_spec('governance = "nope"\n' + GATE_ONLY_TOML)
+
+
+def test_gate_spec_rejects_a_non_positive_timeout() -> None:
+    for value in (0, -5):
+        with pytest.raises(SpecError, match='must be positive'):
+            load_gate_spec(GATE_ONLY_TOML + f'\n[governance]\ntimeout_seconds = {value}\n')
+
+
+def test_load_series_rejects_a_non_positive_timeout() -> None:
+    """The full loader shares the guard: a 0s timeout reads as a full red gate."""
+    with pytest.raises(SpecError, match='must be positive'):
+        load_series(VALID_TOML.replace('timeout_seconds = 1800', 'timeout_seconds = 0'))
