@@ -215,6 +215,76 @@ def test_validate_missing_file_is_usage(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_USAGE
 
 
+# --- validate: gate-only files ------------------------------------------------------------
+
+
+def _gate_only_toml(*, independent: bool = False, asset: str = '') -> str:
+    asset_line = f'asset = "{asset}"\n' if asset else ''
+    return (
+        '[series]\nid = "gate-only"\n\n'
+        '[[checks]]\nname = "suite"\nrun = "python -c pass"\n'
+        f'blocking = true\nindependent = {str(independent).lower()}\n{asset_line}'
+    )
+
+
+def test_validate_accepts_a_gate_only_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file with only ``[series] id`` and ``[[checks]]`` is a valid gate, not a broken series."""
+    workspace, _, _ = _layout(tmp_path)
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_only_toml())
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert 'ok (gate-only)' in result.output
+
+
+def test_validate_gate_only_reports_unbacked_isolation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An in-tree oracle on a blocking independent check is the defect a gate-only run hits."""
+    workspace, _, _ = _layout(tmp_path)
+    in_tree = workspace / 'oracle.py'
+    in_tree.write_text('print("hi")')
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_only_toml(independent=True, asset=in_tree.as_posix()))
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_USAGE
+    assert 'suite' in result.output
+    assert 'inside the scored workspace' in result.output
+
+
+def test_validate_gate_only_marks_the_narrower_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full series still validates as a series — the gate-only word is never emitted."""
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs))
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert 'gate-only' not in result.output
+
+
+def test_validate_reports_the_series_error_when_both_loaders_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file that is neither a series nor a gate is reported as the broken series it looks like."""
+    workspace, _, _ = _layout(tmp_path)
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text('[series]\nid = "neither"\n')
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_USAGE
+    assert 'branches' in result.output
+
+
 # --- run: pre-flight before side effects --------------------------------------------------
 
 

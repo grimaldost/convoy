@@ -291,7 +291,10 @@ branch, a diff another tool produced. The implementer's own "done" is not a verd
 judge and defendant must differ — and this tool is the judge without buying the whole
 courtroom. The `[[checks]]` semantics are identical to a run's, so a series file
 authored for `convoy_run` gates the same way standalone, and a minimal file carrying
-only `[series] id` and `[[checks]]` is enough when no run is ever intended.
+only `[series] id` and `[[checks]]` is enough when no run is ever intended. `convoy
+validate` accepts such a file too: it checks what still applies without a run — that
+every blocking independent check backs its isolation — and prints `ok (gate-only)`,
+which is how you learn a gate file is sound before its check commands cost anything.
 
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared

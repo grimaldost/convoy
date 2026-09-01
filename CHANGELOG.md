@@ -25,6 +25,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   both paths read. `convoy_version` names the engine that produced the verdict, so a
   stored envelope stays interpretable as the shape grows.
 
+- `convoy validate` accepts a gate-only file. `validate` was bound to `load_series`, so
+  the minimal `[series] id` + `[[checks]]` file `convoy gate` documents as valid input
+  failed with `missing required section [branches]` — the one surface that could have
+  told a gate-only adopter their file was sound instead told them it was a broken
+  series. It now falls through to `load_gate_spec` when `load_series` refuses, probes
+  the isolation of every blocking independent check against `--workspace` (the same
+  fail-closed probe the gate runs), and prints `ok (gate-only)` on stdout. An
+  unbacked oracle is reported on stderr with the usual exit `3`; a file that is neither
+  a series nor a gate still reports the series loader's message.
+
 ## [0.10.0] - 2026-09-01
 
 The round the gate stopped being part of the run. Convoy's most valuable mechanism — the
