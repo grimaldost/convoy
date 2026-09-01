@@ -12,7 +12,7 @@
     {
       "name": "convoy",
       "source": ".",
-      "description": "`convoy_run` + `convoy_init` + `convoy_status` MCP tools that run a governed multi-PR series (implement -> gate -> repair -> integrate), report on a run in progress, and return a structured economy + gate summary. `convoy_run` spawns `claude -p` per PR, so run co-located with an authenticated Claude Code seat."
+      "description": "`convoy_run` + `convoy_gate` + `convoy_init` + `convoy_status` MCP tools that run a governed multi-PR series (implement -> gate -> repair -> integrate), run the deterministic gate standalone over externally produced work, report on a run in progress, and return a structured economy + gate summary. `convoy_run` spawns `claude -p` per PR, so run co-located with an authenticated Claude Code seat."
     }
   ]
 }

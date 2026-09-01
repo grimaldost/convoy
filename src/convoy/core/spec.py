@@ -99,6 +99,26 @@ class Check:
     phases: tuple[str, ...] = ()
 
 
+# What a gate-only invocation waits on a check for when the file names no timeout.
+# ``SubprocessGateRunner``'s own default, restated as data so the subset loader and the
+# runner cannot drift apart silently (test-pinned against the runner's signature).
+DEFAULT_GATE_TIMEOUT_SECONDS = 300
+
+
+@dataclass(frozen=True)
+class GateSpec:
+    """The subset of a series a gate-only invocation needs: identity, checks, timeout.
+
+    Loaded by :func:`load_gate_spec`, which accepts either a full series.toml (the same
+    file that drives ``run``) or a minimal checks-only file — the framework's gate is
+    usable without the orchestration around it.
+    """
+
+    id: str
+    checks: tuple[Check, ...]
+    timeout_seconds: int
+
+
 @dataclass(frozen=True)
 class Branches:
     base: str
@@ -177,6 +197,19 @@ def _require_int(data: Mapping[str, Any], key: str, where: str) -> int:
     value = data[key]
     if isinstance(value, bool) or not isinstance(value, int):
         raise SpecError(f'{where}: {key!r} must be an integer, got {type(value).__name__}')
+    return value
+
+
+def _require_positive_int(data: Mapping[str, Any], key: str, where: str) -> int:
+    """Like :func:`_require_int` but zero and negatives are rejected.
+
+    ``timeout_seconds = 0`` loads as "every check times out instantly", which reads as
+    a full red gate — a one-character typo masquerading as a code failure. The same
+    posture ``_require_positive_float`` already takes for budgets.
+    """
+    value = _require_int(data, key, where)
+    if value <= 0:
+        raise SpecError(f'{where}: {key!r} must be positive, got {value}')
     return value
 
 
@@ -335,7 +368,7 @@ def _parse_governance(data: Mapping[str, Any]) -> Governance:
     return Governance(
         effort=_require_choice(data, 'effort', where, EFFORT_LEVELS),
         permission_mode=_require_choice(data, 'permission_mode', where, PERMISSION_MODES),
-        timeout_seconds=_require_int(data, 'timeout_seconds', where),
+        timeout_seconds=_require_positive_int(data, 'timeout_seconds', where),
         budgets=_parse_budgets(_require_table(data, 'budgets', where)),
         tools=_parse_tools(_require_table(data, 'tools', where)),
         model=_optional_nonempty_str(data, 'model', where),
@@ -503,6 +536,53 @@ def load_series(text: str) -> Series:
         review=review,
         checks=checks,
         prs=prs,
+    )
+
+
+def load_gate_spec(text: str) -> GateSpec:
+    """Parse TOML *text* into the subset a gate-only invocation needs.
+
+    Accepts a full series.toml unchanged — ``[[checks]]`` and ``[governance]
+    timeout_seconds`` are read, every *orchestration* field is ignored — and equally a
+    minimal file carrying only ``[series] id`` and ``[[checks]]``. The check tables go
+    through the same parser as :func:`load_series`, so a check means exactly the same
+    thing to ``gate`` as to ``run``. Raises ``SpecError`` on any invalid input,
+    including malformed TOML, a missing id, an empty or absent ``[[checks]]``, a
+    ``[governance]`` that is present but not a table (ignoring orchestration fields is
+    deliberate; silently accepting a malformed section is not), and — one place this
+    loader is STRICTER than :func:`load_series` — duplicate check names, because the
+    gate envelope keys per-check results by name and a hand-authored gate-only file
+    meets no pre-flight that would catch the collision.
+    """
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise SpecError(f'invalid TOML: {exc}') from exc
+
+    series_table = _require_table(data, 'series', 'series.toml')
+    check_tables = _require_table_array(data, 'checks', 'series.toml')
+    if not check_tables:
+        raise SpecError('series.toml: [[checks]] must declare at least one check')
+    checks = tuple(_parse_check(table, i) for i, table in enumerate(check_tables))
+    seen: set[str] = set()
+    for check in checks:
+        if check.name in seen:
+            raise SpecError(
+                f'[[checks]]: duplicate check name {check.name!r} — the gate envelope '
+                f'reports results by name, so a collision is silently ambiguous'
+            )
+        seen.add(check.name)
+
+    timeout = DEFAULT_GATE_TIMEOUT_SECONDS
+    if 'governance' in data:
+        governance = _require_table(data, 'governance', 'series.toml')
+        if 'timeout_seconds' in governance:
+            timeout = _require_positive_int(governance, 'timeout_seconds', '[governance]')
+
+    return GateSpec(
+        id=_require_str(series_table, 'id', '[series]'),
+        checks=checks,
+        timeout_seconds=timeout,
     )
 
 

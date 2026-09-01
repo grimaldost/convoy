@@ -1475,3 +1475,199 @@ def test_status_reports_the_runs_advisories(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_OK
     payload = json.loads(result.stdout.strip())
     assert [a['kind'] for a in payload['advisories']] == ['gate']
+
+
+# --- gate ---------------------------------------------------------------------------------
+
+
+_GATE_OK = f'"{sys.executable}" -c "exit(0)"'
+_GATE_RED = (
+    f'"{sys.executable}" -c "import sys; sys.stderr.write(\'gate-red-marker\'); sys.exit(1)"'
+)
+
+
+def _gate_toml(*check_lines: str) -> str:
+    checks = '\n\n'.join(check_lines)
+    return f'[series]\nid = "cli-gate"\n\n{checks}\n'
+
+
+def _gate_check(name: str, run: str, *, blocking: bool = True, phases: str = '') -> str:
+    phase_line = f'\nphases = [{phases}]' if phases else ''
+    run = run.replace('\\', '\\\\').replace('"', '\\"')
+    return (
+        f'[[checks]]\nname = "{name}"\nrun = "{run}"\n'
+        f'blocking = {str(blocking).lower()}\nindependent = false{phase_line}'
+    )
+
+
+def test_gate_green_exits_ok(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_toml(_gate_check('ok', _GATE_OK)), encoding='utf-8')
+    result = runner.invoke(cli.app, ['gate', str(series_file), '--workspace', str(tmp_path)])
+    assert result.exit_code == EXIT_OK
+    assert 'completed' in result.stdout
+
+
+def test_gate_blocking_red_exits_blocked(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_toml(_gate_check('bad', _GATE_RED)), encoding='utf-8')
+    result = runner.invoke(cli.app, ['gate', str(series_file), '--workspace', str(tmp_path)])
+    assert result.exit_code == EXIT_BLOCKED
+    assert 'blocked' in result.stdout
+
+
+def test_gate_json_prints_exactly_one_object(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(
+        _gate_toml(_gate_check('ok', _GATE_OK), _gate_check('bad', _GATE_RED)),
+        encoding='utf-8',
+    )
+    result = runner.invoke(
+        cli.app, ['gate', str(series_file), '--workspace', str(tmp_path), '--json']
+    )
+    envelope = json.loads(result.stdout)
+    assert envelope['outcome'] == 'blocked'
+    assert envelope['series_id'] == 'cli-gate'
+    assert [check['name'] for check in envelope['checks']] == ['ok', 'bad']
+    assert envelope['exit_code'] == EXIT_BLOCKED
+    assert result.exit_code == EXIT_BLOCKED
+
+
+def test_gate_phase_narrows_selection(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(
+        _gate_toml(
+            _gate_check('always', _GATE_OK),
+            _gate_check('core-green', _GATE_OK, phases='"core"'),
+            _gate_check('later-red', _GATE_RED, phases='"later"'),
+        ),
+        encoding='utf-8',
+    )
+    green = runner.invoke(
+        cli.app,
+        ['gate', str(series_file), '--workspace', str(tmp_path), '--phase', 'core', '--json'],
+    )
+    assert green.exit_code == EXIT_OK
+    envelope = json.loads(green.stdout)
+    assert [check['name'] for check in envelope['checks']] == ['always', 'core-green']
+    # The envelope records the selection that was actually requested and ran.
+    assert envelope['phases'] == ['core']
+    assert envelope['counts'] == {'total': 3, 'selected': 2, 'passed': 2, 'failed': 0}
+    red = runner.invoke(
+        cli.app,
+        ['gate', str(series_file), '--workspace', str(tmp_path), '--phase', 'later'],
+    )
+    assert red.exit_code == EXIT_BLOCKED
+
+
+def test_gate_unknown_phase_tag_is_usage_not_a_narrowed_green(tmp_path: Path) -> None:
+    """The typo'd tag must not silently drop to the unscoped checks and report green."""
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(
+        _gate_toml(
+            _gate_check('always', _GATE_OK),
+            _gate_check('scoped', _GATE_RED, phases='"core"'),
+        ),
+        encoding='utf-8',
+    )
+    result = runner.invoke(
+        cli.app, ['gate', str(series_file), '--workspace', str(tmp_path), '--phase', 'cores']
+    )
+    assert result.exit_code == EXIT_USAGE
+    assert "'cores'" in result.stderr
+
+
+def test_gate_json_usage_paths_still_emit_one_object(tmp_path: Path) -> None:
+    """Under --json the failure case is the one a machine consumer most needs to classify."""
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(
+        _gate_toml(_gate_check('scoped', _GATE_OK, phases='"core"')), encoding='utf-8'
+    )
+    result = runner.invoke(
+        cli.app,
+        ['gate', str(series_file), '--workspace', str(tmp_path), '--phase', 'nope', '--json'],
+    )
+    assert result.exit_code == EXIT_USAGE
+    envelope = json.loads(result.stdout)
+    assert envelope['outcome'] == 'usage'
+    assert envelope['exit_code'] == EXIT_USAGE
+    assert envelope['series_id'] == 'cli-gate'
+    assert envelope['error_kind'] == 'spec'
+
+
+def test_gate_advisory_only_selection_is_usage(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(
+        _gate_toml(_gate_check('advice', _GATE_OK, blocking=False)), encoding='utf-8'
+    )
+    result = runner.invoke(cli.app, ['gate', str(series_file), '--workspace', str(tmp_path)])
+    assert result.exit_code == EXIT_USAGE
+    assert 'no blocking check' in result.stderr
+
+
+def test_gate_missing_series_file_is_usage(tmp_path: Path) -> None:
+    result = runner.invoke(
+        cli.app, ['gate', str(tmp_path / 'absent.toml'), '--workspace', str(tmp_path)]
+    )
+    assert result.exit_code == EXIT_USAGE
+
+
+def test_gate_non_utf8_series_file_is_usage_not_a_traceback(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_bytes('[series]\nid = "caf\xe9"\n'.encode('cp1252'))
+    result = runner.invoke(cli.app, ['gate', str(series_file), '--workspace', str(tmp_path)])
+    assert result.exit_code == EXIT_USAGE
+
+
+def test_gate_oserror_mid_gate_is_usage_not_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exit 1 is a blocking red; an infrastructure failure must not impersonate one."""
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_toml(_gate_check('ok', _GATE_OK)), encoding='utf-8')
+    monkeypatch.setattr(
+        cli, 'run_gate', lambda *a, **k: (_ for _ in ()).throw(OSError('mount vanished'))
+    )
+    result = runner.invoke(
+        cli.app, ['gate', str(series_file), '--workspace', str(tmp_path), '--json']
+    )
+    assert result.exit_code == EXIT_USAGE
+    assert json.loads(result.stdout)['error_kind'] == 'filesystem'
+
+
+def test_gate_bad_spec_is_usage(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text('[series]\nid = "no-checks"\n', encoding='utf-8')
+    result = runner.invoke(cli.app, ['gate', str(series_file), '--workspace', str(tmp_path)])
+    assert result.exit_code == EXIT_USAGE
+
+
+def test_gate_missing_workspace_is_usage(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_toml(_gate_check('ok', _GATE_OK)), encoding='utf-8')
+    result = runner.invoke(
+        cli.app, ['gate', str(series_file), '--workspace', str(tmp_path / 'absent')]
+    )
+    assert result.exit_code == EXIT_USAGE
+
+
+def test_gate_accepts_a_full_series_file(tmp_path: Path) -> None:
+    """The same series.toml that drives `run` gates standalone, checks and all."""
+    workspace, prompts, outputs = _layout(tmp_path)
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(_series_toml(prompts, outputs), encoding='utf-8')
+    result = runner.invoke(cli.app, ['gate', str(series_file), '--workspace', str(workspace)])
+    # The fixture's single check is `python -c pass`, green anywhere python resolves.
+    assert result.exit_code == EXIT_OK
+
+
+def test_gate_narrates_each_check_to_stderr(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(
+        _gate_toml(_gate_check('ok', _GATE_OK), _gate_check('bad', _GATE_RED)),
+        encoding='utf-8',
+    )
+    result = runner.invoke(cli.app, ['gate', str(series_file), '--workspace', str(tmp_path)])
+    assert 'ok' in result.stderr
+    assert 'bad' in result.stderr
+    assert 'gate-red-marker' in result.stderr

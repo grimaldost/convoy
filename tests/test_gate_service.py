@@ -1,0 +1,259 @@
+"""Tests for the gate-only service: selection, execution, envelope, and refusals.
+
+The service is the single fold both surfaces (CLI ``convoy gate`` and the MCP
+``convoy_gate`` tool) consume, so what is pinned here is pinned for both: the
+exit-code mapping, the envelope shape, and the fail-closed refusal of a vacuous
+selection. Commands run for real against ``tmp_path`` under ``sys.executable``,
+the same way the gate runner's own tests do.
+"""
+
+import sys
+from pathlib import Path
+
+import pytest
+
+from convoy.core.gate import (
+    AdvisoryOnlySelectionError,
+    EmptySelectionError,
+    IsolationRefusedError,
+    UnknownPhaseError,
+)
+from convoy.core.spec import Check, GateSpec
+from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK
+from convoy.interface.gate_runner import SubprocessGateRunner
+from convoy.interface.gate_service import gate_envelope, gate_usage_envelope, run_gate
+
+_PY = sys.executable
+
+_OK = f'"{_PY}" -c "exit(0)"'
+_RED = f'"{_PY}" -c "import sys; sys.stderr.write(\'boom-marker\'); sys.exit(1)"'
+
+
+def _spec(*checks: Check, timeout: int = 60) -> GateSpec:
+    return GateSpec(id='svc-test', checks=checks, timeout_seconds=timeout)
+
+
+def _check(
+    name: str,
+    run: str,
+    *,
+    blocking: bool = True,
+    independent: bool = False,
+    phases: tuple[str, ...] = (),
+) -> Check:
+    return Check(name=name, run=run, blocking=blocking, independent=independent, phases=phases)
+
+
+# --- run_gate -----------------------------------------------------------------------------
+
+
+def test_all_green_is_exit_ok(tmp_path: Path) -> None:
+    outcome = run_gate(_spec(_check('a', _OK), _check('b', _OK)), tmp_path)
+    assert outcome.exit_code == EXIT_OK
+    assert outcome.verdict.blocking_red is False
+    assert [r.check.name for r in outcome.verdict.results] == ['a', 'b']
+
+
+def test_a_blocking_red_is_exit_blocked(tmp_path: Path) -> None:
+    outcome = run_gate(_spec(_check('a', _OK), _check('bad', _RED)), tmp_path)
+    assert outcome.exit_code == EXIT_BLOCKED
+    assert outcome.verdict.blocking_red is True
+
+
+def test_a_non_blocking_red_is_exit_ok(tmp_path: Path) -> None:
+    """Advisory checks advise; only a blocking red blocks — same rule as the run."""
+    outcome = run_gate(_spec(_check('a', _OK), _check('advice', _RED, blocking=False)), tmp_path)
+    assert outcome.exit_code == EXIT_OK
+    assert outcome.verdict.blocking_red is False
+    assert outcome.verdict.results[1].passed is False
+
+
+def test_selected_carries_the_selection_in_order(tmp_path: Path) -> None:
+    a, b = _check('a', _OK), _check('b', _OK, phases=('core',))
+    outcome = run_gate(_spec(a, b), tmp_path)
+    assert outcome.selected == (a, b)
+    assert outcome.phases == ()
+
+
+def test_an_advisory_only_selection_is_refused(tmp_path: Path) -> None:
+    """Nothing selected can say no — `completed` would assure nothing, so it is refused."""
+    spec = _spec(_check('advice', _OK, blocking=False))
+    with pytest.raises(AdvisoryOnlySelectionError, match='no blocking check'):
+        run_gate(spec, tmp_path)
+
+
+def test_an_unknown_phase_tag_is_refused(tmp_path: Path) -> None:
+    """A typo'd tag must not silently narrow the gate to the unscoped checks and go green."""
+    spec = _spec(_check('always', _OK), _check('scoped', _RED, phases=('core',)))
+    with pytest.raises(UnknownPhaseError, match="'cores'"):
+        run_gate(spec, tmp_path, phases=('cores',))
+
+
+def test_a_red_detail_carries_the_check_output(tmp_path: Path) -> None:
+    outcome = run_gate(_spec(_check('bad', _RED)), tmp_path)
+    assert 'boom-marker' in outcome.verdict.results[0].detail
+
+
+def test_phase_selection_narrows_what_runs(tmp_path: Path) -> None:
+    spec = _spec(
+        _check('always', _OK),
+        _check('core-only', _RED, phases=('core',)),
+        _check('later-only', _RED, phases=('later',)),
+    )
+    outcome = run_gate(spec, tmp_path, phases=('later',))
+    assert [r.check.name for r in outcome.verdict.results] == ['always', 'later-only']
+    assert outcome.exit_code == EXIT_BLOCKED
+
+
+def test_no_phases_runs_the_whole_gate(tmp_path: Path) -> None:
+    spec = _spec(_check('a', _OK), _check('scoped', _OK, phases=('core',)))
+    outcome = run_gate(spec, tmp_path)
+    assert [r.check.name for r in outcome.verdict.results] == ['a', 'scoped']
+
+
+def test_an_empty_selection_is_refused(tmp_path: Path) -> None:
+    """The fail-closed backstop for a directly constructed spec the loader would refuse."""
+    spec = GateSpec(id='empty', checks=(), timeout_seconds=60)
+    with pytest.raises(EmptySelectionError, match='vacuous'):
+        run_gate(spec, tmp_path)
+
+
+def test_unbacked_isolation_is_a_usage_refusal_not_a_red(tmp_path: Path) -> None:
+    """The run reports this identical spec defect at pre-flight as usage; so does gate-only.
+
+    Classifying it as a red would set ``independent_red`` — the signal an auto-repair
+    loop keys on — for a misconfiguration no repair can fix.
+    """
+    spec = _spec(_check('indep', _OK, independent=True))
+    with pytest.raises(IsolationRefusedError, match="'indep'"):
+        run_gate(spec, tmp_path)
+
+
+def test_the_spec_timeout_governs_the_run(tmp_path: Path) -> None:
+    hang = f'"{_PY}" -c "import time; time.sleep(30)"'
+    outcome = run_gate(_spec(_check('hang', hang, phases=()), timeout=1), tmp_path)
+    assert outcome.exit_code == EXIT_BLOCKED
+    assert 'timed out' in outcome.verdict.results[0].detail.lower()
+
+
+# --- gate_envelope ------------------------------------------------------------------------
+
+
+def test_envelope_shape_is_stable(tmp_path: Path) -> None:
+    spec = _spec(
+        _check('a', _OK),
+        _check('bad', _RED, phases=('core',)),
+        _check('later-only', _OK, phases=('later',)),
+    )
+    outcome = run_gate(spec, tmp_path, phases=('core',))
+    envelope = gate_envelope(spec, tmp_path, outcome)
+    assert envelope == {
+        'ok': False,
+        'outcome': 'blocked',
+        'series_id': 'svc-test',
+        'workspace': str(tmp_path.resolve()),
+        'phases': ['core'],
+        'checks': [
+            {
+                'name': 'a',
+                'passed': True,
+                'blocking': True,
+                'independent': False,
+                'phases': [],
+                'exit_code': 0,
+                'timed_out': False,
+                'detail': '',
+            },
+            {
+                'name': 'bad',
+                'passed': False,
+                'blocking': True,
+                'independent': False,
+                'phases': ['core'],
+                'exit_code': 1,
+                'timed_out': False,
+                'detail': envelope['checks'][1]['detail'],
+            },
+        ],
+        'blocking_red': True,
+        'independent_red': False,
+        'counts': {'total': 3, 'selected': 2, 'passed': 1, 'failed': 1},
+        'advisories': [],
+        'truncated': {'any': False, 'checks': 0},
+        'exit_code': EXIT_BLOCKED,
+    }
+    assert 'boom-marker' in envelope['checks'][1]['detail']
+
+
+def test_envelope_green_outcome_word(tmp_path: Path) -> None:
+    spec = _spec(_check('a', _OK))
+    outcome = run_gate(spec, tmp_path)
+    envelope = gate_envelope(spec, tmp_path, outcome)
+    assert envelope['ok'] is True
+    assert envelope['outcome'] == 'completed'
+    assert envelope['exit_code'] == EXIT_OK
+
+
+def test_envelope_workspace_is_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A relative workspace means nothing outside the invoking shell — resolve it."""
+    monkeypatch.chdir(tmp_path)
+    spec = _spec(_check('a', _OK))
+    envelope = gate_envelope(spec, Path('.'), run_gate(spec, Path('.')))
+    assert envelope['workspace'] == str(tmp_path.resolve())
+
+
+def test_a_timed_out_check_reports_structured_fields(tmp_path: Path) -> None:
+    hang = f'"{_PY}" -c "import time; time.sleep(30)"'
+    outcome = run_gate(_spec(_check('hang', hang), timeout=1), tmp_path)
+    envelope = gate_envelope(_spec(_check('hang', hang), timeout=1), tmp_path, outcome)
+    entry = envelope['checks'][0]
+    assert entry['timed_out'] is True
+    assert entry['exit_code'] is None
+
+
+def test_the_check_list_is_capped_with_a_truncation_report(tmp_path: Path) -> None:
+    """No silent drop: past the cap the count of omitted checks is reported."""
+    from convoy.interface import gate_service
+
+    checks = tuple(_check(f'c{i}', _OK) for i in range(gate_service._CHECK_CAP + 3))
+    spec = GateSpec(id='many', checks=checks, timeout_seconds=60)
+    envelope = gate_envelope(spec, tmp_path, run_gate(spec, tmp_path))
+    assert len(envelope['checks']) == gate_service._CHECK_CAP
+    assert envelope['truncated'] == {'any': True, 'checks': 3}
+    assert envelope['counts']['selected'] == gate_service._CHECK_CAP + 3
+
+
+def test_the_usage_envelope_carries_the_documented_exit_code() -> None:
+    envelope = gate_usage_envelope(ValueError('nope'), error_kind='spec', series_id='s')
+    assert envelope == {
+        'ok': False,
+        'outcome': 'usage',
+        'error_kind': 'spec',
+        'error': 'nope',
+        'exit_code': 3,
+        'series_id': 's',
+    }
+    assert 'series_id' not in gate_usage_envelope(ValueError('x'), error_kind='spec')
+
+
+def test_gate_usage_errors_classify_as_spec_not_filesystem() -> None:
+    """`error_kind` once mislabeled these as 'filesystem' via its OSError catch-all."""
+    from convoy.interface.run_summary import error_kind
+
+    for exc in (
+        EmptySelectionError('x'),
+        UnknownPhaseError('x'),
+        AdvisoryOnlySelectionError('x'),
+        IsolationRefusedError('x'),
+    ):
+        assert error_kind(exc) == 'spec'
+
+
+def test_the_default_timeout_matches_the_runner_signature() -> None:
+    """The comment in spec.py claims the two cannot drift; this is the pin behind it."""
+    import inspect
+
+    from convoy.core.spec import DEFAULT_GATE_TIMEOUT_SECONDS
+
+    default = inspect.signature(SubprocessGateRunner.__init__).parameters['timeout_seconds']
+    assert default.default == float(DEFAULT_GATE_TIMEOUT_SECONDS)

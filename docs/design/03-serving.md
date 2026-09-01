@@ -124,7 +124,7 @@ the tool argument states it *positively*.
 ## The MCP stdio server
 
 `src/convoy/interface/mcp/` is the agent-facing surface: a stdio server
-(`python -m convoy.interface.mcp`, in-process Python) exposing three tools that
+(`python -m convoy.interface.mcp`, in-process Python) exposing four tools that
 mirror the CLI verbs but return structured dicts instead of exit codes and
 console text (`interface/mcp/server.py`):
 
@@ -133,6 +133,11 @@ console text (`interface/mcp/server.py`):
   engine and return the summary envelope below. `dry_run` pre-flights for free: no
   git mutation, no spawn (seat probe included), no spend. `detach` returns a handle
   instead of a result (below).
+- **`convoy_gate(series_file, workspace, phases=[])`** — run the series'
+  `[[checks]]` against the workspace once through `gate_service` and return the
+  gate envelope. The gate standalone: no spawn, no git mutation, no lock, no
+  telemetry. The CLI twin is `convoy gate`; both emit the same envelope from the
+  same fold.
 - **`convoy_init(directory)`** — scaffold the runnable starter series and
   return `{ok, created, series_file, workspace, next}`, naming the paths to
   hand straight to `convoy_run`.
@@ -285,6 +290,7 @@ The two surfaces expose one engine; the mapping is mechanical.
 |---|---|---|
 | `convoy run SERIES [--workspace DIR]` | `convoy_run(series_file, workspace)` | the CLI defaults the workspace to its working directory; `--workspace` makes it explicit, as the tool's argument always was |
 | `convoy validate SERIES [--workspace DIR]` | `convoy_run(..., dry_run=true)` | same pre-flight; neither spawns (seat probe included) nor mutates. Advisories print to stderr / fill the `advisories` key, and change neither the exit code nor `ok`/`outcome` — so `validate` can write to stderr and still exit `0` |
+| `convoy gate SERIES [--workspace DIR] [--phase TAG]... [--json]` | `convoy_gate(series_file, workspace, phases)` | the gate standalone — run the series' `[[checks]]` once against the workspace, through the same runner and verdict as a run's per-PR gate; no spawn, no branch, no lock, no telemetry. `SERIES` may be a full series.toml or a minimal `[series] id` + `[[checks]]` file (`load_gate_spec`). Four refusals map to usage rather than a verdict: an unknown phase tag, a selection with no blocking check, an empty selection, unbacked isolation on a blocking independent check (the run reports the same defect at pre-flight). Both surfaces emit the same envelopes from `gate_envelope` / `gate_usage_envelope` — the CLI's `--json` usage paths included |
 | `--no-config-isolation` / `CONVOY_NO_CONFIG_ISOLATION` | `config_isolation=false` | polarity inverted; the env escape is read by the CLI entry point only |
 | `--fresh` | `reset=true` | the same restore path: discard, clean, then `Git.reset_to_base` |
 | `--resume` | `resume=true` | continue the existing integration branch, skipping PRs already merged into it; rejected together with `--fresh`/`reset` |

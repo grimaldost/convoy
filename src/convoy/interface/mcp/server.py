@@ -1,8 +1,9 @@
-"""MCP stdio server exposing convoy's ``convoy_run``, ``convoy_init`` and ``convoy_status``.
+"""MCP stdio server exposing ``convoy_run``, ``convoy_gate``, ``convoy_init`` and ``convoy_status``.
 
-The agent-facing surface: three tools an agent discovers and calls to drive a governed
-multi-PR series, mirroring the ``convoy run`` / ``convoy init`` / ``convoy status`` CLI
-verbs but returning structured dicts instead of exit codes and console text.
+The agent-facing surface: four tools an agent discovers and calls to drive a governed
+multi-PR series — or to run the deterministic gate standalone over externally produced
+work — mirroring the ``convoy run`` / ``convoy gate`` / ``convoy init`` / ``convoy status``
+CLI verbs but returning structured dicts instead of exit codes and console text.
 
 Local-first: ``convoy_run`` spawns a subprocess ``claude -p`` per PR, so run it co-located
 with an authenticated ``claude`` CLI seat. The tools offload their blocking work via
@@ -28,10 +29,12 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from convoy.core.gate import GateUsageError
 from convoy.core.governance import GovernanceError
-from convoy.core.spec import Series, SpecError, load_series
+from convoy.core.spec import Series, SpecError, load_gate_spec, load_series
 from convoy.interface.detached import launch_detached
 from convoy.interface.drivers.headless import make_run_id
+from convoy.interface.gate_service import gate_envelope, gate_usage_envelope, run_gate
 from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.run_service import PreflightError, run_series_headless, start_report
@@ -330,6 +333,80 @@ async def convoy_run(
     )
 
 
+def _gate_impl(series_file: str, workspace: str, phases: list[str]) -> dict[str, Any]:
+    """Load the gate spec and run the checks once, shaping a result (sync).
+
+    Every failure returns a usage envelope, never raises: an exception escaping here
+    becomes a protocol-level tool error with no ``outcome`` to branch on. ``OSError``
+    around ``run_gate`` is the workspace-shaped one — a path that is missing or a file
+    surfaces from ``Popen(cwd=...)``, and it is the single most likely caller mistake.
+    """
+    try:
+        spec = load_gate_spec(Path(series_file).read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, SpecError) as exc:
+        return gate_usage_envelope(exc, error_kind=error_kind(exc))
+    try:
+        outcome = run_gate(spec, Path(workspace), tuple(phases))
+    except (GateUsageError, OSError) as exc:
+        return gate_usage_envelope(exc, error_kind=error_kind(exc), series_id=spec.id)
+    return gate_envelope(spec, Path(workspace), outcome)
+
+
+async def convoy_gate(
+    series_file: Annotated[
+        str,
+        Field(
+            description=(
+                'Absolute path to the file holding the [[checks]] to run: a full convoy '
+                'series.toml, or a minimal file carrying only [series] id and [[checks]]. '
+                'A relative path resolves against the server working directory, so prefer '
+                'absolute.'
+            )
+        ),
+    ],
+    workspace: Annotated[
+        str,
+        Field(
+            description=(
+                'Absolute path to the tree to gate — the workspace the check commands run '
+                'in. Convoy writes nothing, creates no branch and takes no lock, but the '
+                'check commands themselves run in the tree and may write (caches, build '
+                'output) — so never gate a workspace a convoy_run is actively driving: '
+                'its commit step stages the whole tree and can commit gate artifacts '
+                'into a scored branch.'
+            )
+        ),
+    ],
+    phases: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                'Optional phase tags. Empty runs the whole gate; tags run exactly the '
+                'checks a PR carrying them would be gated on (the unscoped checks plus '
+                'the ones scoped to a named tag). A tag no check declares is refused as '
+                'a usage error, not silently narrowed to a green.'
+            )
+        ),
+    ] = None,
+) -> dict[str, Any]:
+    """Run a series' ``[[checks]]`` against a workspace once — the gate without the run.
+
+    The deterministic gate standalone, for verifying work produced OUTSIDE convoy — an
+    externally orchestrated implementation, a hand-written branch — with the same check
+    commands, the same fail-closed independence guard, and the same verdict rules a
+    governed run applies after every PR. No agent spawns, no git mutation, no telemetry,
+    no spend beyond the check commands themselves.
+
+    Returns the gate envelope: ``ok``, ``outcome`` (``completed`` | ``blocked`` |
+    ``usage``), ``series_id``, ``workspace``, ``phases``, per-check verdicts with a
+    failure ``detail`` a repair can be briefed with, ``blocking_red`` /
+    ``independent_red``, ``counts``, and the CLI-equivalent ``exit_code`` (0 green — a
+    non-blocking red advises without blocking — 1 blocking red). The CLI twin is
+    ``convoy gate``; both emit this same envelope.
+    """
+    return await asyncio.to_thread(_gate_impl, series_file, workspace, phases or [])
+
+
 async def convoy_init(
     directory: Annotated[
         str,
@@ -443,9 +520,10 @@ async def convoy_status(
 
 
 def build_server() -> FastMCP:
-    """Construct the MCP server with convoy's ``run`` / ``init`` / ``status`` tools registered."""
+    """Construct the server with the ``run`` / ``gate`` / ``init`` / ``status`` tools registered."""
     server = FastMCP(_SERVER_NAME)
     server.tool()(convoy_run)
+    server.tool()(convoy_gate)
     server.tool()(convoy_init)
     server.tool()(convoy_status)
     return server

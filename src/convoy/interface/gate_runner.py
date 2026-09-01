@@ -89,7 +89,17 @@ class SubprocessGateRunner:
             result = run_with_timeout(check.run, workspace, self._timeout_seconds, env=gate_env())
             passed = not result.timed_out and result.exit_code == 0
             detail = '' if passed else _red_detail(result, self._timeout_seconds)
-            results.append(CheckResult(check=check, passed=passed, detail=detail))
+            results.append(
+                CheckResult(
+                    check=check,
+                    passed=passed,
+                    detail=detail,
+                    # The structured half of the prose: a timed-out command has no exit
+                    # of its own, so the code is None exactly when ``timed_out`` says why.
+                    exit_code=None if result.timed_out else result.exit_code,
+                    timed_out=result.timed_out,
+                )
+            )
         return tuple(results)
 
 
