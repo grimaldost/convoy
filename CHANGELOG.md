@@ -11,7 +11,7 @@ marked
 engine knows to sync rather than silently mis-handle the new value. See the versioning
 discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
-## [Unreleased]
+## [0.10.0] - 2026-09-01
 
 The guardrail build round: nothing in the engine's contract moves — no new event, field,
 `outcome`, `error_kind`, exit code or series.toml key, and therefore nothing marked
