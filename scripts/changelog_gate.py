@@ -6,7 +6,7 @@ CHANGELOG entry, but nothing mechanical would have failed the one that did not �
 this repository's own doctrine a rule without an enforcer is a mechanization candidate,
 not an aspiration. ``.github/workflows/changelog.yml`` runs this on every pull request.
 
-Two checks and one advisory, all over the merge-base diff:
+Three checks and one advisory, all over the merge-base diff:
 
 - **Record or declare.** A diff that touches ``src/`` must also touch ``CHANGELOG.md``,
   or a commit in the range must carry the trailer ``Changelog: none (<reason>)`` — the
@@ -17,6 +17,10 @@ Two checks and one advisory, all over the merge-base diff:
   version must be smaller. The three version *sites* agreeing is
   ``tests/test_manifest.py::test_versions_are_locked``'s job; this pins the heading to an
   actual bump.
+- **Section headings keep the vocabulary.** An added ``### `` heading in ``CHANGELOG.md``
+  must be one of Added / Changed / Deprecated / Removed / Fixed / Security. A heading
+  outside it reached ``main`` once and was caught by a merge-conflict resolution, not by
+  anything mechanical. Only added lines are read, so history is grandfathered.
 - **Consumer-affecting marker (advisory).** A diff touching a file that defines a
   contract surface a consumer keys on — see ``CONTRACT_SURFACES`` — should carry the
   literal ``(consumer-affecting)`` somewhere in its CHANGELOG addition. Advisory,
@@ -60,6 +64,13 @@ MARKER = '(consumer-affecting)'
 _TRAILER = re.compile(r'^Changelog: none \(.+\)$', re.MULTILINE | re.IGNORECASE)
 _ADDED_HEADING = re.compile(r'^## \[(\d+)\.(\d+)\.(\d+)\]', re.MULTILINE)
 
+# The Keep a Changelog section vocabulary — the only `### ` headings this file uses. A
+# heading outside it (`### Documentation`) reached main once, caught by a merge-conflict
+# resolution rather than by anything mechanical; content claims were gated while shape was
+# prose. Only added lines are read, so history is grandfathered by construction.
+SECTION_VOCABULARY = ('Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security')
+_SECTION_HEADING = re.compile(r'^### (.*)$', re.MULTILINE)
+
 Version = tuple[int, int, int]
 
 
@@ -102,6 +113,19 @@ def evaluate(
                 f'the diff adds a release heading [{_dotted(cut)}] that does not move the '
                 f'version forward from {_dotted(base_version)}'
             )
+
+    rogue = [
+        name.strip()
+        for name in _SECTION_HEADING.findall(changelog_added)
+        if name.strip() not in SECTION_VOCABULARY
+    ]
+    if rogue:
+        listed = ', '.join(f'### {name}' for name in rogue)
+        errors.append(
+            f'the diff adds a CHANGELOG section heading outside the vocabulary ({listed}); '
+            f'this file uses exactly Added / Changed / Deprecated / Removed / Fixed / '
+            f'Security'
+        )
 
     touched_surfaces = [path for path in paths if path in CONTRACT_SURFACES]
     if touched_surfaces and MARKER not in changelog_added:

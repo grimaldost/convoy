@@ -40,6 +40,13 @@ CI gains the second operating system the engine's failure history keeps naming.
   that never fails the job until it has proven quiet on ordinary PRs — flags a
   contract-surface diff whose entry never says **(consumer-affecting)**.
 
+- The changelog gate also asserts this file's *shape*: an added `### ` section heading
+  must be one of the six Keep a Changelog words (Added / Changed / Deprecated / Removed /
+  Fixed / Security). A heading outside the vocabulary reached `main` once, caught by a
+  merge-conflict resolution rather than by anything mechanical — content claims were
+  gated while shape stayed prose. Only added diff lines are read, so history is
+  grandfathered by construction.
+
 - The unit suite now hard-fails a real agent spawn. The spawn path was stubbed per test
   by convention — the arrangement under which a live seat once turned five CLI tests into
   five real spawns per suite pass. A second autouse guard in `tests/conftest.py` makes a
