@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -239,6 +240,29 @@ def test_validate_accepts_a_gate_only_file(tmp_path: Path, monkeypatch: pytest.M
     assert 'ok (gate-only)' in result.output
 
 
+def test_validate_gate_only_refuses_a_selection_with_no_blocking_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validate refuses what the gate refuses, in the gate's own words.
+
+    Whether any check can fail is decidable from the spec alone, so a file validate
+    called sound and ``convoy gate`` then rejected as usage would be the one answer the
+    pre-flight exists to prevent.
+    """
+    workspace, _, _ = _layout(tmp_path)
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_only_toml().replace('blocking = true', 'blocking = false'))
+    monkeypatch.chdir(workspace)
+
+    validated = runner.invoke(cli.app, ['validate', str(series_file)])
+    gated = runner.invoke(cli.app, ['gate', str(series_file)])
+    assert validated.exit_code == EXIT_USAGE
+    assert gated.exit_code == EXIT_USAGE
+    assert 'contains no blocking check' in validated.output
+    assert 'gate-only' not in validated.output
+    assert validated.output.strip() == gated.output.strip()
+
+
 def test_validate_gate_only_reports_unbacked_isolation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -259,7 +283,7 @@ def test_validate_gate_only_reports_unbacked_isolation(
 def test_validate_gate_only_marks_the_narrower_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A full series still validates as a series — the gate-only word is never emitted."""
+    """A valid full series validates as a series — unchanged behaviour, guarded."""
     workspace, prompts, outputs = _layout(tmp_path)
     (prompts / 'pr1.md').write_text('do it')
     series_file = tmp_path / 'series.toml'
@@ -268,6 +292,40 @@ def test_validate_gate_only_marks_the_narrower_answer(
 
     result = runner.invoke(cli.app, ['validate', str(series_file)])
     assert result.exit_code == EXIT_OK
+    assert 'gate-only' not in result.output
+
+
+@pytest.mark.parametrize(
+    ('label', 'mutate', 'expected'),
+    [
+        ('dropped governance field', lambda t: t.replace('effort = "low"\n', ''), 'effort'),
+        ('deleted section', lambda t: t.replace('[branches]\n', '[unused]\n'), 'branches'),
+        ('mistyped section', lambda t: t.replace('[branches]', '[branchs]'), 'branches'),
+    ],
+)
+def test_validate_refuses_a_full_series_that_fails_to_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    mutate: Callable[[str], str],
+    expected: str,
+) -> None:
+    """An orchestration file with a load defect is a broken series, never a valid gate.
+
+    The gate loader reads only ``[series] id``, ``[[checks]]`` and one ``[governance]``
+    field, so without a shape test every full series that lost a section would fall
+    through to it and validate. The exit code is what a caller keys on, so it is the
+    assertion that matters here.
+    """
+    workspace, prompts, outputs = _layout(tmp_path)
+    (prompts / 'pr1.md').write_text('do it')
+    series_file = tmp_path / 'series.toml'
+    series_file.write_text(mutate(_series_toml(prompts, outputs)))
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_USAGE, label
+    assert expected in result.output
     assert 'gate-only' not in result.output
 
 

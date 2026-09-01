@@ -292,9 +292,12 @@ judge and defendant must differ — and this tool is the judge without buying th
 courtroom. The `[[checks]]` semantics are identical to a run's, so a series file
 authored for `convoy_run` gates the same way standalone, and a minimal file carrying
 only `[series] id` and `[[checks]]` is enough when no run is ever intended. `convoy
-validate` accepts such a file too: it checks what still applies without a run — that
-every blocking independent check backs its isolation — and prints `ok (gate-only)`,
-which is how you learn a gate file is sound before its check commands cost anything.
+validate` accepts such a file too: it applies the refusals that stay decidable without a
+run — the selection must contain a blocking check, and every blocking independent check
+must back its isolation — and prints `ok (gate-only)`, which is how you learn a gate file
+is sound before its check commands cost anything. A file carrying `[branches]`, `[paths]`,
+`[review]` or `[[prs]]` is a full series and is validated as one, so a series that lost a
+section is never answered with a gate's narrower yes.
 
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared
