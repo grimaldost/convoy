@@ -11,7 +11,13 @@ marked
 engine knows to sync rather than silently mis-handle the new value. See the versioning
 discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
-## [Unreleased]
+## [0.11.0] - 2026-09-01
+
+The gate becomes something an orchestrator can consume without reading prose. Written at
+cut time, over the entries below as they stand: **this release is consumer-affecting** —
+the gate envelope gains two fields and `convoy validate` answers a new input class — and it
+also closes a defect one of those changes shipped with (a broken series file validating as
+a gate), found by a blind review after merge and fixed before this cut.
 
 ### Added
 
