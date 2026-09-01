@@ -34,6 +34,11 @@ round of externally orchestrated PRs verified only by the agents that implemente
 them has judge and defendant identical on every count — exactly the arrangement the
 gate exists to break, and it costs one command to break it.
 
+The adoption has a condition. A gate whose checks are the implementer's own suite
+goes green on work an independent oracle fails — measured, repeatedly, not
+theorised — so taking on the gate surface without a check the implementer cannot
+reach leaves you exactly where you started. The surface is not the oracle.
+
 A gate-only file needs two sections:
 
 ```toml

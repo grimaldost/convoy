@@ -35,6 +35,12 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   unbacked oracle is reported on stderr with the usual exit `3`; a file that is neither
   a series nor a gate still reports the series loader's message.
 
+### Changed
+
+- `docs/authoring-series.md` states the condition gate adoption carries: a gate whose
+  checks are the implementer's own suite is not an oracle, so the surface alone changes
+  nothing.
+
 ## [0.10.0] - 2026-09-01
 
 The round the gate stopped being part of the run. Convoy's most valuable mechanism — the
