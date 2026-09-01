@@ -13,11 +13,18 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [0.10.0] - 2026-09-01
 
-The guardrail build round: nothing in the engine's contract moves — no new event, field,
-`outcome`, `error_kind`, exit code or series.toml key, and therefore nothing marked
-consumer-affecting. What changes is what enforces the rules the repository already had:
-two review-enforced guardrails become mechanisms, two prose disciplines become gates, and
-CI gains the second operating system the engine's failure history keeps naming.
+The round the gate stopped being part of the run. Convoy's most valuable mechanism — the
+deterministic, fail-closed gate — was reachable only by buying the whole engine, so a
+dispatch decision that rejected the runner on its merits discarded the gate with it. It is
+now a surface of its own, and the engine needed no new gate semantics to expose it.
+
+**This release is consumer-affecting**: two new surfaces with a shared result envelope,
+two new `CheckResult` fields, and one input a loader now refuses. A tool driving convoy as
+an engine should read the marked entries below rather than assume the contract stood still.
+
+The round also finished the guardrail work it started as: two review-enforced guardrails
+became mechanisms, two prose disciplines became gates, and CI gained the second operating
+system the engine's failure history keeps naming.
 
 ### Added
 
