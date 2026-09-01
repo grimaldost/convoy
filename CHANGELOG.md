@@ -109,6 +109,15 @@ CI gains the second operating system the engine's failure history keeps naming.
 
 ### Changed
 
+- Convoy's presentation names the gate as separable. The skill's trigger description
+  now states two capabilities dispatched separately — the runner and the standalone
+  gate — displacing the single-package framing under which a dispatch decision that
+  rejected the runner discarded the gate with it (measured cost, one production round:
+  11 externally orchestrated PRs verified only by the agents that implemented them).
+  `docs/authoring-series.md` opens with the separability doctrine and the
+  one-PR-series pattern, under a word budget set at the file's birth; the skill's
+  gate-only section points at it.
+
 - The two spawn sites that spelled the decode policy as literals now import
   `TEXT_ENCODING`/`TEXT_ERRORS` from `interface/proc.py`, and `tests/test_proc.py` fails
   on the next literal respelled outside `proc.py` and `streams.py` — the guardrail's
