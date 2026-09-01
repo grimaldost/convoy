@@ -92,6 +92,37 @@ def decide(results: Sequence[CheckResult]) -> GateVerdict:
     return GateVerdict(results=tuple(results))
 
 
+def repair_brief(verdict: GateVerdict) -> str:
+    """The failing-checks section a repair attempt is briefed with — ``''`` when nothing blocks.
+
+    Lists every blocking check that is red, with its ``name`` and ``detail`` — and, when
+    the check declares a ``repair_hint``, the repo's own repair recipe verbatim, so a fix
+    attempt is not left inferring a regeneration command from failure text. Whether any
+    of those reds is *independent* is recorded as provenance only — it never changes that
+    the red blocks; the re-gate is the arbiter.
+
+    Pure text over a verdict, so the run's own fix loop and the gate-only envelope hand
+    out the same words: an orchestrator that runs the gate standalone gets the section
+    convoy would have briefed its own fix spawn with, rather than reconstructing it from
+    the per-check fields.
+    """
+    failures = [r for r in verdict.results if not r.passed and r.check.blocking]
+    if not failures:
+        return ''
+    lines = ['## Failing checks to repair', '']
+    if verdict.independent_red:
+        lines.append(
+            'At least one failing check is independent (author-supplied, unreachable '
+            'by you) — its red is a trustworthy signal.'
+        )
+        lines.append('')
+    for result in failures:
+        lines.append(f'- {result.check.name}: {result.detail}')
+        if result.check.repair_hint:
+            lines.append(f'  repair hint: {result.check.repair_hint}')
+    return '\n'.join(lines)
+
+
 def checks_for(checks: Sequence[Check], pr: PR) -> tuple[Check, ...]:
     """The checks that gate ``pr``, in declaration order.
 

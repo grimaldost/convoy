@@ -267,9 +267,12 @@ written, and the `series_file` / `workspace` to hand straight to `convoy_run`.
 `{name, passed, blocking, independent, phases, exit_code, timed_out, detail}` per
 selected check — the structured fields for branching, `detail` carrying the failure
 tail a repair can be briefed with; capped at 50 with a `truncated` report), `blocking_red`,
-`independent_red`, `counts` (`{total, selected, passed, failed}`), `advisories` (always
-present, currently always empty), and the CLI-equivalent `exit_code` (0 green — a
-non-blocking red advises without blocking — 1 blocking red). A refused invocation
+`independent_red`, `repair_brief` (the failing-checks section ready to append to an
+implementer's brief — the same text convoy briefs its own fix spawn with, `''` when the
+gate is green), `counts` (`{total, selected, passed, failed}`), `advisories` (always
+present, currently always empty), the CLI-equivalent `exit_code` (0 green — a
+non-blocking red advises without blocking — 1 blocking red), and `convoy_version` (the
+engine that produced the envelope). A refused invocation
 returns the usage envelope instead: `{ok: false, outcome: "usage", error_kind, error,
 exit_code: 3, series_id?}`. The CLI twin `convoy gate --json` prints these same
 objects, usage paths included.
@@ -289,6 +292,13 @@ judge and defendant must differ — and this tool is the judge without buying th
 courtroom. The `[[checks]]` semantics are identical to a run's, so a series file
 authored for `convoy_run` gates the same way standalone, and a minimal file carrying
 only `[series] id` and `[[checks]]` is enough when no run is ever intended.
+
+The envelope is written to be acted on, not just read: on a red gate `repair_brief`
+carries the failing-checks section — each blocking red's name, `detail` and declared
+`repair_hint` — in the exact form convoy appends to its own fix spawn's brief, so an
+external orchestrator repairs against the same words rather than reassembling them from
+the per-check fields. `convoy_version` names the engine that judged, which is what makes
+a stored verdict still interpretable once the shape grows.
 
 Some rules differ from a run, all deliberate, with one thread: a gate-only caller
 asked a question, and an invocation that cannot produce a meaningful answer is refused

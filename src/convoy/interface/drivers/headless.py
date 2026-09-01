@@ -34,7 +34,7 @@ from pathlib import Path
 from secrets import token_hex
 
 from convoy.core.dag import order
-from convoy.core.gate import GateVerdict, checks_for, decide
+from convoy.core.gate import GateVerdict, checks_for, decide, repair_brief
 from convoy.core.governance import ResolvedSpawn, effective_governance, resolve_spawn
 from convoy.core.preflight import Advisory, Problem
 from convoy.core.spec import PR, Series
@@ -101,27 +101,14 @@ def make_run_id() -> str:
 
 
 def _fix_brief(original_brief: str, verdict: GateVerdict) -> str:
-    """The original brief plus an appended section naming each failing blocking check.
+    """The original brief plus the shared failing-checks section.
 
-    Lists every blocking check that is red, with its ``name`` and ``detail`` — and,
-    when the check declares a ``repair_hint``, the repo's own repair recipe verbatim,
-    so the fix agent is not left inferring a regeneration command from failure text.
-    Whether any of those reds is *independent* is recorded as provenance only — it
-    never changes that the red blocks; the re-gate is the arbiter.
+    The section itself is :func:`convoy.core.gate.repair_brief`, which the gate-only
+    envelope also carries — so an external orchestrator repairing a red gate reads the
+    same words convoy briefs its own fix spawn with. Only ever called on a blocking red,
+    where that section is non-empty.
     """
-    failures = [r for r in verdict.results if not r.passed and r.check.blocking]
-    lines = [original_brief, '', '## Failing checks to repair', '']
-    if verdict.independent_red:
-        lines.append(
-            'At least one failing check is independent (author-supplied, unreachable '
-            'by you) — its red is a trustworthy signal.'
-        )
-        lines.append('')
-    for result in failures:
-        lines.append(f'- {result.check.name}: {result.detail}')
-        if result.check.repair_hint:
-            lines.append(f'  repair hint: {result.check.repair_hint}')
-    return '\n'.join(lines)
+    return original_brief + '\n\n' + repair_brief(verdict)
 
 
 # Git's own tooling assumes a short subject: ``--oneline``, ``format:%s``, and the

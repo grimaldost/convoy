@@ -22,6 +22,7 @@ from convoy.core.gate import (
     checks_for,
     checks_for_phases,
     decide,
+    repair_brief,
 )
 from convoy.core.spec import PR, Check
 
@@ -242,3 +243,41 @@ def test_phase_selection_agrees_with_the_per_pr_fold() -> None:
     checks = (_scoped('a'), _scoped('b', 'core'), _scoped('c', 'later'))
     pr = PR(id='p', branch='p', prompt='p.md', phase='core', depends_on=())
     assert checks_for_phases(checks, ('core',)) == checks_for(checks, pr)
+
+
+# --- repair_brief -------------------------------------------------------------------------
+
+
+def _hinted(name: str, hint: str = '') -> Check:
+    return Check(name=name, run='true', blocking=True, independent=False, repair_hint=hint)
+
+
+def test_repair_brief_is_empty_when_nothing_blocking_failed() -> None:
+    """A green gate has nothing to repair, so the section is absent rather than empty-headed."""
+    verdict = decide(
+        [
+            _result(_check('a', blocking=True), passed=True),
+            _result(_check('advice', blocking=False), passed=False),
+        ]
+    )
+    assert verdict.blocking_red is False
+    assert repair_brief(verdict) == ''
+
+
+def test_repair_brief_names_the_check_its_detail_and_its_hint() -> None:
+    """The three facts a repair is briefed with reach the section verbatim."""
+    check = _hinted('refs-fresh', 'run scripts/generate_references.py and commit the diff')
+    verdict = decide([CheckResult(check=check, passed=False, detail='exited 1: stale mirror')])
+
+    section = repair_brief(verdict)
+
+    assert section.startswith('## Failing checks to repair')
+    assert 'refs-fresh' in section
+    assert 'exited 1: stale mirror' in section
+    assert 'repair hint: run scripts/generate_references.py and commit the diff' in section
+
+
+def test_repair_brief_marks_an_independent_red_as_trustworthy() -> None:
+    check = Check(name='oracle', run='true', blocking=True, independent=True)
+    verdict = decide([CheckResult(check=check, passed=False, detail='exited 1')])
+    assert 'independent' in repair_brief(verdict)
