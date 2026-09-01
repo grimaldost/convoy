@@ -76,6 +76,16 @@ already-fixed defects.
 Cadence: cut a release after each backlog build round (a batch of
 `docs/backlog.md` rows landing). To cut:
 
+0. Choose the bump with the test in
+   [docs/design/02-formats.md](docs/design/02-formats.md): does any
+   `[Unreleased]` entry carry **(consumer-affecting)** — a new event, field,
+   `outcome` / `error_kind` value, exit code, or series.toml key? **Minor if
+   yes, patch if no.** The changelog gate's advisory warning on the PRs that
+   landed the round is the same signal, already computed — read it rather than
+   re-deriving the answer. This was the one judgement call in the cut that no
+   document signposted, and it produced a wrong recommendation once (0.10.0
+   where the rule said 0.9.1); precedent ("recent bumps were minor") is not
+   the test.
 1. Move `[Unreleased]` into a new `## [0.x.y] - <date>` section in
    `CHANGELOG.md`.
 2. Bump the version in all FOUR locations. Three are hand-edited —

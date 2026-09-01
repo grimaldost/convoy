@@ -77,6 +77,13 @@ CI gains the second operating system the engine's failure history keeps naming.
   on the next literal respelled outside `proc.py` and `streams.py` — the guardrail's
   "one decode policy" sentence is now true, and mechanical.
 
+- The release checklist opens with a step 0 that makes the version-bump decision
+  mechanical: minor when any `[Unreleased]` entry carries **(consumer-affecting)**, patch
+  when none does, citing the enumeration in `docs/design/02-formats.md`. It was the one
+  judgement call in the cut that no document signposted — steps 1–4 were mechanized, and
+  the rule deciding the number lived in a document the checklist never pointed at — and
+  it produced a wrong recommendation once (0.10.0 where the rule said 0.9.1).
+
 ## [0.9.1] - 2026-08-28
 
 The delta triage build round: nothing in the engine's contract moves, so this is a patch
