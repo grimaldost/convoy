@@ -1260,9 +1260,22 @@ change made to win ships through this repo's own process (PR, CHANGELOG, tag) an
 measured as a **new arm**, never as a silent mutation of a running one. An arm convoy loses
 is a finding, not a defect in the instrument.
 
-**Status.** **In flight** as of 2026-09-01 — arms authored and arming-verified against the
-0.10.0 release (the driver, un-overridden, catches a defect the project's own suite passes),
-24 trials launched. Unresolved until the report lands.
+**Status.** **Measured once, headline retracted, question open** (2026-09-01). 24 trials
+at the weak tier, $9.11. The composed arm read 8/8 on the target criterion against the
+naive arm's 4/8 — and a blind two-reviewer validity pass found that seven of those eight
+implementations were already correct before the gate ran, that the criterion's grading
+items are string-identical to the probe's assertions, and that nothing survives
+multiple-comparison correction; the arms were also contiguous blocks against comparators
+bought two months earlier. What the round *does* establish, within-arm and without a
+cross-arm comparator: an implementer-unreachable probe plus a bounded fix loop repairs the
+class it asserts (4/8 → 7/8), and a self-oracle gate goes green while a held-out oracle
+fails in roughly fifteen of twenty-six trials across three batches. As engineering, the
+standalone gate composed cleanly with a non-convoy harness on every invocation and cost no
+more per completed task than a hand-wired probe. The retracted claim was the advocate's;
+the retraction was the rule working. Next: the placebo-gate, batch-randomized replication
+the report specifies, and — separately — the experiment this row actually asks for, which
+none of these arms was: multi-agent dispatch on PR-sized real-repo tasks at the tier
+actually dispatched.
 
 **Effort** M (the arms exist; the cost is wall-clock and analysis) · **Source** [triage] ·
 **Rows** T53a
