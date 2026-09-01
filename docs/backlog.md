@@ -6,7 +6,7 @@ feedback reports and the triage documents themselves are session artifacts and s
 local-only in [docs/feedback/](feedback/) (see the `.gitignore` there). A row here is
 written so a maintainer can build it without the source reports.
 
-**Last reconciled: 2026-08-11.** Three inputs were merged in this pass:
+**Last reconciled: 2026-09-01.** Three inputs were merged in this pass:
 
 1. A full triage over the 21 feedback reports spanning 2026-07-09..08-02 — the
    campaign window, covering roughly 90 governed PRs.
@@ -37,6 +37,18 @@ one, and **corrects CONV-B37**, whose imported measurement cited a figure belong
 arm its own run rejected. A row whose numbers came from outside this repository is the one
 kind of row the "written to stand alone" bar does not protect, so the correction is recorded
 in place rather than substituted.
+
+**A delta pass ran on 2026-09-01**, over the two reports no prior triage lists. It mints
+CONV-B52 (the corpus's only BLOCKER — the gate reachable only by buying the whole engine),
+CONV-B53 (partial composition unmeasured) and CONV-B54 (CHANGELOG discipline asserting
+values, never shape), ships B52 and B54 in 0.10.0, and retargets the rows the 2026-08-29
+guardrail build left at `[Unreleased]`. Two of its clusters stayed at `watch` and are in
+the watch table (T54a, T54b). The pass also recorded a scope defect worth carrying: the
+feedback index reported six false un-triaged reports because the prior triage document was
+written to this repository's `docs/feedback/` (per ADR-0006) rather than the registered
+feedback directory the index scans, and its `## Inputs` list was fenced, which credits zero
+stems. Both repaired; neither is a convoy defect, and both are routed to the tool that owns
+the triage pipeline.
 
 **A delta pass ran on 2026-08-28**, over the six reports the 2026-08-11 triage does not
 list. Small corpus, so it is a narrow pass justified by one routed item rather than by
@@ -654,7 +666,7 @@ tree. [triage: 2026-07-09 governance-cycle, 2026-07-06 baseline arc; review]
 default, with an explicit opt-out for wiring tests, making the guardrail document's
 existing claim true. `tests/conftest.py`.
 
-**Status.** Shipped (`[Unreleased]`, 2026-08-29). `tests/conftest.py` autouses a second
+**Status.** **Shipped** in 0.10.0 (built 2026-08-29). `tests/conftest.py` autouses a second
 guard: a `HeadlessSpawn` left on the default `claude` binary raises instead of launching,
 with the red proof in `tests/test_headless_spawn.py`; subprocess-path tests point the
 spawn at a stub executable, which the guard passes through. `docs/GUARDRAILS.md` now
@@ -730,7 +742,7 @@ exemption list in CRAF-B26 from the contributor docs, so the next person does no
 this from scratch. The four commands and the ordering constraint are unchanged; only the
 installation form moves. [operator observation; cross-review]
 
-**Status.** Shipped (`[Unreleased]`, 2026-08-29), in the `core.hooksPath` form the
+**Status.** **Shipped** in 0.10.0 (built 2026-08-29), in the `core.hooksPath` form the
 cross-review prescribes: tracked wrapper scripts under `scripts/git-hooks/` invoke
 `uv run python -m pre_commit`, so the lane runs on a machine that blocks bare executable
 shims. The config mirrors the fast half of the gate in CI's order (`uv lock --check`
@@ -1216,6 +1228,45 @@ decision rather than an omission.
 
 **Effort** M · **Source** [cross-review]
 
+### CONV-B53 — Partial composition with an external orchestrator has never been measured, so a partial-use decision is made blind.
+
+**Cause / evidence.** Every external measurement in the corpus compared convoy **as a whole
+engine** against other whole engines. No arm has ever measured convoy composed *partially*
+with an orchestrator that is not convoy — which is exactly the comparison a production
+session needed and could not make: it evaluated the package as all-or-nothing, rejected the
+runner on its merits, and discarded the gate with it, shipping 11 externally orchestrated
+PRs verified only by the agents that implemented them. CONV-B52 removed the reason the
+choice was all-or-nothing; nothing yet says which composition is worth paying for.
+[triage: 2026-09-01, owner mandate]
+
+**Change.** A measured comparison at the weak tier, where the corpus records headroom and
+the causal precedent (blind implementer, gate present: 3/3 reds caught and repaired; gate
+absent: 3/3 "broken as done"). Three arms over one task shape, single-factor between each
+adjacent pair: (a) probe-direct — an independent oracle wired by hand into a harness gate;
+(b) probe-through-convoy — the same oracle content carried by `convoy gate`, isolating the
+framework's marginal contribution at equal oracle; (c) agent-driven — the implementing
+agent runs `convoy gate` itself in a loop, at the naive arm's oracle, reading adoption
+rather than oracle strength. Report the mechanics-only cost (invocation overhead) beside
+any quality delta, so plumbing is never mistaken for lift.
+
+**Self-containment.** The measurement harness is not named in this repository (`AGENTS.md`
+self-containment). The row states the arms and the metrics; whoever runs it supplies the
+instrument.
+
+**The honest-advocate rule this row is run under.** The intent is for convoy to win. The
+licensed way to get there is to improve convoy until it wins — arms stay symmetric in
+model, effort, prompts and budget, the blind oracle is identical across arms, and a convoy
+change made to win ships through this repo's own process (PR, CHANGELOG, tag) and is then
+measured as a **new arm**, never as a silent mutation of a running one. An arm convoy loses
+is a finding, not a defect in the instrument.
+
+**Status.** **In flight** as of 2026-09-01 — arms authored and arming-verified against the
+0.10.0 release (the driver, un-overridden, catches a defect the project's own suite passes),
+24 trials launched. Unresolved until the report lands.
+
+**Effort** M (the arms exist; the cost is wall-clock and analysis) · **Source** [triage] ·
+**Rows** T53a
+
 ### Carried-forward watch rows
 
 Anchored, awaiting a second report or a clear trigger. Each stays valid; none has cleared
@@ -1233,6 +1284,8 @@ the promotion gate.
 | T18 | Meter the seat probe as a `role: "preflight"` spawn line, if a consumer ever needs to-the-cent totals. **(consumer-affecting)** | `core/telemetry.py`, `interface/seat_probe.py` |
 | T30c | Name `docs/plans/*` as historical (append-only, not edited by feature work) in AGENTS.md's living-doc set. Singleton. | `AGENTS.md` |
 | T34c | An ADR-template line naming the surfaces on which a rationale's named reader actually meets it — ADR-0008 promised an operator an advisory and delivered it on the dry-run envelope only, which cost three releases. Singleton. | `docs/adr/` template |
+| T54a | A declared **red window** — a check that must be red until a later PR, by design, with going green early or staying red late as the failure. `phases` displaces which PR a check gates and `blocking = false` makes it permanently advisory; neither expresses "red now, green from PR04". Design-only, no priced instance. **(consumer-affecting)** if built. | `core/spec.py`, `core/gate.py` |
+| T54b | Halt for human adjudication and resume with the conversation preserved, rather than a fresh spawn. `resume` re-reads the series file but restarts the spawn. Design-only, singleton. | `interface/drivers/headless.py` |
 
 ---
 
@@ -1374,21 +1427,48 @@ the one thing not to do is discover the answer from a broken scored arm. [cross-
 
 ## Shipped
 
-### Built in the 2026-08-28 delta pass (`[Unreleased]`)
+### Built in the 2026-09-01 delta pass (served by 0.10.0)
 
-Four rows minted and closed in the same pass — each was small, each had its evidence
-already, and none needed a design decision first. They are listed here rather than as open
-rows because there is nothing left to build; the `[Unreleased]` status is the honest one and
-should be retargeted at the tag that serves it, since none of this reaches an installed
-consumer until a release is cut.
+The pass minted CONV-B52 and CONV-B54 and closed both in the same round, plus the two
+guardrail rows the 2026-08-29 build had left at `[Unreleased]` (CONV-B13, CONV-B15).
+CONV-B52 is the only BLOCKER this corpus has carried, and it needed no new gate
+semantics — the primitive existed with one production call site, so the row was wiring
+and doctrine.
 
 | Row | Promotion | Shipped by |
 |---|---|---|
-| CONV-B45 | The skill's trigger stated as the **pre-condition** — a plan, spec or PR manifest already naming two or more PR-sized changes — instead of "when running a convoy series.toml", which is a condition only true after someone has chosen convoy. Both the tool-first opener and the self-referential trigger are displaced, not appended to. | `[Unreleased]` |
-| CONV-B47 | The uncovered-test advisory skips the files the workspace's own ignore rules exclude (`git check-ignore`) and names directories once the list is too long to read. Two workspaces had turned it into 526 and 474 lines of noise. Silent fallback where there is no repository or no `git`. | `[Unreleased]` |
-| CONV-B48 | `CONTRIBUTING.md` and the PR template list every command CI runs, in CI's order — they listed four of six and called it "the same set", omitting `uv lock --check`. `tests/test_doc_claims.py` now reads the workflow and fails on a documented gate that drops a step or reorders one. Fourth recurrence of that class; the first three fixes were prose. | `[Unreleased]` |
-| CONV-B50 | `GitError` read git's stderr and, finding it empty, substituted `exited 1` — while the diagnosis for the commonest of these failures (`git commit` with nothing staged) is on **stdout**. The docstring named that exact case and the code discarded it. Now the stderr tail, then the stdout tail, then the exit code. Same stream-precedence defect as CONV-B03, in the engine's own subprocess calls rather than the gate's. | `[Unreleased]` |
-| CONV-B49 | Two engine behaviours the manual was silent about: mid-series gate repair (`resume` re-reads the series file, so checks edited at a PR boundary govern the remaining PRs while integrated ones are skipped), and that writing to a driven workspace is unsafe because the engine moves `HEAD` between branches. | `[Unreleased]` |
+| CONV-B52 | The gate is reachable without the run. `convoy gate` (CLI) and `convoy_gate` (MCP) run a series' `[[checks]]` against a workspace once — same runner, same fail-closed independence guard, same verdict rules — with no spawn, branch, merge, lock or telemetry, both surfaces emitting one envelope from one fold (`interface/gate_service.py`) including the failure paths. Four invocations that cannot answer are refused as `usage` rather than answered green or red: an unknown phase tag, a selection with no blocking check, an empty selection, and unbacked isolation on a blocking independent check. `load_gate_spec` accepts a full series.toml or a minimal `[series] id` + `[[checks]]` file. **(consumer-affecting)** | 0.10.0 |
+| CONV-B52 (doctrine half) | The skill's trigger names two separately-dispatched capabilities instead of one package — the framing under which a production dispatch decision rejected the runner and discarded the gate with it (11 PRs, judge = defendant). `docs/authoring-series.md` seeded with the separability doctrine and the one-PR-series pattern, under a word budget set at its birth. Folded into CONV-B08's home rather than growing SKILL.md. | 0.10.0 |
+| CONV-B54 | CHANGELOG discipline asserts shape, not only values: the changelog gate fails an added `### ` heading outside the Keep a Changelog vocabulary, and the release checklist opens with a step 0 making the patch-vs-minor call mechanical (any `(consumer-affecting)` entry ⇒ minor), citing the enumeration it was previously silent about. | 0.10.0 |
+| CONV-B13 | The no-real-spawn guardrail became a mechanism: an autouse `tests/conftest.py` guard raises on a `HeadlessSpawn` left on the default `claude` binary. | 0.10.0 |
+| CONV-B15 | The commit-time lane, in the `core.hooksPath` script form (the bare `pre-commit` shim never runs on this machine), pinned to `ci.yml`'s command set and order by `test_doc_claims.py`. | 0.10.0 |
+
+**What CONV-B52 cost to get right.** The first implementation passed the full gate, the
+doc-claims suite and a red-green TDD pass, and still shipped four defects that two
+fresh-context adversarial reviewers found before merge: a typo'd `--phase` tag reported
+**green** with the named check never run; an uncaught `OSError` exited 1, which is
+`EXIT_BLOCKED`; the MCP tool raised instead of returning an envelope on the most likely
+caller mistake; and an unbacked isolation asset was reported as a red carrying
+`independent_red`, the signal an auto-repair loop keys on. One cause: the fail-closed
+guard tested *cardinality* (is the selection empty?) rather than the *question the caller
+asked*. Recorded because the corpus now has a clean instance of what the deterministic
+gate cannot reach — intent — on the round that made the gate a product surface.
+
+### Built in the 2026-08-28 delta pass (served by 0.9.1)
+
+Four rows minted and closed in the same pass — each was small, each had its evidence
+already, and none needed a design decision first. They are listed here rather than as open
+rows because there is nothing left to build. Retargeted at the tag that serves them when
+0.9.1 was cut — none of it reached an installed consumer until then, which is the whole
+reason the status names a tag rather than a branch state.
+
+| Row | Promotion | Shipped by |
+|---|---|---|
+| CONV-B45 | The skill's trigger stated as the **pre-condition** — a plan, spec or PR manifest already naming two or more PR-sized changes — instead of "when running a convoy series.toml", which is a condition only true after someone has chosen convoy. Both the tool-first opener and the self-referential trigger are displaced, not appended to. | 0.9.1 |
+| CONV-B47 | The uncovered-test advisory skips the files the workspace's own ignore rules exclude (`git check-ignore`) and names directories once the list is too long to read. Two workspaces had turned it into 526 and 474 lines of noise. Silent fallback where there is no repository or no `git`. | 0.9.1 |
+| CONV-B48 | `CONTRIBUTING.md` and the PR template list every command CI runs, in CI's order — they listed four of six and called it "the same set", omitting `uv lock --check`. `tests/test_doc_claims.py` now reads the workflow and fails on a documented gate that drops a step or reorders one. Fourth recurrence of that class; the first three fixes were prose. | 0.9.1 |
+| CONV-B50 | `GitError` read git's stderr and, finding it empty, substituted `exited 1` — while the diagnosis for the commonest of these failures (`git commit` with nothing staged) is on **stdout**. The docstring named that exact case and the code discarded it. Now the stderr tail, then the stdout tail, then the exit code. Same stream-precedence defect as CONV-B03, in the engine's own subprocess calls rather than the gate's. | 0.9.1 |
+| CONV-B49 | Two engine behaviours the manual was silent about: mid-series gate repair (`resume` re-reads the series file, so checks edited at a PR boundary govern the remaining PRs while integrated ones are skipped), and that writing to a driven workspace is unsafe because the engine moves `HEAD` between branches. | 0.9.1 |
 
 **Why CONV-B45 was a trigger rewrite and not a removal.** The measurement alone is
 ambiguous: a periodic post-hoc telemetry pass over agent transcripts for 2026-06-26..08-25
@@ -1556,6 +1636,11 @@ shipped (see above) or carried forward unchanged in the watch table.
 | T48a | CONV-B48 (shipped) |
 | T49a, T49b | CONV-B49 (shipped) |
 | T50a | CONV-B50 (shipped) |
+| T52a, T52b | CONV-B52 (shipped 0.10.0; T52b's doctrine folded into CONV-B08's home) |
+| T53a | CONV-B53 (in flight) |
+| T54a, T54b | watch table (declared red windows; halt-for-adjudication resume) |
+| T55b, T55c | CONV-B54 (shipped 0.10.0) |
+| T55a | CONV-B54, held at `watch` — per-PR changelog fragments |
 
 Rows received from the 2026-08-11 cross-project pass resolve as **KEEL-B16 → CONV-B36**
 (the spec pin). CONV-B37 was routed here from the collection's review with no foreign row
