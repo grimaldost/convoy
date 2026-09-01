@@ -1,17 +1,23 @@
 ---
 description: >-
-  Execute an already-settled plan of two or more PR-sized changes as a governed, measured
-  series — a coding agent driven through each task in dependency order under a per-phase
-  budget, each result gated deterministically, repaired on a red gate, the green branches
-  integrated, and a per-spawn economy plus gate summary read back. The trigger is the plan,
-  not convoy's own file: use when a spec, plan or PR manifest already names two or more
-  PR-sized changes; when a wave is about to be implemented PR by PR and someone will want to
-  price or audit it; when the work is hours nobody intends to sit through; when a
-  series.toml exists, or wants scaffolding with `convoy_init`. A series.toml is convoy's
-  input, not its cue: waiting for one means the choice was made elsewhere. Not for a single
-  quick edit or one-shot task — that is a direct agent turn; not for human-in-the-loop PR
-  review — that is the normal Claude Code workflow; not for writing the spec or deciding
-  what to build — convoy executes a plan, never authors one.
+  Two separable capabilities, dispatched separately. (1) Execute an already-settled plan of
+  two or more PR-sized changes as a governed, measured series — a coding agent driven
+  through each task in dependency order under a per-phase budget, each result gated
+  deterministically, repaired on a red gate, the green branches integrated, and a per-spawn
+  economy plus gate summary read back. The trigger is the plan, not convoy's own file: use
+  when a spec, plan or PR manifest already names two or more PR-sized changes; when a wave
+  is about to be implemented PR by PR and someone will want to price or audit it; when the
+  work is hours nobody intends to sit through; when a series.toml exists, or wants
+  scaffolding with `convoy_init`. (2) The deterministic gate STANDALONE — `convoy gate` /
+  `convoy_gate` run a series' checks against a workspace once, no spawn, no orchestration:
+  use whenever work is implemented outside convoy (direct agents, subagent dispatch, a
+  hand-written branch) and its verification should not be the implementer's own
+  self-report — judge and defendant must differ. Rejecting the runner does not mean
+  rejecting the gate; evaluate the two separately before dispatching around convoy
+  entirely. Not for a single quick edit or one-shot task with no verification stakes —
+  that is a direct agent turn; not for human-in-the-loop PR review — that is the normal
+  Claude Code workflow; not for writing the spec or deciding what to build — convoy
+  executes a plan, never authors one.
 ---
 
 # convoy
@@ -300,6 +306,10 @@ check commands run in it and routinely do (caches, build output), so never gate 
 workspace a `convoy_run` is actively driving: beyond gating whatever that driver has
 checked out at that instant, the run's commit step stages the whole tree and can
 commit a concurrent gate's artifacts into a scored branch.
+
+When to compose which way — gate-only over external orchestration versus a series of
+one PR with the engine owning the spawn — is doctrine, not schema:
+[docs/authoring-series.md](../../docs/authoring-series.md).
 
 ## Authoring a series.toml
 
