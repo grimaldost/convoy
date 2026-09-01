@@ -2,6 +2,7 @@
 
 import json
 import os
+import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -21,7 +22,12 @@ from convoy.interface.drivers.headless import (
     make_run_id,
 )
 from convoy.interface.fs_probe import isolation_result
-from convoy.interface.gate_service import gate_envelope, gate_usage_envelope, run_gate
+from convoy.interface.gate_service import (
+    advisory_only_detail,
+    gate_envelope,
+    gate_usage_envelope,
+    run_gate,
+)
 from convoy.interface.git import Git, GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
@@ -109,29 +115,67 @@ def _workspace_or_exit(workspace: Path | None) -> Path:
     return resolved
 
 
-def _validate_gate_only_or_exit(text: str, workspace: Path | None, series_error: SpecError) -> None:
-    """Validate ``text`` as a gate-only file, or re-raise the series failure it really is.
+# The four tables that only an orchestration series has. ``load_gate_spec`` reads none
+# of them, so a file carrying any one of them is a series whatever else is wrong with it,
+# and must never be answered with a gate's narrower yes. ``[governance]`` is absent from
+# the set on purpose: the gate loader does read one field from it, so a gate-only file
+# may legitimately carry it.
+_SERIES_ONLY_TABLES = frozenset({'branches', 'paths', 'review', 'prs'})
 
-    Reached only when :func:`load_series` has already refused ``text``. When
-    :func:`load_gate_spec` accepts the same bytes the file is a gate, not a broken
-    series, and the pre-flight that remains meaningful is the isolation probe: a
-    blocking independent check whose oracle is in-tree or absent would make the gate
-    self-graded, which is the one defect ``convoy gate`` refuses at run time and the one
-    a caller wants told before the checks cost anything. When both loaders refuse,
-    ``series_error`` is reported unchanged — a file that meant to be a series should not
-    be told it is a bad gate.
+
+def _is_gate_shaped(text: str) -> bool:
+    """Whether ``text`` carries no orchestration table, and so may be read as a gate.
+
+    Shape, not validity: a file that answers yes here still has to satisfy
+    ``load_gate_spec``. Unparseable TOML is not gate-shaped — the series loader has
+    already produced the better message for it.
     """
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return False
+    return not (_SERIES_ONLY_TABLES & data.keys())
+
+
+def _validate_gate_only_or_exit(text: str, workspace: Path | None, series_error: SpecError) -> None:
+    """Validate ``text`` as a gate-only file, or report the series failure it really is.
+
+    Reached only when :func:`load_series` has already refused ``text``. The gate loader
+    reads just ``[series] id``, ``[[checks]]`` and one ``[governance]`` field, so it
+    accepts any series whose defect lies in a section it ignores — which would turn every
+    broken orchestration file into a passing gate. ``_is_gate_shaped`` is the guard: a
+    file carrying ``[branches]``, ``[paths]``, ``[review]`` or ``[[prs]]`` is reported as
+    the broken series it is, exit code included.
+
+    For a file that is gate-shaped and loads, the pre-flight that remains meaningful is
+    the pair of refusals ``convoy gate`` can decide from the spec alone: a selection with
+    no blocking check assures nothing, and a blocking independent check whose oracle is
+    in-tree or absent makes the gate self-graded. Both are told before the checks cost
+    anything, in the gate's own words. The phase-dependent refusals are left to the gate,
+    which alone takes ``--phase``.
+
+    When both loaders refuse, ``series_error`` is reported unchanged — a file that meant
+    to be a series should not be told it is a bad gate.
+    """
+    if not _is_gate_shaped(text):
+        typer.echo(str(series_error), err=True)
+        raise typer.Exit(EXIT_USAGE)
     try:
         spec = load_gate_spec(text)
     except SpecError as exc:
         typer.echo(str(series_error), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
+    if not any(check.blocking for check in spec.checks):
+        typer.echo(advisory_only_detail(spec.checks), err=True)
+        raise typer.Exit(EXIT_USAGE)
     target = _workspace_or_exit(workspace)
     refused = [result for check in spec.checks if (result := isolation_result(target, check))]
     if refused:
-        lines = [f'{len(refused)} problem(s) found:']
-        lines += [f'  - [[checks]] {r.check.name!r} [isolation] {r.detail}' for r in refused]
-        typer.echo('\n'.join(lines), err=True)
+        problems = [
+            Problem(kind='isolation', where=f'[[checks]] {r.check.name!r}', message=r.detail)
+            for r in refused
+        ]
+        typer.echo(format_problems(problems), err=True)
         raise typer.Exit(EXIT_USAGE)
     typer.echo('ok (gate-only)')
 
@@ -155,13 +199,17 @@ def validate(
 
     A **gate-only** file — one carrying just ``[series] id`` and ``[[checks]]``, the
     input ``convoy gate`` accepts — is validated as the gate it is rather than rejected
-    as a series missing its orchestration sections. It gets the one pre-flight rule that
-    still applies without a run: every blocking independent check must back its
-    isolation, the same fail-closed probe the gate itself runs. Stdout then says ``ok
-    (gate-only)``, naming the narrower answer so a full series that quietly lost a
-    section is not read as validated. A file that is neither is reported as the broken
-    series it looks like — the series loader's message, which is the more informative of
-    the two.
+    as a series missing its orchestration sections. It gets the two refusals that stay
+    decidable without a run, both in ``convoy gate``'s own words: the selection must
+    contain a blocking check, and every blocking independent check must back its
+    isolation. Stdout then says ``ok (gate-only)``, naming the narrower answer.
+
+    The narrower answer is only ever given to a file that is actually gate-shaped. A
+    file carrying ``[branches]``, ``[paths]``, ``[review]`` or ``[[prs]]`` is an
+    orchestration series, so a defect anywhere in it is reported as a broken series —
+    the series loader's message and exit ``3``, never a gate's pass. Without that guard
+    the gate loader, which ignores all four sections, would validate any series that had
+    quietly lost one.
     """
     text = _read_or_exit(series_file)
     try:

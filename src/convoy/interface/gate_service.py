@@ -22,6 +22,7 @@ the same conditions with pre-flight problems and author-declared advisories, whi
 standalone invocation does not have.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,21 @@ from convoy.interface.gate_runner import GateRunner, SubprocessGateRunner
 # trace to point at — the envelope IS the record — so what is dropped is counted,
 # never silent.
 _CHECK_CAP = 50
+
+
+def advisory_only_detail(selected: Sequence[Check]) -> str:
+    """Why a selection carrying no blocking check is refused.
+
+    Its own function because two surfaces reach the same conclusion from the spec alone:
+    :func:`run_gate` raises it, and ``convoy validate`` reports it on a gate-only file
+    before any check runs. One spelling keeps the two from drifting into different words
+    for the same defect.
+    """
+    return (
+        f'the selection ({len(selected)} check(s)) contains no blocking check — '
+        f'nothing in it can fail the gate, so "completed" would assure nothing; '
+        f'mark a check blocking, or widen the selection'
+    )
 
 
 @dataclass(frozen=True)
@@ -105,11 +121,7 @@ def run_gate(
             f'verdict from zero checks would be vacuous, so it is refused'
         )
     if not any(check.blocking for check in selected):
-        raise AdvisoryOnlySelectionError(
-            f'the selection ({len(selected)} check(s)) contains no blocking check — '
-            f'nothing in it can fail the gate, so "completed" would assure nothing; '
-            f'mark a check blocking, or widen the selection'
-        )
+        raise AdvisoryOnlySelectionError(advisory_only_detail(selected))
     for check in selected:
         refused = isolation_result(workspace, check)
         if refused is not None:

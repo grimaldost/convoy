@@ -25,15 +25,20 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   both paths read. `convoy_version` names the engine that produced the verdict, so a
   stored envelope stays interpretable as the shape grows.
 
-- `convoy validate` accepts a gate-only file. `validate` was bound to `load_series`, so
-  the minimal `[series] id` + `[[checks]]` file `convoy gate` documents as valid input
-  failed with `missing required section [branches]` — the one surface that could have
-  told a gate-only adopter their file was sound instead told them it was a broken
-  series. It now falls through to `load_gate_spec` when `load_series` refuses, probes
-  the isolation of every blocking independent check against `--workspace` (the same
-  fail-closed probe the gate runs), and prints `ok (gate-only)` on stdout. An
-  unbacked oracle is reported on stderr with the usual exit `3`; a file that is neither
-  a series nor a gate still reports the series loader's message.
+- `convoy validate` accepts a gate-only file **(consumer-affecting)**. `validate` was
+  bound to `load_series`, so the minimal `[series] id` + `[[checks]]` file `convoy gate`
+  documents as valid input failed with `missing required section [branches]` — the one
+  surface that could have told a gate-only adopter their file was sound instead told
+  them it was a broken series. It now falls through to `load_gate_spec` when
+  `load_series` refuses and the file carries no orchestration section, applies the two
+  refusals the gate decides from the spec alone (the selection must contain a blocking
+  check; every blocking independent check must back its isolation), and prints `ok
+  (gate-only)` on stdout. Two surfaces a consumer keys on move for one input class,
+  gate-only files: stdout gains a second success token beside the contracted `ok`, and
+  a valid gate-only file now exits `0` where it exited `3`. Everything else is
+  unchanged — a file carrying `[branches]`, `[paths]`, `[review]` or `[[prs]]` is
+  validated as the full series it is, defects and exit code included, and a file that is
+  neither a series nor a gate still reports the series loader's message.
 
 ### Changed
 
