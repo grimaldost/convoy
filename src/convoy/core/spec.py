@@ -99,6 +99,26 @@ class Check:
     phases: tuple[str, ...] = ()
 
 
+# What a gate-only invocation waits on a check for when the file names no timeout.
+# ``SubprocessGateRunner``'s own default, restated as data so the subset loader and the
+# runner cannot drift apart silently (test-pinned against the runner's signature).
+DEFAULT_GATE_TIMEOUT_SECONDS = 300
+
+
+@dataclass(frozen=True)
+class GateSpec:
+    """The subset of a series a gate-only invocation needs: identity, checks, timeout.
+
+    Loaded by :func:`load_gate_spec`, which accepts either a full series.toml (the same
+    file that drives ``run``) or a minimal checks-only file — the framework's gate is
+    usable without the orchestration around it.
+    """
+
+    id: str
+    checks: tuple[Check, ...]
+    timeout_seconds: int
+
+
 @dataclass(frozen=True)
 class Branches:
     base: str
@@ -503,6 +523,37 @@ def load_series(text: str) -> Series:
         review=review,
         checks=checks,
         prs=prs,
+    )
+
+
+def load_gate_spec(text: str) -> GateSpec:
+    """Parse TOML *text* into the subset a gate-only invocation needs.
+
+    Accepts a full series.toml unchanged — ``[[checks]]`` and ``[governance]
+    timeout_seconds`` are read, everything else is ignored — and equally a minimal file
+    carrying only ``[series] id`` and ``[[checks]]``. The check tables go through the
+    same parser as :func:`load_series`, so a check means exactly the same thing to
+    ``gate`` as to ``run``. Raises ``SpecError`` on any invalid input, including
+    malformed TOML, a missing id, and an empty or absent ``[[checks]]``.
+    """
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise SpecError(f'invalid TOML: {exc}') from exc
+
+    series_table = _require_table(data, 'series', 'series.toml')
+    check_tables = _require_table_array(data, 'checks', 'series.toml')
+    checks = tuple(_parse_check(table, i) for i, table in enumerate(check_tables))
+
+    timeout = DEFAULT_GATE_TIMEOUT_SECONDS
+    governance = data.get('governance')
+    if isinstance(governance, Mapping) and 'timeout_seconds' in governance:
+        timeout = _require_int(governance, 'timeout_seconds', '[governance]')
+
+    return GateSpec(
+        id=_require_str(series_table, 'id', '[series]'),
+        checks=checks,
+        timeout_seconds=timeout,
     )
 
 

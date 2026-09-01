@@ -82,8 +82,8 @@ def test_the_names_being_pinned_are_actually_discovered() -> None:
     difference against two registries. If either stops answering — a typer internal moves,
     the MCP SDK renames ``list_tools`` — the assertions all pass while checking nothing.
     """
-    assert _cli_verbs() >= {'run', 'validate', 'clean', 'status', 'init'}
-    assert _mcp_tool_names() == {'convoy_run', 'convoy_init', 'convoy_status'}
+    assert _cli_verbs() >= {'run', 'validate', 'gate', 'clean', 'status', 'init'}
+    assert _mcp_tool_names() == {'convoy_run', 'convoy_gate', 'convoy_init', 'convoy_status'}
     assert {'resume', 'detach'} <= _mcp_run_parameters()
 
 

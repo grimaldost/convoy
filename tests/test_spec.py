@@ -7,6 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from convoy.core.spec import (
+    DEFAULT_GATE_TIMEOUT_SECONDS,
     EFFORT_LEVELS,
     PERMISSION_MODES,
     PR,
@@ -20,6 +21,7 @@ from convoy.core.spec import (
     SpecError,
     Tools,
     dump_series,
+    load_gate_spec,
     load_series,
 )
 
@@ -566,3 +568,68 @@ def test_an_unpinned_series_dumps_no_pin_keys() -> None:
     dumped = tomllib.loads(dump_series(load_series(VALID_TOML)))
     assert 'spec_path' not in dumped['series']
     assert 'spec_sha256' not in dumped['series']
+
+
+# --- load_gate_spec: the checks-only subset loader ---------------------------------------
+
+
+GATE_ONLY_TOML = """
+[series]
+id = "gate-only"
+
+[[checks]]
+name = "suite"
+run = "pytest -q"
+blocking = true
+independent = false
+
+[[checks]]
+name = "later-only"
+run = "pytest tests/later -q"
+blocking = true
+independent = false
+phases = ["later"]
+"""
+
+
+def test_a_checks_only_file_loads() -> None:
+    spec = load_gate_spec(GATE_ONLY_TOML)
+    assert spec.id == 'gate-only'
+    assert [check.name for check in spec.checks] == ['suite', 'later-only']
+    assert spec.checks[1].phases == ('later',)
+    assert spec.timeout_seconds == DEFAULT_GATE_TIMEOUT_SECONDS
+
+
+def test_a_full_series_file_loads_as_a_gate_spec() -> None:
+    """The same file drives `run` and `gate`; the subset loader ignores what it doesn't need."""
+    series = load_series(VALID_TOML)
+    spec = load_gate_spec(VALID_TOML)
+    assert spec.id == series.id
+    assert spec.checks == series.checks
+    assert spec.timeout_seconds == series.governance.timeout_seconds
+
+
+def test_gate_spec_requires_an_id() -> None:
+    with pytest.raises(SpecError, match=r'\[series\]'):
+        load_gate_spec('[[checks]]\nname = "a"\nrun = "x"\nblocking = true\n')
+
+
+def test_gate_spec_requires_at_least_one_check() -> None:
+    with pytest.raises(SpecError, match='checks'):
+        load_gate_spec('[series]\nid = "empty"\n')
+
+
+def test_gate_spec_rejects_a_malformed_check_with_its_location() -> None:
+    text = '[series]\nid = "bad"\n\n[[checks]]\nname = "a"\nblocking = true\n'  # no run
+    with pytest.raises(SpecError, match=r'\[\[checks\]\]\[0\]'):
+        load_gate_spec(text)
+
+
+def test_gate_spec_rejects_bad_toml() -> None:
+    with pytest.raises(SpecError, match='invalid TOML'):
+        load_gate_spec('not = [toml')
+
+
+def test_gate_spec_reads_a_governance_timeout_when_present() -> None:
+    text = GATE_ONLY_TOML + '\n[governance]\ntimeout_seconds = 7\n'
+    assert load_gate_spec(text).timeout_seconds == 7

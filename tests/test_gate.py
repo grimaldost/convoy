@@ -16,7 +16,13 @@ on the dataclass.
 from hypothesis import given
 from hypothesis import strategies as st
 
-from convoy.core.gate import CheckResult, GateVerdict, checks_for, decide
+from convoy.core.gate import (
+    CheckResult,
+    GateVerdict,
+    checks_for,
+    checks_for_phases,
+    decide,
+)
 from convoy.core.spec import PR, Check
 
 
@@ -197,3 +203,42 @@ def test_scoping_never_changes_what_a_red_means(phases: list[str], pr_phase: str
     selected = checks_for([check], _pr('pr-1', pr_phase))
     verdict = decide([_result(c, passed=False) for c in selected])
     assert verdict.blocking_red is bool(selected)
+
+
+# --- checks_for_phases: the gate-only selection ------------------------------------------
+
+
+def _scoped(name: str, *phases: str) -> Check:
+    return Check(name=name, run='true', blocking=True, phases=phases)
+
+
+def test_no_phases_selects_the_whole_tuple() -> None:
+    checks = (_scoped('a'), _scoped('b', 'core'), _scoped('c', 'later'))
+    assert checks_for_phases(checks, ()) == checks
+
+
+def test_a_phase_selects_unscoped_plus_matching_in_declaration_order() -> None:
+    unscoped = _scoped('a')
+    core = _scoped('b', 'core')
+    later = _scoped('c', 'later')
+    assert checks_for_phases((later, unscoped, core), ('core',)) == (unscoped, core)
+
+
+def test_multiple_phases_union_without_duplicates() -> None:
+    both = _scoped('b', 'core', 'later')
+    assert checks_for_phases((both, _scoped('c', 'later')), ('core', 'later')) == (
+        both,
+        _scoped('c', 'later'),
+    )
+
+
+def test_an_unknown_phase_still_selects_the_unscoped_checks() -> None:
+    unscoped = _scoped('a')
+    assert checks_for_phases((unscoped, _scoped('b', 'core')), ('nope',)) == (unscoped,)
+
+
+def test_phase_selection_agrees_with_the_per_pr_fold() -> None:
+    """One phase tag must select exactly what a PR carrying that tag is gated on."""
+    checks = (_scoped('a'), _scoped('b', 'core'), _scoped('c', 'later'))
+    pr = PR(id='p', branch='p', prompt='p.md', phase='core', depends_on=())
+    assert checks_for_phases(checks, ('core',)) == checks_for(checks, pr)

@@ -24,10 +24,13 @@ failure, integrates the green branches, and records **per-spawn economy** (token
 turns, cost, duration) as an append-only, versioned trace. It is headless —
 fire-and-walk-away, no human checkpoints.
 
-The plugin exposes three MCP tools:
+The plugin exposes four MCP tools:
 
 - **`convoy_run`** — run a series (or, with `dry_run`, pre-flight it for free; or,
   with `detach`, start it and get a handle back at once).
+- **`convoy_gate`** — run the series' `[[checks]]` against a workspace once, no
+  spawn and no git mutation: the deterministic gate standalone, for verifying work
+  produced outside convoy (see "The gate without the run" below).
 - **`convoy_init`** — scaffold a runnable starter series to adapt or smoke-test.
 - **`convoy_status`** — ask a run how it is doing, including one still in progress
   and one this server never started. Reads the ledger only: no spend, no state, no
@@ -90,6 +93,19 @@ with the `run_id` it returns.
   workspace lock and git are the child's to hit, and land in `result_path`. `dry_run`
   takes precedence: a pre-flight is free and instant, so there is nothing to detach.
   CLI equivalent: `convoy run` in a background shell.
+
+### `convoy_gate`
+
+- `series_file` (required) — absolute path to the file holding the `[[checks]]` to
+  run: a full series.toml, or a minimal file carrying only `[series] id` and
+  `[[checks]]`.
+- `workspace` (required) — absolute path to the tree to gate — the checks run there.
+  Nothing is written, no branch is created, no lock is taken; gating a tree another
+  process is driving gates whatever that driver has checked out.
+- `phases` (default `[]`) — optional phase tags. Empty runs the whole gate; tags run
+  exactly the checks a PR carrying them would be gated on (the unscoped checks plus
+  the ones scoped to a named tag). Tags selecting zero checks are refused as a usage
+  error rather than answered green.
 
 ### `convoy_status`
 
@@ -239,6 +255,37 @@ not there for the run.
 
 **`convoy_init`** — `{ ok, created, series_file, workspace, next }`: the paths
 written, and the `series_file` / `workspace` to hand straight to `convoy_run`.
+
+**`convoy_gate`** — the gate envelope: `ok`, `outcome` (`completed` | `blocked` |
+`usage`), `series_id`, `workspace`, `phases`, `checks` (one `{name, passed, blocking,
+independent, phases, detail}` per selected check, `detail` carrying the failure tail a
+repair can be briefed with), `blocking_red`, `independent_red`, `counts`
+(`{selected, passed, failed}`), and the CLI-equivalent `exit_code` (0 green — a
+non-blocking red advises without blocking — 1 blocking red). The CLI twin `convoy gate
+--json` prints this same object.
+
+## The gate without the run
+
+The deterministic gate is separable from the orchestration: `convoy_gate` (CLI:
+`convoy gate`) runs a series' `[[checks]]` against a workspace **once**, with the same
+runner, the same fail-closed independence guard, and the same verdict rules the run
+applies after every PR — and nothing else. No agent spawns, no branch, no merge, no
+telemetry, no spend beyond the check commands themselves.
+
+Use it when the implementation is produced outside convoy but the verification should
+not be self-reported: an externally orchestrated multiagent build, a hand-written
+branch, a diff another tool produced. The implementer's own "done" is not a verdict —
+judge and defendant must differ — and this tool is the judge without buying the whole
+courtroom. The `[[checks]]` semantics are identical to a run's, so a series file
+authored for `convoy_run` gates the same way standalone, and a minimal file carrying
+only `[series] id` and `[[checks]]` is enough when no run is ever intended.
+
+Two rules differ from a run, both deliberate. A phase selection that matches zero
+checks is refused (`outcome: "usage"`) rather than answered green — an ungated PR
+inside a series is the author's declared choice, but a gate-only caller asked a
+question and a green from nothing is a vacuous assurance. And no workspace lock is
+taken: gating a tree a `convoy_run` is actively driving gates whatever that driver has
+checked out at that instant.
 
 ## Authoring a series.toml
 

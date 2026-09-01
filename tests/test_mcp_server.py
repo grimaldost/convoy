@@ -98,7 +98,7 @@ def _write_jsonl(path: Path, lines: list[dict[str, Any]]) -> None:
 
 
 def test_build_server_registers_every_tool() -> None:
-    assert set(_tools()) == {'convoy_run', 'convoy_init', 'convoy_status'}
+    assert set(_tools()) == {'convoy_run', 'convoy_gate', 'convoy_init', 'convoy_status'}
 
 
 def test_every_tool_schema_documents_every_parameter() -> None:
@@ -113,6 +113,7 @@ def test_every_tool_schema_documents_every_parameter() -> None:
             'resume',
             'detach',
         },
+        'convoy_gate': {'series_file', 'workspace', 'phases'},
         'convoy_init': {'directory'},
         'convoy_status': {'series_file', 'run_id', 'workspace'},
     }
@@ -929,3 +930,79 @@ def test_in_flight_is_always_present_and_null_on_a_finished_run(tmp_path: Path) 
     )
 
     assert envelope['prs'][0]['in_flight'] is None
+
+
+# --- convoy_gate --------------------------------------------------------------------------
+
+
+_GATE_PY = sys.executable
+
+
+def _gate_only_toml(*, red: bool = False) -> str:
+    ok = f'"{_GATE_PY}" -c "exit(0)"'
+    bad = f'"{_GATE_PY}" -c "import sys; sys.exit(1)"'
+    second = bad if red else ok
+    ok_escaped = ok.replace('\\', '\\\\').replace('"', '\\"')
+    second_escaped = second.replace('\\', '\\\\').replace('"', '\\"')
+    return (
+        '[series]\nid = "mcp-gate"\n\n'
+        f'[[checks]]\nname = "first"\nrun = "{ok_escaped}"\n'
+        'blocking = true\nindependent = false\n\n'
+        f'[[checks]]\nname = "second"\nrun = "{second_escaped}"\n'
+        'blocking = true\nindependent = false\n'
+    )
+
+
+def test_convoy_gate_green_envelope(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_only_toml(), encoding='utf-8')
+    result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path)))
+    assert result['ok'] is True
+    assert result['outcome'] == 'completed'
+    assert [check['name'] for check in result['checks']] == ['first', 'second']
+    assert result['exit_code'] == 0
+
+
+def test_convoy_gate_red_envelope(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_only_toml(red=True), encoding='utf-8')
+    result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path)))
+    assert result['ok'] is False
+    assert result['outcome'] == 'blocked'
+    assert result['blocking_red'] is True
+    assert result['checks'][1]['passed'] is False
+
+
+def test_convoy_gate_matches_the_cli_envelope(tmp_path: Path) -> None:
+    """The parity doctrine, asserted: both surfaces emit the same fold's object."""
+    from convoy.core.spec import load_gate_spec
+    from convoy.interface.gate_service import gate_envelope, run_gate
+
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_only_toml(red=True), encoding='utf-8')
+    spec = load_gate_spec(series_file.read_text(encoding='utf-8'))
+    expected = gate_envelope(spec, tmp_path, (), run_gate(spec, tmp_path))
+    assert asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path))) == expected
+
+
+def test_convoy_gate_bad_spec_is_a_usage_result_not_an_exception(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text('[series]\nid = "no-checks"\n', encoding='utf-8')
+    result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path)))
+    assert result['ok'] is False
+    assert result['outcome'] == 'usage'
+    assert 'checks' in result['error']
+
+
+def test_convoy_gate_empty_selection_is_a_usage_result(tmp_path: Path) -> None:
+    text = (
+        '[series]\nid = "scoped"\n\n'
+        '[[checks]]\nname = "core-only"\nrun = "x"\nblocking = true\n'
+        'independent = false\nphases = ["core"]\n'
+    )
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(text, encoding='utf-8')
+    result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path), phases=['nope']))
+    assert result['ok'] is False
+    assert result['outcome'] == 'usage'
+    assert 'selects no checks' in result['error']

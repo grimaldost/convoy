@@ -63,6 +63,25 @@ CI gains the second operating system the engine's failure history keeps naming.
   job exists, is not itself a matrix, and carries `needs: checks` with `if: always()` — because
   the ruleset lives in repository settings and is invisible from the tree.
 
+- The gate without the run. **(consumer-affecting)** `convoy gate` (CLI) and
+  `convoy_gate` (MCP) run a series' `[[checks]]` against a workspace once — the same
+  runner, the same fail-closed independence guard on `independent` checks, and the same
+  verdict rules the run applies after every PR, with no spawn, no branch, no merge, no
+  lock and no telemetry. The engine always had the primitive (`SubprocessGateRunner`
+  had exactly one production call site, inside the per-PR loop); this exposes it, for
+  verifying work produced outside convoy instead of letting the implementer self-report.
+  Both surfaces emit one envelope from one fold (`interface/gate_service.py`):
+  per-check verdicts with failure details, `blocking_red` / `independent_red`, counts,
+  and the CLI-equivalent exit code — 0 green, 1 blocking red, 3 usage, reusing the
+  run's own codes and outcome words (`completed` / `blocked` / `usage`).
+  `series_file` may be a full series.toml or a minimal file carrying only
+  `[series] id` and `[[checks]]` (`load_gate_spec`; a missing
+  `[governance] timeout_seconds` defaults to the runner's 300s). `--phase TAG`
+  (repeatable; MCP `phases`) runs exactly the checks a PR carrying those tags would be
+  gated on; a selection of zero checks is refused as a usage error rather than answered
+  green, because a gate-only caller asked a question and a green from nothing is a
+  vacuous assurance.
+
 ### Changed
 
 - The two spawn sites that spelled the decode policy as literals now import

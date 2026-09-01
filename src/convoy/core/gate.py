@@ -58,3 +58,23 @@ def checks_for(checks: Sequence[Check], pr: PR) -> tuple[Check, ...]:
     advisory rather than refusing to run.
     """
     return tuple(check for check in checks if not check.phases or pr.phase in check.phases)
+
+
+def checks_for_phases(checks: Sequence[Check], phases: Sequence[str]) -> tuple[Check, ...]:
+    """The checks a gate-only invocation runs, in declaration order.
+
+    The phase-tag counterpart of :func:`checks_for`, for a caller that stands at no PR
+    boundary: no tags selects the whole tuple (the whole gate), and one tag selects
+    exactly what :func:`checks_for` selects for a PR carrying it — the unscoped checks
+    plus the ones scoped to that tag. Several tags union, so an invocation can stand in
+    for a span of phases at once. Selecting nothing is possible here too; the *caller*
+    decides what an empty selection means, and the gate-only service refuses it
+    (fail-closed) where the per-PR run deliberately does not.
+    """
+    if not phases:
+        return tuple(checks)
+    return tuple(
+        check
+        for check in checks
+        if not check.phases or any(phase in check.phases for phase in phases)
+    )
