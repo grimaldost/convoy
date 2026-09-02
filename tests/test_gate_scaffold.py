@@ -235,7 +235,7 @@ def _trust_list(home: Path) -> str:
     return path.read_text(encoding='utf-8') if path.exists() else ''
 
 
-def test_gate_init_trusts_the_project_it_scaffolds(
+def test_gate_init_does_not_arm_the_hook_and_names_the_next_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / 'home'
@@ -244,8 +244,29 @@ def test_gate_init_trusts_the_project_it_scaffolds(
     root.mkdir()
     result = runner.invoke(cli.app, ['gate', '--init', '-w', str(root)])
     assert result.exit_code == EXIT_OK, result.stderr
-    assert 'trusted' in result.stdout
+    assert 'convoy gate --trust' in result.stdout
+    assert _trust_list(home) == ''
+
+
+def test_gate_trust_from_a_subdirectory_arms_the_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / 'home'
+    monkeypatch.setenv('CONVOY_HOME', str(home))
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    root = tmp_path / 'repo'
+    (root / '.convoy').mkdir(parents=True)
+    (root / '.convoy' / 'gate.toml').write_text(
+        '[series]\nid = "c"\n\n[[checks]]\nname = "x"\nrun = "exit 0"\n'
+        'blocking = true\nindependent = false\n',
+        encoding='utf-8',
+    )
+    sub = root / 'src' / 'pkg'
+    sub.mkdir(parents=True)
+    result = runner.invoke(cli.app, ['gate', '--trust', '-w', str(sub)])
+    assert result.exit_code == EXIT_OK, result.stderr
     assert root.resolve().as_posix() in _trust_list(home)
+    assert sub.resolve().as_posix() not in _trust_list(home)
 
 
 def test_gate_trust_arms_an_existing_project_spec(

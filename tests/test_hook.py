@@ -23,10 +23,12 @@ from convoy.interface.hook import (
     HOOK_EXIT_FEEDBACK,
     HOOK_EXIT_SILENT,
     decide,
+    parse_event,
     parse_phase_markers,
     read_transcript,
     run_hook,
 )
+from convoy.interface.workspace_lock import lock_path
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'hooks'
 runner = CliRunner()
@@ -259,8 +261,8 @@ def test_run_hook_appends_one_log_line_per_firing(
     root = tmp_path / 'proj'
     _project(root, _check('ok', _OK))
     env = _trusted(tmp_path, root)
-    assert run_hook(json.dumps(_payload(root)), env) == HOOK_EXIT_SILENT
-    assert run_hook(json.dumps(_payload(root)), env) == HOOK_EXIT_SILENT
+    assert run_hook(json.dumps(_payload(root)).encode(), env) == HOOK_EXIT_SILENT
+    assert run_hook(json.dumps(_payload(root)).encode(), env) == HOOK_EXIT_SILENT
     captured = capsys.readouterr()
     assert captured.out == '' and captured.err == ''
     lines = _log_lines(root)
@@ -270,7 +272,7 @@ def test_run_hook_appends_one_log_line_per_firing(
 
 
 def test_run_hook_rejects_non_json_stdin(capsys: pytest.CaptureFixture[str]) -> None:
-    assert run_hook('not json', {}) == HOOK_EXIT_FEEDBACK
+    assert run_hook(b'not json', {}) == HOOK_EXIT_FEEDBACK
     assert 'not hook JSON' in capsys.readouterr().err
 
 
@@ -424,6 +426,7 @@ def test_a_read_only_subagent_is_not_gated(tmp_path: Path) -> None:
     assert result.record is not None
     assert result.record['outcome'] == 'skipped'
     assert 'read-only' in result.record['reason']
+    assert result.record['leg'] == 'judge'
 
 
 def test_a_missing_transcript_is_gated_conservatively(tmp_path: Path) -> None:
@@ -466,6 +469,7 @@ def test_the_messenger_reuses_the_judges_verdict_instead_of_rerunning(tmp_path: 
         'ts': datetime.now(UTC).isoformat(timespec='seconds'),
         'event': 'SubagentStop',
         'agent_id': 'a1b909db97960854e',
+        'session_id': 'session-0000',
         'outcome': 'blocked',
         'phases': ['core'],
         'counts': {'selected': 1, 'passed': 0, 'failed': 1},
@@ -489,6 +493,7 @@ def test_the_messenger_ignores_a_stale_or_foreign_verdict(tmp_path: Path) -> Non
         'ts': '2020-01-01T00:00:00+00:00',
         'event': 'SubagentStop',
         'agent_id': 'a1b909db97960854e',
+        'session_id': 'session-0000',
         'outcome': 'blocked',
         'repair_brief': 'stale-marker',
     }
@@ -530,7 +535,7 @@ def test_an_env_named_spec_is_judged_logged_and_trusted_at_the_workspace(tmp_pat
         'CONVOY_GATE_SPEC': str(spec),
         'CONVOY_TRUSTED_ROOTS': str(workspace),
     }
-    assert run_hook(json.dumps(_payload(workspace)), env) == HOOK_EXIT_FEEDBACK
+    assert run_hook(json.dumps(_payload(workspace)).encode(), env) == HOOK_EXIT_FEEDBACK
     lines = _log_lines(workspace)
     assert len(lines) == 1
     assert lines[0]['outcome'] == 'blocked'
@@ -545,3 +550,201 @@ def test_a_missing_env_named_spec_is_loud(tmp_path: Path) -> None:
     result = decide(_payload(workspace), env)
     assert result.exit_code == HOOK_EXIT_FEEDBACK
     assert 'CONVOY_GATE_SPEC' in result.stderr
+
+
+# --- the review's cases -------------------------------------------------------------------
+
+
+def test_the_event_is_decoded_as_utf8_whatever_the_locale(tmp_path: Path) -> None:
+    root = tmp_path / 'José-proj'
+    _project(root, _check('bad', _RED))
+    raw = json.dumps(_payload(root), ensure_ascii=False).encode('utf-8')
+    payload = parse_event(raw)
+    assert isinstance(payload, dict) and payload['cwd'] == str(root)
+    assert run_hook(raw, _trusted(tmp_path, root)) == HOOK_EXIT_FEEDBACK
+
+
+def test_a_gate_that_cannot_run_lets_the_subagent_stop_on_the_retry(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK, phases='"core"'))
+    env = _trusted(tmp_path, root)
+    transcript = _transcript(tmp_path / 't.jsonl', 'work [convoy-phase: nope]', 'Write')
+    first = decide(_stop_payload(root, transcript), env)
+    assert first.exit_code == HOOK_EXIT_FEEDBACK
+    retry = decide(_stop_payload(root, transcript, stop_hook_active=True), env)
+    assert retry.exit_code == HOOK_EXIT_SILENT
+    assert retry.record is not None and retry.record['outcome'] == 'usage'
+    assert 'may stop' in retry.record['reason']
+
+
+def test_the_gate_runs_in_the_project_root_not_the_session_cwd(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    here = f'"{sys.executable}"'
+    _project(
+        root,
+        _check(
+            'where',
+            here
+            + ' -c "import os,sys; '
+            + "sys.exit(0 if os.path.basename(os.getcwd()) == 'proj' else 1)\"",
+        ),
+    )
+    env = _trusted(tmp_path, root)
+    deep = root / 'docs' / 'deep'
+    deep.mkdir(parents=True)
+    result = decide(_payload(deep), env)
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and result.record['outcome'] == 'completed'
+    assert result.record['workspace'] == str(root.resolve())
+
+
+def test_an_unknown_tool_counts_as_a_write(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('bad', _RED))
+    transcript = _transcript(tmp_path / 't.jsonl', 'write via mcp', 'Read', 'mcp__fs__create_file')
+    result = decide(_stop_payload(root, transcript), _trusted(tmp_path, root))
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    nested = _transcript(tmp_path / 'n.jsonl', 'delegate', 'Agent')
+    assert (
+        decide(_stop_payload(root, nested), _trusted(tmp_path, root)).exit_code
+        == HOOK_EXIT_FEEDBACK
+    )
+
+
+def test_a_naive_or_foreign_session_verdict_is_not_reused(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    env = _trusted(tmp_path, root)
+    naive = {
+        'ts': '2026-09-02T10:00:00',
+        'event': 'SubagentStop',
+        'agent_id': 'a1b909db97960854e',
+        'session_id': 'session-0000',
+        'outcome': 'blocked',
+        'repair_brief': 'naive-marker',
+    }
+    other_session = {**naive, 'ts': datetime.now(UTC).isoformat(), 'session_id': 'someone-else'}
+    (root / '.convoy' / 'hook.log').write_text(
+        json.dumps(naive) + '\n' + json.dumps(other_session) + '\n', encoding='utf-8'
+    )
+    result = decide(_payload(root), env)
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and 'reused_from' not in result.record
+
+
+def test_the_messenger_reuses_a_skipped_verdict_silently(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('bad', _RED))
+    env = _trusted(tmp_path, root)
+    skipped = {
+        'ts': datetime.now(UTC).isoformat(),
+        'event': 'SubagentStop',
+        'agent_id': 'a1b909db97960854e',
+        'session_id': 'session-0000',
+        'outcome': 'skipped',
+    }
+    (root / '.convoy' / 'hook.log').write_text(json.dumps(skipped) + '\n', encoding='utf-8')
+    result = decide(_payload(root), env)
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and result.record['outcome'] == 'skipped'
+
+
+def test_an_untrusted_project_gets_no_log_written_into_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / 'cloned'
+    _project(root, _check('bad', _RED))
+    assert run_hook(json.dumps(_payload(root)).encode(), _home(tmp_path)) == HOOK_EXIT_SILENT
+    assert not (root / '.convoy' / 'hook.log').exists()
+    assert capsys.readouterr().err == ''
+
+
+def test_a_spec_changed_since_trust_is_refused_loudly(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    spec = _project(root, _check('ok', _OK))
+    env = _trusted(tmp_path, root)
+    spec.write_text(spec.read_text(encoding='utf-8').replace('"ok"', '"ok2"'), encoding='utf-8')
+    result = decide(_payload(root), env)
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    assert 'changed since' in result.stderr
+    assert result.record is not None and result.record['outcome'] == 'spec_changed'
+
+
+def test_a_driven_workspace_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    env = _trusted(tmp_path, root)
+    (root / '.git').mkdir()
+    lock_path(root).write_text('12345', encoding='utf-8')
+    result = decide(_payload(root), env)
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    assert 'convoy run holds' in result.stderr
+
+
+def test_the_real_subagent_transcript_reads_as_a_read_only_haiku_agent() -> None:
+    facts = read_transcript(FIXTURES / 'agent_transcript.jsonl')
+    assert facts.readable and not facts.mutated
+    assert facts.brief.startswith('Reply with the single word DONE')
+    assert facts.model == 'claude-haiku-4-5-20251001'
+
+
+def test_a_list_content_brief_still_scopes_the_gate(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(
+        root, _check('core-only', _RED, phases='"core"'), _check('api-only', _OK, phases='"api"')
+    )
+    path = tmp_path / 't.jsonl'
+    lines = [
+        {
+            'type': 'user',
+            'message': {
+                'role': 'user',
+                'content': [{'type': 'text', 'text': 'api [convoy-phase: api]'}],
+            },
+        },
+        {
+            'type': 'assistant',
+            'message': {
+                'role': 'assistant',
+                'model': 'm',
+                'content': [{'type': 'tool_use', 'name': 'Edit', 'input': {}}],
+            },
+        },
+    ]
+    path.write_text('\n'.join(json.dumps(line) for line in lines) + '\n', encoding='utf-8')
+    result = decide(_stop_payload(root, path), _trusted(tmp_path, root))
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and result.record['phases'] == ['api']
+    assert result.record['model'] == 'm'
+
+
+def test_every_record_carries_the_attestation_fields(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('bad', _RED))
+    transcript = _transcript(tmp_path / 't.jsonl', 'work', 'Write')
+    result = decide(_stop_payload(root, transcript), _trusted(tmp_path, root))
+    record = result.record
+    assert record is not None
+    for key in (
+        'leg',
+        'exit_code',
+        'stop_hook_active',
+        'cwd',
+        'workspace',
+        'spec',
+        'spec_sha256',
+        'series_id',
+        'checks',
+    ):
+        assert key in record, key
+    assert record['exit_code'] == HOOK_EXIT_FEEDBACK
+    assert record['checks'][0].keys() >= {
+        'name',
+        'passed',
+        'blocking',
+        'independent',
+        'exit_code',
+        'timed_out',
+        'detail',
+    }
+    assert record['ts'].endswith('+00:00') and '.' in record['ts']

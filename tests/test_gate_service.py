@@ -34,9 +34,11 @@ from convoy.interface.gate_service import (
     gate_spec_env,
     gate_usage_envelope,
     is_trusted,
+    oracles_dir_for,
     resolve_gate_spec,
     run_gate,
     trust_project,
+    trust_status,
     trusted_projects,
 )
 
@@ -418,15 +420,46 @@ def test_trust_project_writes_resolves_and_is_idempotent(tmp_path: Path) -> None
     assert is_trusted(tmp_path / 'other', env) is False
 
 
+def test_trust_pins_the_spec_and_a_changed_spec_is_reported(tmp_path: Path) -> None:
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    project = tmp_path / 'proj'
+    spec = project / '.convoy' / 'gate.toml'
+    spec.parent.mkdir(parents=True)
+    spec.write_text('[series]\nid = "a"\n', encoding='utf-8')
+    trust_project(project, env)
+    (entry,) = trusted_projects(env)
+    assert entry.spec_sha256 and entry.root == project.resolve()
+    assert trust_status(project, spec, env) == 'trusted'
+    spec.write_text('[series]\nid = "b"\n', encoding='utf-8')
+    assert trust_status(project, spec, env) == 'changed'
+    assert is_trusted(project, env, spec) is False
+    trust_project(project, env)  # re-trusting accepts the new spec
+    assert trust_status(project, spec, env) == 'trusted'
+
+
+def test_vouched_roots_carry_no_pin(tmp_path: Path) -> None:
+    workspace = tmp_path / 'ws'
+    workspace.mkdir()
+    spec = tmp_path / 'outside.toml'
+    spec.write_text('x = 1\n', encoding='utf-8')
+    env = {'CONVOY_HOME': str(tmp_path / 'home'), 'CONVOY_TRUSTED_ROOTS': str(workspace)}
+    assert trust_status(workspace, spec, env) == 'trusted'
+
+
 def test_a_malformed_trust_list_is_a_spec_error(tmp_path: Path) -> None:
     home = tmp_path / 'home'
     home.mkdir()
     env = {'CONVOY_HOME': str(home)}
-    (home / 'hook-trust.toml').write_text('[trust]\nprojects = "not-a-list"\n', encoding='utf-8')
-    with pytest.raises(SpecError, match='list of strings'):
+    (home / 'hook-trust.toml').write_text('projects = "not-a-list"\n', encoding='utf-8')
+    with pytest.raises(SpecError, match='tables expected'):
         trusted_projects(env)
     with pytest.raises(SpecError):
         trust_project(tmp_path / 'proj', env)
+    (home / 'hook-trust.toml').write_text(
+        '[[projects]]\nroot = "relative/dir"\nspec_sha256 = ""\n', encoding='utf-8'
+    )
+    with pytest.raises(SpecError, match='must be absolute'):
+        trusted_projects(env)
 
 
 def test_the_launching_process_can_vouch_for_roots(tmp_path: Path) -> None:
@@ -475,3 +508,10 @@ def test_gate_spec_env_defaults_oracles_for_a_named_root(tmp_path: Path) -> None
     env = {'CONVOY_HOME': str(tmp_path / 'home')}
     resolved = gate_spec_env(tmp_path / 'task' / 'gate.toml', env, root=tmp_path / 'ws')
     assert resolved['CONVOY_ORACLES'] == str(tmp_path / 'home' / 'oracles' / 'ws')
+
+
+def test_the_default_oracles_dir_never_carries_shell_syntax(tmp_path: Path) -> None:
+    root = tmp_path / 'repo$(cmd)'
+    root.mkdir()
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    assert oracles_dir_for(root, env).name == 'repo__cmd_'

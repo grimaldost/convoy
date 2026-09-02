@@ -703,8 +703,26 @@ def test_checks_expand_braced_env_references_in_run_and_asset() -> None:
 
 
 def test_checks_leave_unbraced_and_percent_forms_alone() -> None:
-    spec = load_gate_spec(_gate_only('echo $X %X% ${X}'), env={'X': 'expanded'})
-    assert spec.checks[0].run == 'echo $X %X% expanded'
+    spec = load_gate_spec(
+        _gate_only('echo $CONVOY_X %CONVOY_X% ${CONVOY_X}'), env={'CONVOY_X': 'expanded'}
+    )
+    assert spec.checks[0].run == 'echo $CONVOY_X %CONVOY_X% expanded'
+
+
+def test_checks_refuse_a_reference_outside_the_convoy_namespace() -> None:
+    with pytest.raises(SpecError) as excinfo:
+        load_gate_spec(_gate_only('echo ${HOME}'), env={'HOME': '/h'})
+    assert 'only CONVOY_* variables expand' in str(excinfo.value)
+
+
+def test_checks_refuse_an_expanded_value_carrying_shell_syntax() -> None:
+    bad = {'CONVOY_ORACLES': '/tmp/x"; echo PWNED; #'}
+    with pytest.raises(SpecError) as excinfo:
+        load_gate_spec(_gate_only('python ${CONVOY_ORACLES}/o.py'), env=bad)
+    assert 'shell syntax' in str(excinfo.value)
+    windows = {'CONVOY_ORACLES': 'C:\\Users\\me\\oracles'}
+    spec = load_gate_spec(_gate_only('python ${CONVOY_ORACLES}/o.py'), env=windows)
+    assert spec.checks[0].run == 'python C:\\Users\\me\\oracles/o.py'
 
 
 def test_checks_refuse_an_unset_env_reference_naming_field_and_variable() -> None:
@@ -719,9 +737,10 @@ def test_checks_refuse_an_unset_env_reference_naming_field_and_variable() -> Non
 
 def test_a_repair_hint_is_prose_and_is_not_expanded() -> None:
     spec = load_gate_spec(
-        _gate_only('python probe.py', repair_hint='set ${X} before running'), env={'X': 'v'}
+        _gate_only('python probe.py', repair_hint='set ${CONVOY_X} before running'),
+        env={'CONVOY_X': 'v'},
     )
-    assert spec.checks[0].repair_hint == 'set ${X} before running'
+    assert spec.checks[0].repair_hint == 'set ${CONVOY_X} before running'
 
 
 def test_load_series_expands_check_references_the_same_way() -> None:

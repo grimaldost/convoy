@@ -40,6 +40,19 @@ _REAL_BINARY = Path(_real).resolve() if _real else None
 
 
 @pytest.fixture(autouse=True)
+def _no_real_convoy_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Every test reads and writes its trust list and oracles under ``tmp_path``.
+
+    Three scaffold tests once wrote pytest temp paths into the developer's real
+    ``~/.convoy/hook-trust.toml`` — live trust entries at re-creatable paths. The home is
+    pinned suite-wide so no test can reach the real one again.
+    """
+    monkeypatch.setenv('CONVOY_HOME', str(tmp_path / '.convoy-home'))
+    monkeypatch.delenv('CONVOY_TRUSTED_ROOTS', raising=False)
+    monkeypatch.delenv('CONVOY_GATE_SPEC', raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_seat_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr('convoy.interface.run_service.seat_problem', lambda *_a, **_k: None)
 

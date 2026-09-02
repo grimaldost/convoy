@@ -13,6 +13,20 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- A literal `${...}` in a `[[checks]]` `run` or `asset` is no longer passed to the
+  shell **(consumer-affecting)**: `${CONVOY_*}` names expand at load and every other
+  braced reference is refused, so a spec that carried one now needs the variable set
+  and named in the `CONVOY_` namespace. An expanded value carrying shell syntax is
+  refused at load; the default oracles directory derived from the project name is
+  sanitised before it can reach a command.
+- `convoy_gate` lists `workspace` before `series_file` **(consumer-affecting)**, so the
+  latter can default; parameters are keyword-addressed over the protocol. A discovered
+  spec (no `series_file`) must be trusted on this machine, the standard the hook holds.
+- `convoy gate --init` no longer trusts the project it scaffolds: the scaffold is red
+  until edited, and arming is a second, deliberate act (`convoy gate --trust`).
+
 ### Added
 
 - `convoy gate` and `convoy_gate` discover the project gate spec
@@ -51,23 +65,39 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   is the per-project switch, so the plugin arms nothing until a project opts in. Green:
   exit 0, no output, nothing in any model's context. A gate that cannot run is exit 2
   with a one-line reason, never a silent green. `[convoy-phase: <tag>]` in the
-  subagent's brief scopes the gate on both legs. Each
-  firing appends one JSON line to `.convoy/hook.log` — verdict, phases, counts, the
-  subagent's id and dated model, the gate's wall-clock, `convoy_version` — the
-  attestation an experiment counts from. Exit codes are the hook protocol's (0, 2),
+  subagent's brief scopes the gate on both legs; orchestrator feedback needs a
+  synchronous dispatch (`run_in_background: false`). The judge reads the subagent
+  transcript for the brief (string or block content), the model and the tool use —
+  anything not on the read-only list (Read, Grep, Glob, web fetches, todo) counts as a
+  write, so an MCP writer or a nested dispatch is gated; a gate that cannot run lets the
+  subagent stop on the retry. The event is read as UTF-8 bytes whatever the locale. Each
+  firing appends one JSON line to `.convoy/hook.log` — `leg` (judge / messenger),
+  `event`, `outcome`, the hook's `exit_code`, `agent_id`, `agent_type`, `model` (from
+  the transcript on the judge leg), `phases`, `stop_hook_active`, per-check facts
+  (`exit_code`, `timed_out`, `detail`), `repair_brief`, `gate_ms`, `series_id`, `spec`,
+  `spec_sha256`, `workspace`, `cwd`, `session_id`, `tool_use_id`, `convoy_version`,
+  millisecond `ts` — the attestation an experiment counts from (count the judge's
+  lines). The messenger reuses the judge's record keyed on session and agent, a
+  read-only verdict as silence. A gate whose checks together exceed the hook timeout
+  (1800 s) is killed by Claude Code and says nothing — keep the sum under it. Exit codes
+  are the hook protocol's (0, 2),
   not convoy's (0, 1, 3). Config isolation keeps the hook out of every scored spawn.
   The hook executes a project's checks only where this machine trusts the project:
-  `convoy gate --init` records the project it scaffolds in `CONVOY_HOME/hook-trust.toml`
-  (default `~/.convoy/`), `convoy gate --trust` records an existing one, and a spec in
-  an untrusted project is logged (`outcome: untrusted`) and not executed — a cloned
-  repository's gate file must not run commands on dispatch until the operator says so
-  (a new guardrail). An explicit `convoy gate` on an untrusted project still runs, and
-  says on stderr that the hook is not armed there. `CONVOY_HOME` overrides `~/.convoy`
+  `convoy gate --trust` records the project root and the hash of its spec in
+  `CONVOY_HOME/hook-trust.toml` (default `~/.convoy/`, `[[projects]]` tables of `root`
+  and `spec_sha256`); an untrusted project executes nothing and gets no file written
+  into it, and a spec that changed since it was trusted is refused loudly (exit 2) —
+  a cloned repository's gate file must not run commands on dispatch until the operator
+  says so, and the implementer must not be able to rewrite the gate it is judged by
+  (a new guardrail). A workspace a `convoy run` holds the lock on is refused. An
+  explicit `convoy gate` on an untrusted project still runs, and says on stderr that
+  the hook is not armed there. `CONVOY_HOME` overrides `~/.convoy`
   for the trust list and the default oracles home; `CONVOY_TRUSTED_ROOTS` (path-separated
   roots) lets the process that launches Claude Code — a harness, a CI job staging a
   fresh workspace — vouch for roots it cannot have listed in advance.
-  The captured Claude Code 2.1.258 payloads are committed as test fixtures, so the
-  field names the hook reads are the protocol as sent, not as read.
+  The captured Claude Code 2.1.258 event payloads and one subagent transcript are
+  committed as test fixtures, so the fields the hook reads are the protocol as sent,
+  not as read.
 - `convoy gate --init [--independent NAME]` **(consumer-affecting)**: scaffold the
   project gate spec at `.convoy/gate.toml` (plus `.convoy/.gitignore` for the hook
   log) from the toolchain found in the workspace — Python: the uv lockfile check, ruff

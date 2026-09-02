@@ -3,41 +3,49 @@
 Two hook events, one gate, two legs:
 
 - ``SubagentStop`` is the judge. When a subagent tries to finish, the hook runs the
-  project's gate in the session's working tree. Green: exit 0, nothing said. Blocking
+  project's gate in the tree the spec governs. Green: exit 0, nothing said. Blocking
   red: exit 2 with the repair brief on stderr, which Claude Code hands to the SUBAGENT as
   the reason it may not stop yet — the implementer repairs its own work, the same shape
   as a governed run's fix spawn — once: on the retry (``stop_hook_active``) a residual
-  red lets the subagent stop and is recorded. A subagent whose transcript shows no
-  mutating tool use (a reader, a reviewer) is not gated.
+  red lets the subagent stop and is recorded, and so does a gate that could not run. A
+  subagent whose transcript shows only read-only tool use (a reader, a reviewer) is not
+  gated; any tool the hook does not know is treated as a write.
 - ``PostToolUse`` on ``Agent`` (or ``Task``) is the messenger, for synchronous dispatch.
   When the dispatch returns completed, the hook reuses the judge's verdict for that
-  subagent from the log (or runs the gate when there is none) and, on a residual red,
-  exits 2 with the brief on stderr, which Claude Code shows to the ORCHESTRATOR as
-  feedback on the completed tool call — its cue to dispatch a fix subagent, whose stop
-  and return re-fire both legs. An asynchronous dispatch returns before the subagent has
-  done anything (``async_launched``); it is recorded and not gated here, and its
-  subagent is still judged at its stop.
+  subagent from the log — same session, same agent, within the hour — or runs the gate
+  when there is none, and on a residual red exits 2 with the brief on stderr, which
+  Claude Code shows to the ORCHESTRATOR as feedback on the completed tool call — its
+  cue to dispatch a fix subagent. An asynchronous dispatch (the Agent tool's default when
+  ``run_in_background`` is unset) returns before the subagent has done anything
+  (``async_launched``); it is recorded and not gated here, and its subagent is still
+  judged at its stop.
 
 The vocabulary is the hook protocol's, not convoy's: exit 0 means nothing to say, exit
 2 means stderr is feedback. Nothing enters a model's context on a green gate.
 
-The presence of a project spec is the per-project switch: with none found the hook exits
-0 silently, so shipping it in the plugin arms nothing until a project opts in — and the
-operator's trust is the per-machine switch: a spec in a project this machine has not
-trusted (``convoy gate --init`` or ``convoy gate --trust`` records it) is logged and not
-executed, because a cloned repository's checks must not run commands on dispatch until
-the operator says so. A gate that cannot run (an unreadable or invalid spec, a refused
+Three switches, all before anything executes. The presence of a project spec is the
+per-project switch: with none found the hook exits 0 silently, so shipping it in the
+plugin arms nothing until a project opts in. The operator's trust is the per-machine
+switch: a spec in a project this machine has not trusted (``convoy gate --trust`` records
+the root and the spec's hash; a harness sets ``CONVOY_TRUSTED_ROOTS``) is recorded in
+this process's log record and not executed — and never written into that project. A spec
+that changed since it was trusted is refused loudly (exit 2): the implementer edits the
+tree the spec lives in, and a gate it can rewrite is no gate. A workspace a ``convoy
+run`` is driving (its lock exists) is refused loudly too: the run's commit step stages
+the whole tree. A gate that cannot run (an unreadable or invalid spec, a refused
 invocation, a dead workspace) is exit 2 with a one-line reason — the loud answer,
 because a hook that swallowed its own misconfiguration would look like a green gate.
 
 Attestation: one JSON line per firing is appended to ``.convoy/hook.log`` under the
-project root (the scaffold gitignores it) — the event, the verdict, the subagent's id and
-dated model, the phases, the counts, the gate's wall-clock, the brief when red — so an
+project root (the scaffold gitignores it): the leg, the event, the verdict, the hook's
+exit code, the subagent's id, type and dated model, the phases, the retry flag, the
+per-check facts, the gate's wall-clock, the spec's path and hash, the workspace — so an
 experiment counts firings from the log rather than from transcripts, and the messenger
 finds the judge's verdict there. Writing the log is best-effort and never changes the
 verdict.
 """
 
+import hashlib
 import json
 import re
 import sys
@@ -55,11 +63,12 @@ from convoy.interface.gate_service import (
     GateOutcome,
     find_gate_spec,
     gate_root,
-    is_trusted,
     load_gate_spec_file,
     run_gate,
+    trust_status,
 )
 from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS
+from convoy.interface.workspace_lock import lock_path
 
 # The hook protocol's exit codes — not convoy's. 0: nothing to say; 2: stderr is feedback
 # (to the subagent on SubagentStop, to the orchestrator on PostToolUse).
@@ -69,8 +78,24 @@ HOOK_EXIT_FEEDBACK = 2
 # The dispatch tools the messenger leg gates: ``Agent``, and its pre-2.1.63 name ``Task``.
 DISPATCH_TOOLS = frozenset({'Agent', 'Task'})
 
-# A subagent that used none of these left the tree as it found it; the judge lets it go.
-MUTATING_TOOLS = frozenset({'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash'})
+# Tools that leave the tree as they found it. Anything else — a built-in editor, Bash,
+# an MCP tool the hook has never heard of, a nested dispatch — counts as a write: the
+# judge gates what it cannot see, rather than waving it through.
+READ_ONLY_TOOLS = frozenset(
+    {
+        'Read',
+        'Grep',
+        'Glob',
+        'LS',
+        'WebFetch',
+        'WebSearch',
+        'TodoWrite',
+        'TodoRead',
+        'AskUserQuestion',
+        'ListMcpResourcesTool',
+        'ReadMcpResourceTool',
+    }
+)
 
 HOOK_LOG_RELPATH = Path('.convoy') / 'hook.log'
 
@@ -93,11 +118,28 @@ class HookResult:
 
 @dataclass(frozen=True)
 class TranscriptFacts:
-    """What the judge reads from a subagent transcript: its brief and whether it wrote."""
+    """What the judge reads from a subagent transcript: its brief, its model, whether it wrote."""
 
     brief: str
     mutated: bool
     readable: bool
+    model: str = ''
+
+
+def parse_event(raw: bytes) -> dict[str, Any] | str:
+    """The hook event object from stdin bytes, or the reason it is not one.
+
+    Decoded as UTF-8 regardless of the locale: Claude Code writes the event as UTF-8, and
+    a locale codec on a path with an accent would silently break discovery — the one
+    failure a gate must not have, a green that never looked.
+    """
+    try:
+        payload = json.loads(raw.decode(TEXT_ENCODING, errors=TEXT_ERRORS))
+    except ValueError as exc:
+        return f'stdin was not hook JSON: {exc}'
+    if not isinstance(payload, dict):
+        return 'stdin was not a hook event object'
+    return payload
 
 
 def parse_phase_markers(prompt: str) -> tuple[str, ...]:
@@ -111,13 +153,28 @@ def parse_phase_markers(prompt: str) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def _text_of(content: Any) -> str:
+    """A user turn's text, whether the transcript stores it as a string or as blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            str(block.get('text', ''))
+            for block in content
+            if isinstance(block, dict) and block.get('type') == 'text'
+        ]
+        return '\n'.join(part for part in parts if part)
+    return ''
+
+
 def read_transcript(path: Path) -> TranscriptFacts:
-    """The first user turn (the brief) and the mutating tool uses of a subagent transcript.
+    """The brief (first user turn), the model, and whether the subagent used a writing tool.
 
     An unreadable transcript reads as ``mutated=True``: the judge gates what it cannot
     see, rather than waving it through.
     """
     brief = ''
+    model = ''
     mutated = False
     try:
         with path.open(encoding=TEXT_ENCODING, errors=TEXT_ERRORS) as handle:
@@ -129,20 +186,24 @@ def read_transcript(path: Path) -> TranscriptFacts:
                 if not isinstance(entry, dict):
                     continue
                 message = entry.get('message')
-                content = message.get('content') if isinstance(message, dict) else None
-                if entry.get('type') == 'user' and not brief and isinstance(content, str):
-                    brief = content
-                elif entry.get('type') == 'assistant' and isinstance(content, list):
-                    for block in content:
-                        if (
-                            isinstance(block, dict)
-                            and block.get('type') == 'tool_use'
-                            and block.get('name') in MUTATING_TOOLS
-                        ):
-                            mutated = True
+                if not isinstance(message, dict):
+                    continue
+                content = message.get('content')
+                if entry.get('type') == 'user' and not brief:
+                    brief = _text_of(content)
+                elif entry.get('type') == 'assistant':
+                    model = str(message.get('model') or model)
+                    if isinstance(content, list):
+                        for block in content:
+                            if (
+                                isinstance(block, dict)
+                                and block.get('type') == 'tool_use'
+                                and block.get('name') not in READ_ONLY_TOOLS
+                            ):
+                                mutated = True
     except OSError:
         return TranscriptFacts(brief='', mutated=True, readable=False)
-    return TranscriptFacts(brief=brief, mutated=mutated, readable=True)
+    return TranscriptFacts(brief=brief, mutated=mutated, readable=True, model=model)
 
 
 def _string(mapping: Any, key: str) -> str:
@@ -153,18 +214,36 @@ def _string(mapping: Any, key: str) -> str:
 def _record(payload: Mapping[str, Any], **fields: Any) -> dict[str, Any]:
     tool_input = payload.get('tool_input')
     tool_response = payload.get('tool_response')
+    event = _string(payload, 'hook_event_name')
     return {
-        'ts': datetime.now(UTC).isoformat(timespec='seconds'),
-        'event': _string(payload, 'hook_event_name'),
+        'ts': datetime.now(UTC).isoformat(timespec='milliseconds'),
+        'event': event,
+        'leg': 'judge' if event == 'SubagentStop' else 'messenger',
         'tool_name': _string(payload, 'tool_name'),
         'tool_use_id': _string(payload, 'tool_use_id'),
         'session_id': _string(payload, 'session_id'),
         'agent_id': _string(tool_response, 'agentId') or _string(payload, 'agent_id'),
-        'agent_type': _string(payload, 'agent_type'),
+        'agent_type': _string(payload, 'agent_type') or _string(tool_response, 'agentType'),
         'model': _string(tool_response, 'resolvedModel') or _string(tool_input, 'model'),
+        'stop_hook_active': bool(payload.get('stop_hook_active', False)),
+        'cwd': _string(payload, 'cwd'),
         'convoy_version': __version__,
         **fields,
     }
+
+
+def _finish(result: HookResult) -> HookResult:
+    """Stamp the hook's own exit code onto the record, so the log says what was said."""
+    if result.record is not None:
+        result.record['exit_code'] = result.exit_code
+    return result
+
+
+def spec_sha256(spec_path: Path) -> str:
+    try:
+        return hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    except OSError:
+        return ''
 
 
 def log_path_for(spec_path: Path, cwd: Path) -> Path:
@@ -172,8 +251,14 @@ def log_path_for(spec_path: Path, cwd: Path) -> Path:
     return gate_root(spec_path, cwd) / HOOK_LOG_RELPATH
 
 
-def latest_stop_record(log_path: Path, agent_id: str) -> dict[str, Any] | None:
-    """The judge's most recent verdict for *agent_id*, if the log has a fresh one."""
+def latest_stop_record(
+    log_path: Path, agent_id: str, session_id: str = ''
+) -> dict[str, Any] | None:
+    """The judge's most recent verdict for *agent_id* in *session_id*, if the log has a fresh one.
+
+    Keyed on the session as well as the agent: a ``hook.log`` is in-tree state, and a
+    committed one cannot know the session id Claude Code assigned this run.
+    """
     if not agent_id or not log_path.is_file():
         return None
     try:
@@ -190,14 +275,18 @@ def latest_stop_record(log_path: Path, agent_id: str) -> dict[str, Any] | None:
             isinstance(entry, dict)
             and entry.get('event') == 'SubagentStop'
             and entry.get('agent_id') == agent_id
-            and entry.get('outcome') in ('completed', 'blocked')
+            and entry.get('session_id') == session_id
+            and entry.get('outcome') in ('completed', 'blocked', 'skipped')
         ):
             latest = entry
     if latest is None:
         return None
     try:
-        age = datetime.now(UTC) - datetime.fromisoformat(str(latest.get('ts')))
-    except ValueError:
+        stamped = datetime.fromisoformat(str(latest.get('ts')))
+        if stamped.tzinfo is None:
+            return None
+        age = datetime.now(UTC) - stamped
+    except TypeError, ValueError:
         return None
     return latest if age.total_seconds() <= _REUSE_WINDOW_SECONDS else None
 
@@ -205,15 +294,15 @@ def latest_stop_record(log_path: Path, agent_id: str) -> dict[str, Any] | None:
 def _gate(
     payload: Mapping[str, Any],
     spec_path: Path,
-    cwd: Path,
+    workspace: Path,
     phases: tuple[str, ...],
     env: Mapping[str, str],
-) -> tuple[GateOutcome, int] | HookResult:
-    """Run the gate: the outcome and its wall-clock, or the loud result of a usage failure."""
+) -> tuple[GateOutcome, int, str] | HookResult:
+    """Run the gate: the outcome, its wall-clock and the spec id, or the loud usage result."""
     started = time.monotonic()
     try:
-        spec = load_gate_spec_file(spec_path, env, root=gate_root(spec_path, cwd))
-        outcome = run_gate(spec, cwd, phases)
+        spec = load_gate_spec_file(spec_path, env, root=workspace)
+        outcome = run_gate(spec, workspace, phases)
     except (OSError, UnicodeDecodeError, SpecError, GateUsageError) as exc:
         elapsed = round((time.monotonic() - started) * 1000)
         return HookResult(
@@ -221,11 +310,15 @@ def _gate(
             f'convoy hook: the gate could not run ({spec_path}): {exc}\n',
             _record(payload, outcome='usage', error=str(exc), phases=list(phases), gate_ms=elapsed),
         )
-    return outcome, round((time.monotonic() - started) * 1000)
+    return outcome, round((time.monotonic() - started) * 1000), spec.id
 
 
 def _verdict_record(
-    payload: Mapping[str, Any], outcome: GateOutcome, phases: tuple[str, ...], gate_ms: int
+    payload: Mapping[str, Any],
+    outcome: GateOutcome,
+    phases: tuple[str, ...],
+    gate_ms: int,
+    series_id: str,
 ) -> dict[str, Any]:
     verdict = outcome.verdict
     results = verdict.results
@@ -233,18 +326,30 @@ def _verdict_record(
     return _record(
         payload,
         outcome='blocked' if verdict.blocking_red else 'completed',
+        series_id=series_id,
         phases=list(phases),
         blocking_red=verdict.blocking_red,
         independent_red=verdict.independent_red,
         counts={'selected': len(results), 'passed': passed, 'failed': len(results) - passed},
-        checks=[{'name': result.check.name, 'passed': result.passed} for result in results],
+        checks=[
+            {
+                'name': result.check.name,
+                'passed': result.passed,
+                'blocking': result.check.blocking,
+                'independent': result.check.independent,
+                'exit_code': result.exit_code,
+                'timed_out': result.timed_out,
+                'detail': result.detail,
+            }
+            for result in results
+        ],
         repair_brief=repair_brief(verdict),
         gate_ms=gate_ms,
     )
 
 
 def _decide_stop(
-    payload: Mapping[str, Any], spec_path: Path, cwd: Path, env: Mapping[str, str]
+    payload: Mapping[str, Any], spec_path: Path, workspace: Path, env: Mapping[str, str]
 ) -> HookResult:
     """The judge: gate the subagent's work as it tries to stop."""
     transcript = _string(payload, 'agent_transcript_path')
@@ -257,17 +362,30 @@ def _decide_stop(
         return HookResult(
             HOOK_EXIT_SILENT,
             '',
-            _record(payload, outcome='skipped', reason='read-only subagent: no mutating tool use'),
+            _record(
+                payload,
+                outcome='skipped',
+                reason='read-only subagent: no writing tool use',
+                model=facts.model,
+            ),
         )
+    retry = bool(payload.get('stop_hook_active'))
     phases = parse_phase_markers(facts.brief)
-    gated = _gate(payload, spec_path, cwd, phases, env)
+    gated = _gate(payload, spec_path, workspace, phases, env)
     if isinstance(gated, HookResult):
+        if retry:
+            # The gate could not run on the retry either; the subagent cannot act on
+            # that (it cannot edit its brief or the spec), so it may stop. Recorded.
+            record = dict(gated.record or {})
+            record['reason'] = 'gate could not run on the retry; the subagent may stop'
+            return HookResult(HOOK_EXIT_SILENT, '', record)
         return gated
-    outcome, gate_ms = gated
-    record = _verdict_record(payload, outcome, phases, gate_ms)
+    outcome, gate_ms, series_id = gated
+    record = _verdict_record(payload, outcome, phases, gate_ms, series_id)
+    record['model'] = record['model'] or facts.model
     if not outcome.verdict.blocking_red:
         return HookResult(HOOK_EXIT_SILENT, '', record)
-    if payload.get('stop_hook_active'):
+    if retry:
         # One repair round is the bound: on the retry a residual red is recorded and the
         # subagent may stop, so a red it cannot fix never holds it forever.
         record['blocked_stop'] = False
@@ -292,7 +410,7 @@ def _orchestrator_header(agent_id: str, phases: tuple[str, ...]) -> str:
 
 
 def _decide_dispatch(
-    payload: Mapping[str, Any], spec_path: Path, cwd: Path, env: Mapping[str, str]
+    payload: Mapping[str, Any], spec_path: Path, workspace: Path, env: Mapping[str, str]
 ) -> HookResult:
     """The messenger: after a synchronous dispatch returns, tell the orchestrator of a red."""
     tool_response = payload.get('tool_response')
@@ -306,7 +424,9 @@ def _decide_dispatch(
             _record(payload, outcome='skipped', reason=f'dispatch status {status!r}'),
         )
     agent_id = _string(tool_response, 'agentId')
-    judged = latest_stop_record(log_path_for(spec_path, cwd), agent_id)
+    judged = latest_stop_record(
+        log_path_for(spec_path, workspace), agent_id, _string(payload, 'session_id')
+    )
     if judged is not None:
         phases = tuple(str(tag) for tag in judged.get('phases') or ())
         brief = str(judged.get('repair_brief') or '')
@@ -318,17 +438,17 @@ def _decide_dispatch(
             counts=judged.get('counts'),
             repair_brief=brief,
         )
-        if judged['outcome'] == 'completed':
+        if judged['outcome'] != 'blocked':
             return HookResult(HOOK_EXIT_SILENT, '', record)
         return HookResult(
             HOOK_EXIT_FEEDBACK, _orchestrator_header(agent_id, phases) + brief, record
         )
     phases = parse_phase_markers(_string(payload.get('tool_input'), 'prompt'))
-    gated = _gate(payload, spec_path, cwd, phases, env)
+    gated = _gate(payload, spec_path, workspace, phases, env)
     if isinstance(gated, HookResult):
         return gated
-    outcome, gate_ms = gated
-    record = _verdict_record(payload, outcome, phases, gate_ms)
+    outcome, gate_ms, series_id = gated
+    record = _verdict_record(payload, outcome, phases, gate_ms, series_id)
     if not outcome.verdict.blocking_red:
         return HookResult(HOOK_EXIT_SILENT, '', record)
     return HookResult(
@@ -341,7 +461,7 @@ def _decide_dispatch(
 def decide(payload: Mapping[str, Any], env: Mapping[str, str]) -> HookResult:
     """The hook's whole decision, given the parsed event and the environment (no I/O on stdio).
 
-    Runs the gate — check commands execute in the payload's ``cwd`` — and appends
+    Runs the gate — check commands execute in the tree the spec governs — and appends
     nothing; :func:`run_hook` owns the streams and the log.
     """
     event = _string(payload, 'hook_event_name')
@@ -357,35 +477,80 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str]) -> HookResult:
     except SpecError as exc:
         # $CONVOY_GATE_SPEC names a file that is not there: the launcher asked for a
         # gate it cannot get, which must not read as a green one.
-        return HookResult(
-            HOOK_EXIT_FEEDBACK,
-            f'convoy hook: {exc}\n',
-            _record(payload, outcome='usage', error=str(exc)),
+        return _finish(
+            HookResult(
+                HOOK_EXIT_FEEDBACK,
+                f'convoy hook: {exc}\n',
+                _record(payload, outcome='usage', error=str(exc)),
+            )
         )
     if spec_path is None:
         return HookResult(HOOK_EXIT_SILENT, '', None)
 
-    root = gate_root(spec_path, cwd)
+    workspace = gate_root(spec_path, cwd)
+    stamp = {
+        'spec': str(spec_path),
+        'spec_sha256': spec_sha256(spec_path),
+        'workspace': str(workspace),
+    }
     try:
-        trusted = is_trusted(root, env)
+        status = trust_status(workspace, spec_path, env)
     except SpecError as exc:
-        return HookResult(
-            HOOK_EXIT_SILENT, '', _record(payload, outcome='untrusted', reason=str(exc))
+        return _finish(
+            HookResult(
+                HOOK_EXIT_SILENT,
+                '',
+                _record(payload, outcome='untrusted', reason=str(exc), **stamp),
+            )
         )
-    if not trusted:
-        return HookResult(
-            HOOK_EXIT_SILENT,
-            '',
-            _record(
-                payload,
-                outcome='untrusted',
-                reason=f'{root} is not on the hook trust list; run `convoy gate --trust` there',
-            ),
+    if status == 'untrusted':
+        return _finish(
+            HookResult(
+                HOOK_EXIT_SILENT,
+                '',
+                _record(
+                    payload,
+                    outcome='untrusted',
+                    reason=(
+                        f'{workspace} is not on the hook trust list; run '
+                        f'`convoy gate --trust` there'
+                    ),
+                    **stamp,
+                ),
+            )
+        )
+    if status == 'changed':
+        message = (
+            f'convoy hook: the gate spec {spec_path} changed since this machine trusted it; '
+            f'review it and re-run `convoy gate --trust` to arm it again'
+        )
+        return _finish(
+            HookResult(
+                HOOK_EXIT_FEEDBACK,
+                message + '\n',
+                _record(payload, outcome='spec_changed', reason=message, **stamp),
+            )
+        )
+    if lock_path(workspace).exists():
+        message = (
+            f'convoy hook: a convoy run holds {workspace} (lock present); the hook does not '
+            f'gate a driven workspace'
+        )
+        return _finish(
+            HookResult(
+                HOOK_EXIT_FEEDBACK,
+                message + '\n',
+                _record(payload, outcome='usage', error=message, **stamp),
+            )
         )
 
     if event == 'SubagentStop':
-        return _decide_stop(payload, spec_path, cwd, env)
-    return _decide_dispatch(payload, spec_path, cwd, env)
+        result = _decide_stop(payload, spec_path, workspace, env)
+    else:
+        result = _decide_dispatch(payload, spec_path, workspace, env)
+    if result.record is not None:
+        result.record.update(stamp)
+    return _finish(result)
 
 
 def append_log(spec_path: Path, cwd: Path, record: Mapping[str, Any]) -> str | None:
@@ -400,26 +565,24 @@ def append_log(spec_path: Path, cwd: Path, record: Mapping[str, Any]) -> str | N
     return None
 
 
-def run_hook(stdin_text: str, env: Mapping[str, str]) -> int:
+def run_hook(raw: bytes, env: Mapping[str, str]) -> int:
     """Parse the event, decide, write stderr and the log, return the hook exit code."""
-    try:
-        payload = json.loads(stdin_text)
-    except ValueError as exc:
-        sys.stderr.write(f'convoy hook: stdin was not hook JSON: {exc}\n')
-        return HOOK_EXIT_FEEDBACK
-    if not isinstance(payload, dict):
-        sys.stderr.write('convoy hook: stdin was not a hook event object\n')
+    payload = parse_event(raw)
+    if isinstance(payload, str):
+        sys.stderr.write(f'convoy hook: {payload}\n')
         return HOOK_EXIT_FEEDBACK
 
     result = decide(payload, env)
-    if result.record is not None:
+    # An untrusted project gets no file written into it: the machine refused it, and a
+    # log line in a clone's tree would be the first trace the refusal left.
+    if result.record is not None and result.record.get('outcome') != 'untrusted':
         cwd = Path(_string(payload, 'cwd') or '.')
         try:
             spec_path = find_gate_spec(cwd, env)
         except SpecError:
             spec_path = None
         if spec_path is not None:
-            failure = append_log(spec_path, cwd, {**result.record, 'spec': str(spec_path)})
+            failure = append_log(spec_path, cwd, result.record)
             if failure is not None:
                 sys.stderr.write(failure)
     if result.stderr:
