@@ -771,19 +771,21 @@ def status(
 
 @app.command()
 def hook() -> None:
-    """Run the project gate as a Claude Code ``PostToolUse`` hook on subagent dispatch.
+    """Run the project gate as a Claude Code hook around subagent dispatch.
 
-    Reads the hook event JSON from stdin. Nothing happens unless the tool was ``Agent``
-    (or ``Task``) and the project has a gate spec — ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml``,
-    then ``.convoy/gate.toml`` from the event's ``cwd`` upward — so installing the plugin
-    arms nothing until a project opts in with ``convoy gate --init``. Green: exit 0 and no
-    output, so nothing enters the orchestrator's context. Blocking red: exit 2 with the
-    repair brief on stderr, which Claude Code shows to the orchestrator as feedback on
-    the completed dispatch — its cue to dispatch a fix subagent, whose return re-fires
-    the hook. A gate that cannot run is exit 2 with a one-line reason. A ``[convoy-phase:
-    <tag>]`` marker in the subagent's brief scopes the gate to that tag's checks. Every
-    firing appends one JSON line to ``.convoy/hook.log``. Exit codes are the hook
-    protocol's (0 silent, 2 feedback), not convoy's.
+    Reads the hook event JSON from stdin. On ``SubagentStop`` (the judge) a blocking red
+    is exit 2 with the repair brief on stderr, which the subagent receives as the reason
+    it may not stop yet — one repair round, then it may stop; read-only subagents are
+    not gated. On ``PostToolUse`` for ``Agent``/``Task`` (the messenger, synchronous
+    dispatch) the judge's verdict is reused and a residual red is exit 2 with the brief
+    shown to the orchestrator, its cue to dispatch a fix subagent. Nothing happens
+    unless the project has a gate spec — ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml``, then
+    ``.convoy/gate.toml`` from the event's ``cwd`` upward — and this machine trusts the
+    project (``convoy gate --init`` / ``--trust``). Green: exit 0 and no output. A gate
+    that cannot run is exit 2 with a one-line reason. A ``[convoy-phase: <tag>]`` marker
+    in the subagent's brief scopes the gate. Every firing appends one JSON line to
+    ``.convoy/hook.log``. Exit codes are the hook protocol's (0 silent, 2 feedback),
+    not convoy's.
     """
     raise typer.Exit(run_hook(sys.stdin.read(), os.environ))
 

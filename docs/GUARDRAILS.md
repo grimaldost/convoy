@@ -88,7 +88,8 @@ disabling it is an explicit, per-run flag (`--no-config-isolation` /
 
 The plugin's `PostToolUse` hook runs a project's `.convoy/gate.toml` only when the
 project root is on this machine's trust list (`CONVOY_HOME/hook-trust.toml`, default
-`~/.convoy/`, written by `convoy gate --init` or `convoy gate --trust`). A spec in an
+`~/.convoy/`, written by `convoy gate --init` or `convoy gate --trust`) or named in
+`CONVOY_TRUSTED_ROOTS` by the process that launched Claude Code. A spec in an
 untrusted project is logged as `untrusted` and nothing in it is executed.
 
 *Why:* the hook fires automatically on subagent dispatch; without the list, cloning a

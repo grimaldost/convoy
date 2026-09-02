@@ -9,6 +9,7 @@ touches the real home directory.
 
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from convoy.interface.hook import (
     HOOK_EXIT_SILENT,
     decide,
     parse_phase_markers,
+    read_transcript,
     run_hook,
 )
 
@@ -320,4 +322,193 @@ def test_the_plugin_ships_the_hook() -> None:
     assert command['type'] == 'command'
     assert 'convoy hook' in command['command']
     assert '${CLAUDE_PLUGIN_ROOT}' in command['command']
+    assert command['timeout'] > 600
+
+
+# --- SubagentStop: the judge ------------------------------------------------------------------
+
+
+def _stop_payload(cwd: Path, transcript: Path | None, **over: Any) -> dict[str, Any]:
+    payload = json.loads((FIXTURES / 'subagentstop.json').read_text(encoding='utf-8'))
+    payload['cwd'] = str(cwd)
+    payload['agent_transcript_path'] = str(transcript) if transcript else ''
+    payload['stop_hook_active'] = False
+    payload.update(over)
+    return payload
+
+
+def _transcript(path: Path, brief: str, *tools: str) -> Path:
+    lines = [{'type': 'user', 'message': {'role': 'user', 'content': brief}}]
+    for tool in tools:
+        lines.append(
+            {
+                'type': 'assistant',
+                'message': {
+                    'role': 'assistant',
+                    'content': [{'type': 'tool_use', 'name': tool, 'input': {}}],
+                },
+            }
+        )
+    lines.append(
+        {
+            'type': 'assistant',
+            'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'done'}]},
+        }
+    )
+    path.write_text('\n'.join(json.dumps(line) for line in lines) + '\n', encoding='utf-8')
+    return path
+
+
+def test_the_captured_stop_payload_carries_the_fields_the_judge_reads() -> None:
+    payload = json.loads((FIXTURES / 'subagentstop.json').read_text(encoding='utf-8'))
+    assert payload['hook_event_name'] == 'SubagentStop'
+    assert set(payload) >= {'agent_id', 'agent_transcript_path', 'stop_hook_active', 'cwd'}
+
+
+def test_read_transcript_finds_the_brief_and_the_mutation(tmp_path: Path) -> None:
+    path = _transcript(tmp_path / 't.jsonl', 'Build it. [convoy-phase: core]', 'Read', 'Edit')
+    facts = read_transcript(path)
+    assert facts.readable and facts.mutated
+    assert parse_phase_markers(facts.brief) == ('core',)
+    read_only = read_transcript(_transcript(tmp_path / 'r.jsonl', 'Look around', 'Read', 'Grep'))
+    assert read_only.readable and not read_only.mutated
+    missing = read_transcript(tmp_path / 'nope.jsonl')
+    assert not missing.readable and missing.mutated
+
+
+def test_a_red_stop_blocks_the_subagent_once_with_the_brief(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('bad', _RED, hint='rerun the fixture build'))
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement the thing', 'Write')
+    result = decide(_stop_payload(root, transcript), _trusted(tmp_path, root))
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    assert result.stderr.startswith('convoy gate: BLOCKED')
+    assert 'before finishing' in result.stderr
+    assert 'rerun the fixture build' in result.stderr
+    assert result.record is not None
+    assert result.record['event'] == 'SubagentStop'
+    assert result.record['outcome'] == 'blocked'
+    assert result.record['blocked_stop'] is True
+    assert 'bad' in result.record['repair_brief']
+    assert result.record['agent_id'] == 'a1b909db97960854e'
+
+
+def test_a_residual_red_on_the_retry_lets_the_subagent_stop(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('bad', _RED))
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement the thing', 'Write')
+    payload = _stop_payload(root, transcript, stop_hook_active=True)
+    result = decide(payload, _trusted(tmp_path, root))
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.stderr == ''
+    assert result.record is not None
+    assert result.record['outcome'] == 'blocked'
+    assert result.record['blocked_stop'] is False
+
+
+def test_a_green_stop_is_silent_and_recorded(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement the thing', 'Bash')
+    result = decide(_stop_payload(root, transcript), _trusted(tmp_path, root))
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and result.record['outcome'] == 'completed'
+
+
+def test_a_read_only_subagent_is_not_gated(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('bad', _RED))
+    transcript = _transcript(tmp_path / 't.jsonl', 'Survey the code', 'Read', 'Grep', 'Glob')
+    result = decide(_stop_payload(root, transcript), _trusted(tmp_path, root))
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None
+    assert result.record['outcome'] == 'skipped'
+    assert 'read-only' in result.record['reason']
+
+
+def test_a_missing_transcript_is_gated_conservatively(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('bad', _RED))
+    result = decide(_stop_payload(root, tmp_path / 'missing.jsonl'), _trusted(tmp_path, root))
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+
+
+def test_the_phase_marker_in_the_subagent_brief_scopes_the_stop_gate(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(
+        root,
+        _check('core-only', _RED, phases='"core"'),
+        _check('api-only', _OK, phases='"api"'),
+    )
+    transcript = _transcript(tmp_path / 't.jsonl', 'API work [convoy-phase: api]', 'Edit')
+    result = decide(_stop_payload(root, transcript), _trusted(tmp_path, root))
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and result.record['phases'] == ['api']
+
+
+def test_an_untrusted_project_is_not_judged_either(tmp_path: Path) -> None:
+    root = tmp_path / 'cloned'
+    _project(root, _check('bad', _RED))
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement', 'Write')
+    result = decide(_stop_payload(root, transcript), _home(tmp_path))
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and result.record['outcome'] == 'untrusted'
+
+
+# --- the messenger reuses the judge's verdict ----------------------------------------------
+
+
+def test_the_messenger_reuses_the_judges_verdict_instead_of_rerunning(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    env = _trusted(tmp_path, root)
+    stored = {
+        'ts': datetime.now(UTC).isoformat(timespec='seconds'),
+        'event': 'SubagentStop',
+        'agent_id': 'a1b909db97960854e',
+        'outcome': 'blocked',
+        'phases': ['core'],
+        'counts': {'selected': 1, 'passed': 0, 'failed': 1},
+        'repair_brief': 'stored-brief-marker',
+    }
+    (root / '.convoy' / 'hook.log').write_text(json.dumps(stored) + '\n', encoding='utf-8')
+    result = decide(_payload(root), env)
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    assert 'stored-brief-marker' in result.stderr
+    assert 'phase core' in result.stderr
+    assert result.record is not None
+    assert result.record['reused_from'] == stored['ts']
+    assert result.record['outcome'] == 'blocked'
+
+
+def test_the_messenger_ignores_a_stale_or_foreign_verdict(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    env = _trusted(tmp_path, root)
+    stale = {
+        'ts': '2020-01-01T00:00:00+00:00',
+        'event': 'SubagentStop',
+        'agent_id': 'a1b909db97960854e',
+        'outcome': 'blocked',
+        'repair_brief': 'stale-marker',
+    }
+    foreign = {**stale, 'ts': datetime.now(UTC).isoformat(timespec='seconds'), 'agent_id': 'x'}
+    (root / '.convoy' / 'hook.log').write_text(
+        json.dumps(stale) + '\n' + json.dumps(foreign) + '\n', encoding='utf-8'
+    )
+    result = decide(_payload(root), env)
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None
+    assert result.record['outcome'] == 'completed'
+    assert 'reused_from' not in result.record
+
+
+def test_the_plugin_ships_the_judge_too() -> None:
+    hooks = json.loads(
+        (Path(__file__).parent.parent / 'hooks' / 'hooks.json').read_text(encoding='utf-8')
+    )
+    (entry,) = hooks['hooks']['SubagentStop']
+    assert 'matcher' not in entry
+    (command,) = entry['hooks']
+    assert 'convoy hook' in command['command']
     assert command['timeout'] > 600
