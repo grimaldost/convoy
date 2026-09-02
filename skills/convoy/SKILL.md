@@ -325,7 +325,13 @@ registers a `PostToolUse` hook on `Agent` (and its older name `Task`) that runs
 `convoy gate` does — `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml`
 from the event's `cwd` upward — and does nothing where none exists: the presence of
 the spec is the per-project switch, so installing the plugin arms nothing until a
-project opts in with `convoy gate --init`. Green: exit 0 and no output, nothing enters
+project opts in with `convoy gate --init`. The operator's trust is the per-machine
+switch: the hook executes a project's checks only where the project root is on
+`CONVOY_HOME/hook-trust.toml` (default `~/.convoy/`), which `convoy gate --init` writes
+for the project it scaffolds and `convoy gate --trust` writes for an existing spec — a
+cloned repository's gate file must not run commands on dispatch until you say so; an
+untrusted spec is logged (`outcome: untrusted`) and not executed. Green: exit 0 and no
+output, nothing enters
 the orchestrator's context. Blocking red: exit 2 with the repair brief on stderr, which
 Claude Code shows to the orchestrator as feedback on the completed dispatch — the cue
 to dispatch a fix subagent, whose return re-fires the hook, so the loop closes without

@@ -180,7 +180,8 @@ def _header(root: Path, toolchain: Toolchain, oracle_path: Path | None) -> str:
         '# a held-out oracle the implementer cannot reach, written by the spec author before',
         '# any implementer is dispatched. `convoy gate --init --independent <name>` scaffolds',
         f'# one under CONVOY_ORACLES (default ~/.convoy/oracles/{root.name}/); it stays red',
-        '# until written.',
+        '# until written. The hook runs this file only where `convoy gate --init` or',
+        '# `convoy gate --trust` recorded the project in ~/.convoy/hook-trust.toml.',
     ]
     if oracle_path is not None:
         lines.append(f'# Independent oracle scaffolded at: {oracle_path}')
@@ -201,7 +202,6 @@ def scaffold_gate(
     env: Mapping[str, str],
     *,
     independent: str | None = None,
-    home: Path | None = None,
 ) -> list[Path]:
     """Write the project gate spec under *root* and return the paths created.
 
@@ -210,8 +210,8 @@ def scaffold_gate(
     placeholder oracle ``<name>.py`` under the project's oracles directory
     (``CONVOY_ORACLES`` from *env*, else the default) and a blocking independent check
     naming it through ``${CONVOY_ORACLES}``, so the spec stays portable. Refuses to
-    overwrite any target, before writing anything. *home* stands in for the user's home
-    when the default oracles directory is computed (tests; never the CLI).
+    overwrite any target, before writing anything. Trusting the project for the hook is
+    the caller's step (``convoy gate --init`` does it): the scaffold only writes files.
     """
     root = Path(root).resolve()
     spec_path = root / GATE_SPEC_RELPATH
@@ -222,7 +222,7 @@ def scaffold_gate(
     oracle_path: Path | None = None
     if independent is not None:
         name = _oracle_name(independent)
-        oracle_path = oracles_dir_for(root, env, home=home) / f'{name}.py'
+        oracle_path = oracles_dir_for(root, env) / f'{name}.py'
         targets.append(oracle_path)
         reference = f'${{{ORACLES_ENV}}}/{name}.py'
         checks.append(

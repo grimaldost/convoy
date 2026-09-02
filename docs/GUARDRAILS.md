@@ -84,6 +84,21 @@ config contaminates them and makes runs non-reproducible across machines.
 disabling it is an explicit, per-run flag (`--no-config-isolation` /
 `config_isolation=false`).
 
+### The hook executes a project's checks only where the operator said so
+
+The plugin's `PostToolUse` hook runs a project's `.convoy/gate.toml` only when the
+project root is on this machine's trust list (`CONVOY_HOME/hook-trust.toml`, default
+`~/.convoy/`, written by `convoy gate --init` or `convoy gate --trust`). A spec in an
+untrusted project is logged as `untrusted` and nothing in it is executed.
+
+*Why:* the hook fires automatically on subagent dispatch; without the list, cloning a
+repository that carries a gate file would run arbitrary commands with no operator act
+between the clone and the execution. An explicit `convoy gate` is unaffected — the
+operator's command is the act.
+
+*Enforced by:* `interface/hook.py` (`is_trusted` before any load or run) +
+`tests/test_hook.py` (an untrusted spec with a side-effecting check leaves no trace).
+
 ### Telemetry is append-only and versioned
 
 `spawns.jsonl` is only ever appended, carries `schema_version`, and any addition

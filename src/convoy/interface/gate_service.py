@@ -22,10 +22,13 @@ the same conditions with pre-flight problems and author-declared advisories, whi
 standalone invocation does not have.
 """
 
+import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import tomli_w
 
 from convoy import __version__
 from convoy.core.gate import (
@@ -57,6 +60,11 @@ GATE_SPEC_RELPATH = Path('.convoy') / 'gate.toml'
 PROJECT_DIR_ENV = 'CLAUDE_PROJECT_DIR'
 # The out-of-tree home for a project's held-out oracles (see ``core.spec.expand_env``).
 ORACLES_ENV = 'CONVOY_ORACLES'
+# Convoy's per-user directory: the default oracles home and the hook trust list live
+# here. ``~/.convoy`` unless overridden (tests, CI, a shared machine).
+HOME_ENV = 'CONVOY_HOME'
+# The projects whose ``.convoy/gate.toml`` the hook may execute on this machine.
+TRUST_FILE = 'hook-trust.toml'
 
 
 class GateSpecNotFoundError(SpecError):
@@ -110,23 +118,65 @@ def project_root_of(spec_path: Path) -> Path | None:
     return None
 
 
-def oracles_dir_for(root: Path, env: Mapping[str, str], *, home: Path | None = None) -> Path:
+def convoy_home(env: Mapping[str, str]) -> Path:
+    """Convoy's per-user directory: ``$CONVOY_HOME``, else ``~/.convoy``."""
+    explicit = env.get(HOME_ENV)
+    return Path(explicit) if explicit else Path.home() / '.convoy'
+
+
+def oracles_dir_for(root: Path, env: Mapping[str, str]) -> Path:
     """Where a project's held-out oracles live: ``CONVOY_ORACLES`` when set, else the default.
 
-    The default is ``~/.convoy/oracles/<project dir name>`` — outside every checkout the
+    The default is ``<convoy home>/oracles/<project dir name>`` — outside every checkout the
     implementer can reach, keyed by the project directory's name so two clones of one
     project share their oracles.
     """
     explicit = env.get(ORACLES_ENV)
     if explicit:
         return Path(explicit)
-    base = Path.home() if home is None else home
-    return base / '.convoy' / 'oracles' / Path(root).resolve().name
+    return convoy_home(env) / 'oracles' / Path(root).resolve().name
 
 
-def gate_spec_env(
-    spec_path: Path, env: Mapping[str, str], *, home: Path | None = None
-) -> dict[str, str]:
+def trusted_projects(env: Mapping[str, str]) -> tuple[Path, ...]:
+    """The project roots the hook may execute checks in, from the trust list; ``()`` when absent.
+
+    A malformed trust list is a ``SpecError`` — the hook treats it as trusting nothing,
+    and ``convoy gate --trust`` refuses to append to a file it cannot read.
+    """
+    path = convoy_home(env) / TRUST_FILE
+    if not path.is_file():
+        return ()
+    try:
+        data = tomllib.loads(path.read_text(encoding='utf-8'))
+    except tomllib.TOMLDecodeError as exc:
+        raise SpecError(f'{path}: invalid TOML: {exc}') from exc
+    table = data.get('trust')
+    projects = table.get('projects') if isinstance(table, dict) else None
+    if not isinstance(projects, list) or not all(isinstance(item, str) for item in projects):
+        raise SpecError(f'{path}: [trust] projects must be a list of strings')
+    return tuple(Path(item) for item in projects)
+
+
+def is_trusted(root: Path, env: Mapping[str, str]) -> bool:
+    """Whether *root* (resolved) is on this machine's hook trust list."""
+    resolved = Path(root).resolve()
+    return any(item.resolve() == resolved for item in trusted_projects(env))
+
+
+def trust_project(root: Path, env: Mapping[str, str]) -> Path:
+    """Add *root* to the trust list (idempotent) and return the list's path."""
+    path = convoy_home(env) / TRUST_FILE
+    current = list(trusted_projects(env))
+    resolved = Path(root).resolve()
+    if all(item.resolve() != resolved for item in current):
+        current.append(resolved)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    listed = [item.as_posix() for item in current]
+    path.write_text(tomli_w.dumps({'trust': {'projects': listed}}), encoding='utf-8')
+    return path
+
+
+def gate_spec_env(spec_path: Path, env: Mapping[str, str]) -> dict[str, str]:
     """The environment a spec at *spec_path* is loaded with.
 
     A project spec (one living at ``.convoy/gate.toml``) gets ``CONVOY_ORACLES``
@@ -138,7 +188,7 @@ def gate_spec_env(
     resolved = dict(env)
     root = project_root_of(spec_path)
     if root is not None and ORACLES_ENV not in resolved:
-        resolved[ORACLES_ENV] = str(oracles_dir_for(root, env, home=home))
+        resolved[ORACLES_ENV] = str(oracles_dir_for(root, env))
     return resolved
 
 

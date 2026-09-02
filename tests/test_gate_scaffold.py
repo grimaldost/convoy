@@ -144,9 +144,9 @@ def test_scaffold_with_independent_writes_a_placeholder_oracle(tmp_path: Path) -
 def test_scaffold_defaults_the_oracles_dir_from_the_project_name(tmp_path: Path) -> None:
     root = _python_project(tmp_path / 'proj')
     home = tmp_path / 'home'
-    written = scaffold_gate(root, {}, independent='contract', home=home)
+    written = scaffold_gate(root, {'CONVOY_HOME': str(home)}, independent='contract')
     oracle = next(path for path in written if path.name == 'contract.py')
-    assert oracle == home / '.convoy' / 'oracles' / 'proj' / 'contract.py'
+    assert oracle == home / 'oracles' / 'proj' / 'contract.py'
 
 
 def test_scaffold_refuses_an_existing_oracle(tmp_path: Path) -> None:
@@ -225,3 +225,78 @@ def test_independent_without_init_is_usage(tmp_path: Path) -> None:
     result = runner.invoke(cli.app, ['gate', '--independent', 'x', '-w', str(tmp_path)])
     assert result.exit_code == EXIT_USAGE
     assert '--init' in result.stderr
+
+
+# --- trust: --init trusts, --trust arms an existing spec ------------------------------------
+
+
+def _trust_list(home: Path) -> str:
+    path = home / 'hook-trust.toml'
+    return path.read_text(encoding='utf-8') if path.exists() else ''
+
+
+def test_gate_init_trusts_the_project_it_scaffolds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / 'home'
+    monkeypatch.setenv('CONVOY_HOME', str(home))
+    root = tmp_path / 'bare'
+    root.mkdir()
+    result = runner.invoke(cli.app, ['gate', '--init', '-w', str(root)])
+    assert result.exit_code == EXIT_OK, result.stderr
+    assert 'trusted' in result.stdout
+    assert root.resolve().as_posix() in _trust_list(home)
+
+
+def test_gate_trust_arms_an_existing_project_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / 'home'
+    monkeypatch.setenv('CONVOY_HOME', str(home))
+    root = tmp_path / 'cloned'
+    (root / '.convoy').mkdir(parents=True)
+    (root / '.convoy' / 'gate.toml').write_text(
+        '[series]\nid = "c"\n\n[[checks]]\nname = "x"\nrun = "exit 0"\n'
+        'blocking = true\nindependent = false\n',
+        encoding='utf-8',
+    )
+    result = runner.invoke(cli.app, ['gate', '--trust', '-w', str(root)])
+    assert result.exit_code == EXIT_OK, result.stderr
+    assert root.resolve().as_posix() in _trust_list(home)
+
+
+def test_gate_trust_without_a_spec_is_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv('CONVOY_HOME', str(tmp_path / 'home'))
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    root = tmp_path / 'bare'
+    root.mkdir()
+    result = runner.invoke(cli.app, ['gate', '--trust', '-w', str(root)])
+    assert result.exit_code == EXIT_USAGE
+    assert 'nothing to arm' in result.stderr
+    assert _trust_list(tmp_path / 'home') == ''
+
+
+def test_explicit_gate_on_an_untrusted_project_notes_the_unarmed_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv('CONVOY_HOME', str(tmp_path / 'home'))
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    root = tmp_path / 'cloned'
+    (root / '.convoy').mkdir(parents=True)
+    run = f'"{sys.executable}" -c "exit(0)"'
+    escaped = run.replace('\\', '\\\\').replace('"', '\\"')
+    (root / '.convoy' / 'gate.toml').write_text(
+        '[series]\nid = "c"\n\n[[checks]]\nname = "x"\n'
+        f'run = "{escaped}"\n'
+        'blocking = true\nindependent = false\n',
+        encoding='utf-8',
+    )
+    result = runner.invoke(cli.app, ['gate', '-w', str(root)])
+    assert result.exit_code == EXIT_OK, result.stderr
+    assert 'hook is not armed' in result.stderr
+    trusted = runner.invoke(cli.app, ['gate', '--trust', '-w', str(root)])
+    assert trusted.exit_code == EXIT_OK
+    again = runner.invoke(cli.app, ['gate', '-w', str(root)])
+    assert 'hook is not armed' not in again.stderr
