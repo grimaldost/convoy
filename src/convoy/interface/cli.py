@@ -24,8 +24,11 @@ from convoy.interface.drivers.headless import (
 from convoy.interface.fs_probe import isolation_result
 from convoy.interface.gate_service import (
     advisory_only_detail,
+    gate_brief_envelope,
     gate_envelope,
     gate_usage_envelope,
+    load_gate_spec_file,
+    resolve_gate_spec,
     run_gate,
 )
 from convoy.interface.git import Git, GitError
@@ -246,7 +249,18 @@ def _gate_usage_exit(
 
 @app.command()
 def gate(
-    series_file: Path,
+    series_file: Annotated[
+        Path | None,
+        typer.Argument(
+            help=(
+                'The file holding the [[checks]] to run: a full series.toml, or a minimal '
+                '[series] id + [[checks]] file. Omitted, the project gate spec is used: '
+                '$CLAUDE_PROJECT_DIR/.convoy/gate.toml, then .convoy/gate.toml in the '
+                'workspace and its parents; none found is a usage failure.'
+            ),
+            show_default=False,
+        ),
+    ] = None,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -273,6 +287,18 @@ def gate(
             ),
         ),
     ] = False,
+    brief: Annotated[
+        bool,
+        typer.Option(
+            '--brief',
+            help=(
+                'Print the compact envelope — {ok, outcome, repair_brief, convoy_version} '
+                '— as one JSON object, for a caller that reads the verdict inside a model '
+                'turn and wants nothing else in it. Usage paths print the usage envelope, '
+                'as under --json.'
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Run a series' ``[[checks]]`` against a workspace once — no spawn, no branch, no merge.
 
@@ -292,21 +318,25 @@ def gate(
     driver has checked out, the run's commit step stages the whole tree and can commit
     a concurrent gate's artifacts into a scored branch.
     """
-    try:
-        spec = load_gate_spec(series_file.read_text(encoding='utf-8'))
-    except (OSError, UnicodeDecodeError, SpecError) as exc:
-        raise _gate_usage_exit(exc, json_summary) from exc
+    machine = json_summary or brief
+    # The workspace first: discovery starts from it, so a gate invoked from anywhere
+    # with `-w <project>` finds that project's spec, not the invoking directory's.
     target = _workspace_or_exit(workspace)
+    try:
+        spec_path = resolve_gate_spec(series_file, target, os.environ)
+        spec = load_gate_spec_file(spec_path, os.environ)
+    except (OSError, UnicodeDecodeError, SpecError) as exc:
+        raise _gate_usage_exit(exc, machine) from exc
     phases = tuple(phase or ())
     try:
         outcome = run_gate(spec, target, phases)
     except GateUsageError as exc:
-        raise _gate_usage_exit(exc, json_summary, spec.id) from exc
+        raise _gate_usage_exit(exc, machine, spec.id) from exc
     except OSError as exc:
         # A workspace vanishing mid-gate, a dead mount, an unspawnable shell: a usage
         # failure, never a traceback — and never exit 1, which would read as a blocking
         # red to a caller watching only the exit code (same rule as `run`).
-        raise _gate_usage_exit(exc, json_summary, spec.id) from exc
+        raise _gate_usage_exit(exc, machine, spec.id) from exc
 
     for result in outcome.verdict.results:
         mark = 'ok ' if result.passed else 'RED'
@@ -315,7 +345,9 @@ def gate(
             line += f' — {result.detail}'
         typer.echo(line, err=True)
 
-    if json_summary:
+    if brief:
+        typer.echo(json.dumps(gate_brief_envelope(outcome)))
+    elif json_summary:
         typer.echo(json.dumps(gate_envelope(spec, target, outcome)))
     else:
         typer.echo('blocked' if outcome.verdict.blocking_red else 'completed')

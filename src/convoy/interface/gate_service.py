@@ -22,7 +22,7 @@ the same conditions with pre-flight problems and author-declared advisories, whi
 standalone invocation does not have.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,7 +38,7 @@ from convoy.core.gate import (
     decide,
     repair_brief,
 )
-from convoy.core.spec import Check, GateSpec
+from convoy.core.spec import Check, GateSpec, SpecError, load_gate_spec
 from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK, EXIT_USAGE
 from convoy.interface.fs_probe import isolation_result
 from convoy.interface.gate_runner import GateRunner, SubprocessGateRunner
@@ -48,6 +48,90 @@ from convoy.interface.gate_runner import GateRunner, SubprocessGateRunner
 # trace to point at — the envelope IS the record — so what is dropped is counted,
 # never silent.
 _CHECK_CAP = 50
+
+# The per-project gate spec: the gate-only file shape, at a fixed place under the project
+# root, so ``convoy gate`` and ``convoy hook`` need no argument to find it — and its
+# presence is the per-project switch that arms the hook.
+GATE_SPEC_RELPATH = Path('.convoy') / 'gate.toml'
+# Claude Code exports the project root to hooks and MCP servers under this name.
+PROJECT_DIR_ENV = 'CLAUDE_PROJECT_DIR'
+# The out-of-tree home for a project's held-out oracles (see ``core.spec.expand_env``).
+ORACLES_ENV = 'CONVOY_ORACLES'
+
+
+class GateSpecNotFoundError(SpecError):
+    """No series file was given and no project gate spec could be found."""
+
+
+def find_gate_spec(start: Path, env: Mapping[str, str]) -> Path | None:
+    """Locate the project gate spec, or ``None``.
+
+    ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` first — the root Claude Code hands a hook
+    or an MCP server, which may differ from the process cwd — then ``.convoy/gate.toml``
+    in *start* and each of its parents, so a gate invoked from a subdirectory finds the
+    project's spec the way git finds ``.git``. An env root without a spec falls through
+    to the walk rather than ending it.
+    """
+    candidates: list[Path] = []
+    project_dir = env.get(PROJECT_DIR_ENV)
+    if project_dir:
+        candidates.append(Path(project_dir) / GATE_SPEC_RELPATH)
+    resolved = Path(start).resolve()
+    candidates.extend(directory / GATE_SPEC_RELPATH for directory in (resolved, *resolved.parents))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def resolve_gate_spec(series_file: Path | None, start: Path, env: Mapping[str, str]) -> Path:
+    """An explicit *series_file* as given; otherwise the discovered project spec.
+
+    Raises :class:`GateSpecNotFoundError` (a ``SpecError``, so both surfaces classify it
+    as ``spec``) naming everywhere it looked, when there is nothing to run.
+    """
+    if series_file is not None:
+        return series_file
+    found = find_gate_spec(start, env)
+    if found is None:
+        project_dir = env.get(PROJECT_DIR_ENV) or 'unset'
+        raise GateSpecNotFoundError(
+            f'no series file given and no {GATE_SPEC_RELPATH.as_posix()} found — searched '
+            f'${PROJECT_DIR_ENV} ({project_dir}), then {Path(start).resolve()} and its '
+            f'parents; pass a series file, or create the project spec'
+        )
+    return found
+
+
+def project_root_of(spec_path: Path) -> Path | None:
+    """The project a ``.convoy/gate.toml`` belongs to; ``None`` for any other file."""
+    if spec_path.parent.name == GATE_SPEC_RELPATH.parent.name:
+        return spec_path.parent.parent
+    return None
+
+
+def gate_spec_env(
+    spec_path: Path, env: Mapping[str, str], *, home: Path | None = None
+) -> dict[str, str]:
+    """The environment a spec at *spec_path* is loaded with.
+
+    A project spec (one living at ``.convoy/gate.toml``) gets ``CONVOY_ORACLES``
+    defaulted to ``~/.convoy/oracles/<project dir name>`` when the caller has not set
+    it, so the scaffolded ``${CONVOY_ORACLES}/...`` references resolve on a machine that
+    never exported the variable. An explicit series file gets no default: its author
+    wrote its paths, and an unset reference is refused at load, as documented.
+    """
+    resolved = dict(env)
+    root = project_root_of(spec_path)
+    if root is not None and ORACLES_ENV not in resolved:
+        base = Path.home() if home is None else home
+        resolved[ORACLES_ENV] = str(base / '.convoy' / 'oracles' / root.resolve().name)
+    return resolved
+
+
+def load_gate_spec_file(spec_path: Path, env: Mapping[str, str]) -> GateSpec:
+    """Read and parse *spec_path* under :func:`gate_spec_env`; the loader's errors pass through."""
+    return load_gate_spec(spec_path.read_text(encoding='utf-8'), env=gate_spec_env(spec_path, env))
 
 
 def advisory_only_detail(selected: Sequence[Check]) -> str:
@@ -199,6 +283,22 @@ def gate_envelope(spec: GateSpec, workspace: Path, outcome: GateOutcome) -> dict
             'checks': max(0, len(results) - _CHECK_CAP),
         },
         'exit_code': outcome.exit_code,
+        'convoy_version': __version__,
+    }
+
+
+def gate_brief_envelope(outcome: GateOutcome) -> dict[str, Any]:
+    """The compact envelope: ``ok``, ``outcome``, ``repair_brief``, ``convoy_version``.
+
+    For a caller that must read the verdict inside a model turn and wants nothing else
+    in it — the four fields a repair decision needs, and no per-check list to skim past.
+    Agrees with :func:`gate_envelope` field for field; the full envelope remains the
+    record.
+    """
+    return {
+        'ok': outcome.exit_code == EXIT_OK,
+        'outcome': 'blocked' if outcome.verdict.blocking_red else 'completed',
+        'repair_brief': repair_brief(outcome.verdict),
         'convoy_version': __version__,
     }
 

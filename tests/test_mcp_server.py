@@ -113,7 +113,7 @@ def test_every_tool_schema_documents_every_parameter() -> None:
             'resume',
             'detach',
         },
-        'convoy_gate': {'series_file', 'workspace', 'phases'},
+        'convoy_gate': {'series_file', 'workspace', 'phases', 'brief'},
         'convoy_init': {'directory'},
         'convoy_status': {'series_file', 'run_id', 'workspace'},
     }
@@ -123,6 +123,7 @@ def test_every_tool_schema_documents_every_parameter() -> None:
         for param in params:
             assert props[param].get('description', '').strip(), f'{name}.{param} has no description'
     assert set(tools['convoy_run'].inputSchema['required']) == {'series_file', 'workspace'}
+    assert set(tools['convoy_gate'].inputSchema['required']) == {'workspace'}
     # run_id defaults to the latest run, so only the series file is required.
     assert set(tools['convoy_status'].inputSchema['required']) == {'series_file'}
     assert tools['convoy_init'].inputSchema['required'] == ['directory']
@@ -956,7 +957,7 @@ def _gate_only_toml(*, red: bool = False) -> str:
 def test_convoy_gate_green_envelope(tmp_path: Path) -> None:
     series_file = tmp_path / 'gate.toml'
     series_file.write_text(_gate_only_toml(), encoding='utf-8')
-    result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path)))
+    result = asyncio.run(srv.convoy_gate(str(tmp_path), str(series_file)))
     assert result['ok'] is True
     assert result['outcome'] == 'completed'
     assert [check['name'] for check in result['checks']] == ['first', 'second']
@@ -966,7 +967,7 @@ def test_convoy_gate_green_envelope(tmp_path: Path) -> None:
 def test_convoy_gate_red_envelope(tmp_path: Path) -> None:
     series_file = tmp_path / 'gate.toml'
     series_file.write_text(_gate_only_toml(red=True), encoding='utf-8')
-    result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path)))
+    result = asyncio.run(srv.convoy_gate(str(tmp_path), str(series_file)))
     assert result['ok'] is False
     assert result['outcome'] == 'blocked'
     assert result['blocking_red'] is True
@@ -990,7 +991,7 @@ def test_convoy_gate_matches_the_cli_envelope(tmp_path: Path) -> None:
     cli_result = CliRunner().invoke(
         cli.app, ['gate', str(series_file), '--workspace', str(tmp_path), '--json']
     )
-    mcp_result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path)))
+    mcp_result = asyncio.run(srv.convoy_gate(str(tmp_path), str(series_file)))
     assert json.loads(cli_result.stdout) == mcp_result
     assert cli_result.exit_code == mcp_result['exit_code']
 
@@ -998,7 +999,7 @@ def test_convoy_gate_matches_the_cli_envelope(tmp_path: Path) -> None:
 def test_convoy_gate_bad_spec_is_a_usage_result_not_an_exception(tmp_path: Path) -> None:
     series_file = tmp_path / 'gate.toml'
     series_file.write_text('[series]\nid = "no-checks"\n', encoding='utf-8')
-    result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path)))
+    result = asyncio.run(srv.convoy_gate(str(tmp_path), str(series_file)))
     assert result['ok'] is False
     assert result['outcome'] == 'usage'
     assert result['error_kind'] == 'spec'
@@ -1014,7 +1015,7 @@ def test_convoy_gate_unknown_phase_is_a_usage_result(tmp_path: Path) -> None:
     )
     series_file = tmp_path / 'gate.toml'
     series_file.write_text(text, encoding='utf-8')
-    result = asyncio.run(srv.convoy_gate(str(series_file), str(tmp_path), phases=['nope']))
+    result = asyncio.run(srv.convoy_gate(str(tmp_path), str(series_file), phases=['nope']))
     assert result['ok'] is False
     assert result['outcome'] == 'usage'
     # Once mislabeled 'filesystem' by error_kind's OSError catch-all.
@@ -1033,8 +1034,40 @@ def test_convoy_gate_bad_workspace_is_a_usage_result_not_an_exception(tmp_path: 
     series_file = tmp_path / 'gate.toml'
     series_file.write_text(_gate_only_toml(), encoding='utf-8')
     for bad in (str(tmp_path / 'absent'), str(series_file)):
-        result = asyncio.run(srv.convoy_gate(str(series_file), bad))
+        result = asyncio.run(srv.convoy_gate(bad, str(series_file)))
         assert result['ok'] is False, bad
         assert result['outcome'] == 'usage', bad
         assert result['error_kind'] == 'filesystem', bad
         assert result['exit_code'] == 3, bad
+
+
+def test_convoy_gate_discovers_the_project_spec_from_the_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    (tmp_path / '.convoy').mkdir()
+    (tmp_path / '.convoy' / 'gate.toml').write_text(_gate_only_toml(), encoding='utf-8')
+    result = asyncio.run(srv.convoy_gate(workspace=str(tmp_path)))
+    assert result['ok'] is True
+    assert result['series_id'] == 'mcp-gate'
+
+
+def test_convoy_gate_without_a_spec_is_a_usage_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    result = asyncio.run(srv.convoy_gate(workspace=str(tmp_path)))
+    assert result['outcome'] == 'usage'
+    assert result['error_kind'] == 'spec'
+    assert 'gate.toml' in result['error']
+
+
+def test_convoy_gate_brief_returns_the_compact_envelope(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_gate_only_toml(red=True), encoding='utf-8')
+    result = asyncio.run(
+        srv.convoy_gate(workspace=str(tmp_path), series_file=str(series_file), brief=True)
+    )
+    assert set(result) == {'ok', 'outcome', 'repair_brief', 'convoy_version'}
+    assert result['outcome'] == 'blocked'
+    assert 'second' in result['repair_brief']

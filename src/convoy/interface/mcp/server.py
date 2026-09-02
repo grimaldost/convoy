@@ -22,6 +22,7 @@ Pinned ``mcp`` SDK API:
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
@@ -31,10 +32,17 @@ from pydantic import Field
 
 from convoy.core.gate import GateUsageError
 from convoy.core.governance import GovernanceError
-from convoy.core.spec import Series, SpecError, load_gate_spec, load_series
+from convoy.core.spec import Series, SpecError, load_series
 from convoy.interface.detached import launch_detached
 from convoy.interface.drivers.headless import make_run_id
-from convoy.interface.gate_service import gate_envelope, gate_usage_envelope, run_gate
+from convoy.interface.gate_service import (
+    gate_brief_envelope,
+    gate_envelope,
+    gate_usage_envelope,
+    load_gate_spec_file,
+    resolve_gate_spec,
+    run_gate,
+)
 from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.run_service import PreflightError, run_series_headless, start_report
@@ -333,37 +341,34 @@ async def convoy_run(
     )
 
 
-def _gate_impl(series_file: str, workspace: str, phases: list[str]) -> dict[str, Any]:
-    """Load the gate spec and run the checks once, shaping a result (sync).
+def _gate_impl(
+    workspace: str, series_file: str | None, phases: list[str], brief: bool
+) -> dict[str, Any]:
+    """Resolve and load the gate spec, run the checks once, shape a result (sync).
 
     Every failure returns a usage envelope, never raises: an exception escaping here
     becomes a protocol-level tool error with no ``outcome`` to branch on. ``OSError``
     around ``run_gate`` is the workspace-shaped one — a path that is missing or a file
     surfaces from ``Popen(cwd=...)``, and it is the single most likely caller mistake.
+    With no ``series_file`` the project spec is discovered from the workspace (the
+    tool has no meaningful cwd of its own), the same rule as ``convoy gate``.
     """
     try:
-        spec = load_gate_spec(Path(series_file).read_text(encoding='utf-8'))
+        explicit = None if series_file is None else Path(series_file)
+        spec_path = resolve_gate_spec(explicit, Path(workspace), os.environ)
+        spec = load_gate_spec_file(spec_path, os.environ)
     except (OSError, UnicodeDecodeError, SpecError) as exc:
         return gate_usage_envelope(exc, error_kind=error_kind(exc))
     try:
         outcome = run_gate(spec, Path(workspace), tuple(phases))
     except (GateUsageError, OSError) as exc:
         return gate_usage_envelope(exc, error_kind=error_kind(exc), series_id=spec.id)
+    if brief:
+        return gate_brief_envelope(outcome)
     return gate_envelope(spec, Path(workspace), outcome)
 
 
 async def convoy_gate(
-    series_file: Annotated[
-        str,
-        Field(
-            description=(
-                'Absolute path to the file holding the [[checks]] to run: a full convoy '
-                'series.toml, or a minimal file carrying only [series] id and [[checks]]. '
-                'A relative path resolves against the server working directory, so prefer '
-                'absolute.'
-            )
-        ),
-    ],
     workspace: Annotated[
         str,
         Field(
@@ -377,6 +382,19 @@ async def convoy_gate(
             )
         ),
     ],
+    series_file: Annotated[
+        str | None,
+        Field(
+            description=(
+                'Optional absolute path to the file holding the [[checks]] to run: a full '
+                'convoy series.toml, or a minimal file carrying only [series] id and '
+                '[[checks]]. Omitted, the project gate spec is used — '
+                '$CLAUDE_PROJECT_DIR/.convoy/gate.toml, then .convoy/gate.toml in the '
+                'workspace and its parents; none found is a usage result. A relative '
+                'path resolves against the server working directory, so prefer absolute.'
+            )
+        ),
+    ] = None,
     phases: Annotated[
         list[str] | None,
         Field(
@@ -388,6 +406,16 @@ async def convoy_gate(
             )
         ),
     ] = None,
+    brief: Annotated[
+        bool,
+        Field(
+            description=(
+                'Return the compact envelope {ok, outcome, repair_brief, convoy_version} '
+                'instead of the full one — for reading the verdict inside a model turn '
+                'with nothing else in it. Usage results are unchanged.'
+            )
+        ),
+    ] = False,
 ) -> dict[str, Any]:
     """Run a series' ``[[checks]]`` against a workspace once — the gate without the run.
 
@@ -404,9 +432,11 @@ async def convoy_gate(
     the same text convoy briefs its own fix spawn with; ``''`` when green), ``counts``,
     the CLI-equivalent ``exit_code`` (0 green — a non-blocking red advises without
     blocking — 1 blocking red), and ``convoy_version``. The CLI twin is ``convoy gate``;
-    both emit this same envelope.
+    both emit this same envelope. With ``brief=true`` only ``ok``, ``outcome``,
+    ``repair_brief`` and ``convoy_version`` come back. With no ``series_file`` the
+    project's ``.convoy/gate.toml`` is discovered from the workspace.
     """
-    return await asyncio.to_thread(_gate_impl, series_file, workspace, phases or [])
+    return await asyncio.to_thread(_gate_impl, workspace, series_file, phases or [], brief)
 
 
 async def convoy_init(
