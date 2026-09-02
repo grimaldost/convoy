@@ -62,6 +62,14 @@ $157 metered), and a periodic post-hoc telemetry pass over agent transcripts for
 effect size — it has no control arm and counts only what an agent invoked, so its engine
 counts are a floor.
 
+**A build round ran on 2026-09-02** (program 2, Part 1 — the gate as a hook), from the
+design spec at fathom `docs/specs/2026-09-02-hook-gate-closed-loop-design.md` rather than
+from a triage pass. It mints CONV-B55 through CONV-B59 and ships all five in 0.12.0; two
+blind reviews of the candidate (31 findings) closed every blocker, high and medium before
+the cut and left four residuals, minted here as CONV-B60 through CONV-B63, plus one doctrine
+row the round's own miss earned (CONV-B64). CONV-B53's measurement is iteration 1 of the
+multiagent-composition experiment, in flight in fathom; its row moves when the readout lands.
+
 ## Reading this backlog
 
 - **ID.** `CONV-Bnn` is the stable build ID used from this pass forward. `T<cluster><letter>`
@@ -967,6 +975,55 @@ delete-and-re-implement behaviour is correct.
 
 ---
 
+### CONV-B60 — On the Agent tool's default dispatch, a residual red after the judge's repair round reaches nobody.
+
+**Cause / evidence.** The Agent tool dispatches asynchronously when `run_in_background`
+is unset (observed in a real `claude -p` session, CLI 2.1.258; not documented). The hook's
+messenger leg fires at the tool call with `async_launched` and gates nothing; the judge leg
+blocks the subagent's stop once with the repair brief and, on the retry, records a residual
+red and lets it stop. That red then lives in `.convoy/hook.log` and in whatever the subagent
+chose to say — the orchestrator is never told by the hook. On a synchronous dispatch the
+messenger tells it. Review S15 on the 0.12.0 candidate; documented in the skill and
+the CHANGELOG as the limit it is.
+
+**Change.** Measure first: Part 2's hook arms count how often the judge's one round leaves
+a residual red (`hook.log`, `blocked_stop: false` records). If it is common, add an
+orchestrator-side `Stop` leg: when the session's own turn ends with a judge record still red
+for a subagent of this session, exit 2 once with the brief — behind the same trust switch,
+bounded by `stop_hook_active` like the judge. If it is rare, the documented limit stands.
+
+**Effort** M · **Source** [review] · **Gate** the Part 2 hook arms
+
+### CONV-B61 — The hook's timeout and the gate's per-check timeouts are unrelated numbers, and the only path on which the hook says nothing is the one where they collide.
+
+**Cause / evidence.** `hooks/hooks.json` gives Claude Code 1800 s per firing; each check is
+bounded by the spec's `timeout_seconds` (default 300) and a scaffolded Python gate has five
+checks. A gate whose checks together outrun the hook is killed by Claude Code: no log line,
+no exit 2, indistinguishable from green — against the "never a silent green" claim the
+hook otherwise keeps. Review D6; the docs now say so, the code does nothing about it.
+
+**Change.** `convoy gate --init` writes a `timeout_seconds` whose sum over the scaffolded
+checks stays under the shipped hook timeout, and `convoy validate` warns when a project
+spec's sum exceeds it; the hook's own record could carry the budget it ran under so a killed
+firing is at least reconstructible from the previous one.
+
+**Effort** S · **Source** [review]
+
+### CONV-B62 — Concurrent judge firings run the suite concurrently in one tree and append to one log without a lock.
+
+**Cause / evidence.** Several subagents stopping at once each fire `SubagentStop`; each runs
+the full check suite in the same workspace (shared `.pytest_cache`, `__pycache__`, build
+output — spurious reds) and appends to `.convoy/hook.log` with a plain `open('a')`, which
+is not atomic across processes on Windows; an interleaved line degrades to a re-run, not to
+a false green. Review S12, second half; the first half (refuse a workspace a `convoy run`
+holds the lock on) shipped in 0.12.0.
+
+**Change.** An advisory lock around the gate run and the log append — `workspace_lock`
+already has the primitive — with a bounded wait and a loud exit 2 on contention, so two
+judges never grade one tree at once and the messenger never reads a torn line.
+
+**Effort** S · **Source** [review]
+
 ## Later
 
 ### CONV-B18 — Measure whether per-PR governance overrides are used, before keeping the machinery that serves them.
@@ -1289,6 +1346,34 @@ the promotion gate.
 
 ---
 
+### CONV-B63 — `.convoy/hook.log` grows one line per firing and nothing rotates it.
+
+**Cause / evidence.** Every judge and messenger firing appends a record; the messenger reads
+the whole file back to find the judge's verdict. A project that runs the hook for weeks
+carries a log the scaffold gitignores and nothing trims. No priced instance yet.
+
+**Change.** A size cap or a per-session file, decided when one real project has run the hook
+for a week and the readout says what a useful window is.
+
+**Effort** S · **Source** [review]
+
+### CONV-B64 — Integrating with a host protocol from its documentation instead of its default payload cost a design.
+
+**Cause / evidence.** The hook's first design (PR #75) assumed a synchronous subagent
+dispatch because the documentation describes `PostToolUse` around a completed tool call;
+the default call shape is asynchronous, which no document says and a five-minute probe with
+the default call would have shown. The captured event fixtures under `tests/fixtures/hooks/`
+are what made the rewrite (PR #77) a day's work rather than a week's; a probe of the
+*default* interaction before the design would have made it no work at all.
+
+**Change.** The authoring doctrine gets the rule for shell surfaces: an integration with a
+host protocol starts from a captured payload of the default interaction, committed as a
+fixture, before a line of the mechanism is designed — the fixtures directory is the evidence
+the rule was followed. `tests/test_manifest.py` asserts `hooks/hooks.json` parses and names
+the shipped command, so the plugin's hook wiring is locked the way its version is.
+
+**Effort** S · **Source** [review] + [report]
+
 ## Retire / fold candidates
 
 Each names its replacement. The two conditional rows name the measurement that decides them.
@@ -1426,6 +1511,20 @@ the one thing not to do is discover the answer from a broken scored arm. [cross-
 ---
 
 ## Shipped
+
+### Built in the 2026-09-02 hook round (served by 0.12.0)
+
+Five rows minted from the program-2 design and shipped in one day across PRs #72–#80, with
+two blind reviews between the last feature PR and the cut. The reviews' 31 findings closed
+in #79; the residuals are CONV-B60 through CONV-B63 above.
+
+| Row | Promotion | Shipped by |
+|---|---|---|
+| CONV-B55 | The gate as a Claude Code hook. `convoy hook` runs the project gate on two events: `SubagentStop` is the judge (a blocking red is handed to the subagent as the reason it may not stop yet, one repair round, read-only subagents skipped) and `PostToolUse` on `Agent` is the messenger for synchronous dispatch (a residual red reaches the orchestrator as feedback, reusing the judge's verdict). The plugin ships both hooks. Attestation: one JSON line per firing in `.convoy/hook.log`. **(consumer-affecting)** | 0.12.0 |
+| CONV-B56 | A project carries its own gate. `.convoy/gate.toml` is the per-project spec — scaffolded by `convoy gate --init` from the toolchain it finds (a red placeholder when it finds none), an independent oracle by `--independent`, discovered by `convoy gate` and `convoy_gate` with no argument — and executed by the hooks only where the machine trusted it with `convoy gate --trust`, which pins the spec's hash; an untrusted project executes nothing and gets no file, a changed spec is refused loudly. **(consumer-affecting)** | 0.12.0 |
+| CONV-B57 | Held-out oracles live out-of-tree by convention: `${CONVOY_*}` expands in `[[checks]]` `run` and `asset` at load (`CONVOY_ORACLES` the conventional home), an unset name or a value carrying shell syntax is refused, and the authoring guide states the doctrine — the judge is appointed before the defendant. **(consumer-affecting)** | 0.12.0 |
+| CONV-B58 | The compact envelope: `convoy gate --brief` / `convoy_gate(brief=true)` return `{ok, outcome, repair_brief, convoy_version}` for a caller that reads the verdict inside a model turn. **(consumer-affecting)** | 0.12.0 |
+| CONV-B59 | A harness keeps the gate outside the tree it judges: `$CONVOY_GATE_SPEC` names the spec, `CONVOY_TRUSTED_ROOTS` vouches for the staged workspace, and the spec found outside `.convoy/` governs the workspace for trust, the log and the oracles default. **(consumer-affecting)** | 0.12.0 |
 
 ### Built in the 2026-09-01 delta pass (served by 0.10.0)
 
