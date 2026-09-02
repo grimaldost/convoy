@@ -30,6 +30,7 @@ from convoy.interface.gate_service import (
     find_gate_spec,
     gate_brief_envelope,
     gate_envelope,
+    gate_root,
     gate_spec_env,
     gate_usage_envelope,
     is_trusted,
@@ -442,3 +443,35 @@ def test_the_launching_process_can_vouch_for_roots(tmp_path: Path) -> None:
     assert is_trusted(other, env) is True
     assert is_trusted(tmp_path / 'else', env) is False
     assert trusted_projects(env) == ()
+
+
+# --- $CONVOY_GATE_SPEC: an explicit spec, rooted at the workspace ---------------------------
+
+
+def test_convoy_gate_spec_wins_over_discovery(tmp_path: Path) -> None:
+    project_spec = _project_with_spec(tmp_path / 'repo')
+    named = tmp_path / 'elsewhere' / 'gate.toml'
+    named.parent.mkdir()
+    named.write_text('', encoding='utf-8')
+    env = {'CONVOY_GATE_SPEC': str(named), 'CLAUDE_PROJECT_DIR': str(tmp_path / 'repo')}
+    assert find_gate_spec(tmp_path / 'repo', env) == named
+    assert find_gate_spec(tmp_path / 'repo', {}) == project_spec
+
+
+def test_a_missing_convoy_gate_spec_is_refused_not_walked_past(tmp_path: Path) -> None:
+    _project_with_spec(tmp_path / 'repo')
+    with pytest.raises(GateSpecNotFoundError, match='CONVOY_GATE_SPEC'):
+        find_gate_spec(tmp_path / 'repo', {'CONVOY_GATE_SPEC': str(tmp_path / 'nope.toml')})
+
+
+def test_gate_root_is_the_workspace_for_a_spec_outside_dot_convoy(tmp_path: Path) -> None:
+    workspace = tmp_path / 'ws'
+    workspace.mkdir()
+    assert gate_root(tmp_path / 'task' / 'gate.toml', workspace) == workspace.resolve()
+    assert gate_root(tmp_path / 'repo' / '.convoy' / 'gate.toml', workspace) == tmp_path / 'repo'
+
+
+def test_gate_spec_env_defaults_oracles_for_a_named_root(tmp_path: Path) -> None:
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    resolved = gate_spec_env(tmp_path / 'task' / 'gate.toml', env, root=tmp_path / 'ws')
+    assert resolved['CONVOY_ORACLES'] == str(tmp_path / 'home' / 'oracles' / 'ws')

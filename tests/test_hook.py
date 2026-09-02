@@ -512,3 +512,36 @@ def test_the_plugin_ships_the_judge_too() -> None:
     (command,) = entry['hooks']
     assert 'convoy hook' in command['command']
     assert command['timeout'] > 600
+
+
+# --- $CONVOY_GATE_SPEC: the spec lives outside the tree it judges -----------------------------
+
+
+def test_an_env_named_spec_is_judged_logged_and_trusted_at_the_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / 'ws'
+    workspace.mkdir()
+    spec = tmp_path / 'task' / 'gate.toml'
+    spec.parent.mkdir()
+    spec.write_text(
+        '[series]\nid = "outside"\n\n' + _check('bad', _RED, hint='fix it'), encoding='utf-8'
+    )
+    env = {
+        **_home(tmp_path),
+        'CONVOY_GATE_SPEC': str(spec),
+        'CONVOY_TRUSTED_ROOTS': str(workspace),
+    }
+    assert run_hook(json.dumps(_payload(workspace)), env) == HOOK_EXIT_FEEDBACK
+    lines = _log_lines(workspace)
+    assert len(lines) == 1
+    assert lines[0]['outcome'] == 'blocked'
+    assert lines[0]['spec'] == str(spec)
+    assert not (spec.parent / '.convoy').exists()
+
+
+def test_a_missing_env_named_spec_is_loud(tmp_path: Path) -> None:
+    workspace = tmp_path / 'ws'
+    workspace.mkdir()
+    env = {**_home(tmp_path), 'CONVOY_GATE_SPEC': str(tmp_path / 'nope.toml')}
+    result = decide(_payload(workspace), env)
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    assert 'CONVOY_GATE_SPEC' in result.stderr

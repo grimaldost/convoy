@@ -278,8 +278,9 @@ exit_code: 3, series_id?}`. The CLI twin `convoy gate --json` prints these same
 objects, usage paths included. `brief=true` (CLI `--brief`) returns only `{ok, outcome,
 repair_brief, convoy_version}` — for reading the verdict inside a model turn with nothing
 else in it. `series_file` is optional: omitted, the project spec is used —
-`$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml` in the workspace and its
-parents — and a project spec loads with `CONVOY_ORACLES` defaulted to
+`$CONVOY_GATE_SPEC` when the launching process set it (a missing file is refused, never
+walked past), then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml` in
+the workspace and its parents — and a project spec loads with `CONVOY_ORACLES` defaulted to
 `~/.convoy/oracles/<project dir name>`; none found is a usage result naming where it looked.
 
 ## The gate without the run
