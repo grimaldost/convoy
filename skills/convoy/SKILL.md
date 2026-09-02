@@ -320,17 +320,35 @@ spec stays portable; the placeholder is red until written. Write it before dispa
 any implementer: the judge is appointed before the defendant.
 
 **The hook: the gate the orchestrator never has to think about.** Installing the plugin
-registers a `PostToolUse` hook on `Agent` (and its older name `Task`) that runs
-`convoy hook` after every subagent dispatch. The hook finds the project spec the way
+registers `convoy hook` on two events. `SubagentStop` is the judge: when a subagent
+tries to finish, the gate runs in the session's tree; a blocking red exits 2 with the
+repair brief on stderr, which Claude Code hands to the *subagent* as the reason it may
+not stop yet — the implementer repairs its own work, the same shape as a governed
+run's fix spawn — once; on the retry a residual red is recorded and the subagent may
+stop. A subagent whose transcript shows no mutating tool use (a reader, a reviewer) is
+not gated. `PostToolUse` on `Agent` (and its older name `Task`) is the messenger, for
+synchronous dispatch: when the dispatch returns completed, the hook reuses the judge's
+verdict for that subagent from `.convoy/hook.log` (or runs the gate when there is none)
+and on a residual red exits 2 with the brief, which Claude Code shows to the
+*orchestrator* as feedback on the completed tool call — its cue to dispatch a fix
+subagent. An asynchronous dispatch (the Agent tool's default when `run_in_background`
+is unset) returns before the subagent has done anything and is recorded, not gated,
+there; its subagent is still judged at its stop, and a residual red after that repair
+round shows in the log and in the subagent's own final message, not as orchestrator
+feedback. The hook finds the project spec the way
 `convoy gate` does — `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml`
 from the event's `cwd` upward — and does nothing where none exists: the presence of
 the spec is the per-project switch, so installing the plugin arms nothing until a
-project opts in with `convoy gate --init`. The operator's trust is the per-machine
+project opts in with `convoy gate --init`. Gate cost: the judge runs the checks once per
+mutating subagent stop (twice when it blocks); the messenger reuses that verdict. The
+operator's trust is the per-machine
 switch: the hook executes a project's checks only where the project root is on
 `CONVOY_HOME/hook-trust.toml` (default `~/.convoy/`), which `convoy gate --init` writes
 for the project it scaffolds and `convoy gate --trust` writes for an existing spec — a
 cloned repository's gate file must not run commands on dispatch until you say so; an
-untrusted spec is logged (`outcome: untrusted`) and not executed. Green: exit 0 and no
+untrusted spec is logged (`outcome: untrusted`) and not executed. A harness or CI job
+that stages a fresh workspace vouches for it with `CONVOY_TRUSTED_ROOTS` (path-separated
+roots) on the process that launches Claude Code. Green: exit 0 and no
 output, nothing enters
 the orchestrator's context. Blocking red: exit 2 with the repair brief on stderr, which
 Claude Code shows to the orchestrator as feedback on the completed dispatch — the cue

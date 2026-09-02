@@ -22,6 +22,7 @@ the same conditions with pre-flight problems and author-declared advisories, whi
 standalone invocation does not have.
 """
 
+import os
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -65,6 +66,9 @@ ORACLES_ENV = 'CONVOY_ORACLES'
 HOME_ENV = 'CONVOY_HOME'
 # The projects whose ``.convoy/gate.toml`` the hook may execute on this machine.
 TRUST_FILE = 'hook-trust.toml'
+# Roots the process that launched Claude Code vouches for (``os.pathsep``-separated) —
+# a harness or CI job staging a fresh workspace per run has no trust list to edit.
+TRUSTED_ROOTS_ENV = 'CONVOY_TRUSTED_ROOTS'
 
 
 class GateSpecNotFoundError(SpecError):
@@ -158,8 +162,17 @@ def trusted_projects(env: Mapping[str, str]) -> tuple[Path, ...]:
 
 
 def is_trusted(root: Path, env: Mapping[str, str]) -> bool:
-    """Whether *root* (resolved) is on this machine's hook trust list."""
+    """Whether *root* (resolved) is on the trust list, or vouched for by the launching process.
+
+    ``CONVOY_TRUSTED_ROOTS`` in *env* names roots the process that launched Claude Code
+    vouches for — set by a harness or a CI job that stages a workspace it created and
+    cannot have listed in advance. Setting a variable on the launcher is an operator act;
+    a cloned repository cannot set it for itself.
+    """
     resolved = Path(root).resolve()
+    vouched = env.get(TRUSTED_ROOTS_ENV, '')
+    if any(Path(item).resolve() == resolved for item in vouched.split(os.pathsep) if item):
+        return True
     return any(item.resolve() == resolved for item in trusted_projects(env))
 
 

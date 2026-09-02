@@ -27,18 +27,27 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   project spec is the per-project switch the coming hook keys on. Over the MCP protocol
   the tool's parameters are keyword-addressed, so the reorder that makes `series_file`
   optional (`workspace` now first) changes no caller.
-- `convoy hook` and the plugin-shipped `PostToolUse` hook **(consumer-affecting)**.
-  Installing the plugin now registers `hooks/hooks.json`: after every `Agent` (or
-  `Task`) dispatch, Claude Code runs `convoy hook` with the event JSON on stdin. The
-  hook discovers the project spec the way `convoy gate` does and does nothing where
-  none exists — the spec is the per-project switch, so the plugin arms nothing until a
-  project opts in. Green: exit 0, no output, nothing in the orchestrator's context.
-  Blocking red: exit 2 with the repair brief on stderr, which Claude Code shows to the
-  orchestrator as feedback on the completed dispatch — its cue to dispatch a fix
-  subagent, whose return re-fires the hook, so the fix loop closes without the
-  orchestrator running or reading a gate. A gate that cannot run is exit 2 with a
-  one-line reason, never a silent green. `[convoy-phase: <tag>]` in the subagent's
-  brief scopes the gate; a dispatch that did not complete is recorded, not gated. Each
+- `convoy hook` and the plugin-shipped hooks **(consumer-affecting)**. Installing the
+  plugin now registers `hooks/hooks.json`, which runs `convoy hook` with the event JSON
+  on stdin on two events. `SubagentStop` is the judge: when a subagent tries to finish,
+  the project gate runs in the session's tree; a blocking red is exit 2 with the repair
+  brief on stderr, which Claude Code hands to the subagent as the reason it may not
+  stop yet — the implementer repairs its own work, the same shape as a governed run's
+  fix spawn — once; on the retry (`stop_hook_active`) a residual red is recorded and
+  the subagent may stop. A subagent whose transcript shows no mutating tool use is not
+  gated. `PostToolUse` on `Agent` (or `Task`) is the messenger for synchronous
+  dispatch: when the dispatch returns completed, the hook reuses the judge's verdict
+  for that subagent from the log (or runs the gate when there is none) and on a
+  residual red exits 2 with the brief, which Claude Code shows to the orchestrator as
+  feedback on the completed tool call — its cue to dispatch a fix subagent. An
+  asynchronous dispatch (`async_launched`, the Agent tool's default when
+  `run_in_background` is unset — observed, not documented) is recorded, not gated, at
+  the tool call; its subagent is still judged at its stop. The hook discovers the
+  project spec the way `convoy gate` does and does nothing where none exists — the spec
+  is the per-project switch, so the plugin arms nothing until a project opts in. Green:
+  exit 0, no output, nothing in any model's context. A gate that cannot run is exit 2
+  with a one-line reason, never a silent green. `[convoy-phase: <tag>]` in the
+  subagent's brief scopes the gate on both legs. Each
   firing appends one JSON line to `.convoy/hook.log` — verdict, phases, counts, the
   subagent's id and dated model, the gate's wall-clock, `convoy_version` — the
   attestation an experiment counts from. Exit codes are the hook protocol's (0, 2),
@@ -50,7 +59,9 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   repository's gate file must not run commands on dispatch until the operator says so
   (a new guardrail). An explicit `convoy gate` on an untrusted project still runs, and
   says on stderr that the hook is not armed there. `CONVOY_HOME` overrides `~/.convoy`
-  for the trust list and the default oracles home.
+  for the trust list and the default oracles home; `CONVOY_TRUSTED_ROOTS` (path-separated
+  roots) lets the process that launches Claude Code — a harness, a CI job staging a
+  fresh workspace — vouch for roots it cannot have listed in advance.
   The captured Claude Code 2.1.258 payloads are committed as test fixtures, so the
   field names the hook reads are the protocol as sent, not as read.
 - `convoy gate --init [--independent NAME]` **(consumer-affecting)**: scaffold the

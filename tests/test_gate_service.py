@@ -7,6 +7,7 @@ selection. Commands run for real against ``tmp_path`` under ``sys.executable``,
 the same way the gate runner's own tests do.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -425,3 +426,19 @@ def test_a_malformed_trust_list_is_a_spec_error(tmp_path: Path) -> None:
         trusted_projects(env)
     with pytest.raises(SpecError):
         trust_project(tmp_path / 'proj', env)
+
+
+def test_the_launching_process_can_vouch_for_roots(tmp_path: Path) -> None:
+    home = tmp_path / 'home'
+    project = tmp_path / 'staged'
+    project.mkdir()
+    other = tmp_path / 'other'
+    other.mkdir()
+    env = {
+        'CONVOY_HOME': str(home),
+        'CONVOY_TRUSTED_ROOTS': os.pathsep.join([str(other), str(project / '..' / 'staged')]),
+    }
+    assert is_trusted(project, env) is True
+    assert is_trusted(other, env) is True
+    assert is_trusted(tmp_path / 'else', env) is False
+    assert trusted_projects(env) == ()
