@@ -1799,3 +1799,102 @@ def test_gate_narrates_each_check_to_stderr(tmp_path: Path) -> None:
     assert 'ok' in result.stderr
     assert 'bad' in result.stderr
     assert 'gate-red-marker' in result.stderr
+
+
+# --- gate: project spec discovery and --brief ---------------------------------------------
+
+
+def _project_spec(root: Path, *check_lines: str) -> Path:
+    (root / '.convoy').mkdir(parents=True, exist_ok=True)
+    spec = root / '.convoy' / 'gate.toml'
+    spec.write_text(_gate_toml(*check_lines), encoding='utf-8')
+    return spec
+
+
+def test_gate_without_a_series_argument_discovers_the_project_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    project = tmp_path / 'proj'
+    _project_spec(project, _gate_check('ok', _GATE_OK))
+    result = runner.invoke(cli.app, ['gate', '--workspace', str(project)])
+    assert result.exit_code == EXIT_OK
+    assert 'completed' in result.stdout
+
+
+def test_gate_discovery_starts_from_the_workspace_not_the_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    project = tmp_path / 'proj'
+    _project_spec(project, _gate_check('bad', _GATE_RED))
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    result = runner.invoke(cli.app, ['gate', '--workspace', str(project)])
+    assert result.exit_code == EXIT_BLOCKED
+
+
+def test_gate_discovery_honours_claude_project_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / 'proj'
+    _project_spec(project, _gate_check('ok', _GATE_OK))
+    monkeypatch.setenv('CLAUDE_PROJECT_DIR', str(project))
+    workspace = tmp_path / 'tree'
+    workspace.mkdir()
+    result = runner.invoke(cli.app, ['gate', '--workspace', str(workspace)])
+    assert result.exit_code == EXIT_OK
+
+
+def test_gate_without_a_spec_anywhere_is_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    empty = tmp_path / 'empty'
+    empty.mkdir()
+    result = runner.invoke(cli.app, ['gate', '--workspace', str(empty), '--json'])
+    assert result.exit_code == EXIT_USAGE
+    envelope = json.loads(result.stdout)
+    assert envelope['outcome'] == 'usage'
+    assert envelope['error_kind'] == 'spec'
+    assert 'gate.toml' in envelope['error']
+
+
+def test_gate_project_spec_expands_the_oracles_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    oracles = tmp_path / 'oracles'
+    oracles.mkdir()
+    (oracles / 'probe.py').write_text('raise SystemExit(0)', encoding='utf-8')
+    monkeypatch.setenv('CONVOY_ORACLES', str(oracles))
+    project = tmp_path / 'proj'
+    run = f'"{sys.executable}" "${{CONVOY_ORACLES}}/probe.py"'
+    _project_spec(project, _gate_check('probe', run))
+    result = runner.invoke(cli.app, ['gate', '--workspace', str(project)])
+    assert result.exit_code == EXIT_OK, result.stderr
+
+
+def test_gate_brief_prints_the_compact_envelope(tmp_path: Path) -> None:
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(
+        _gate_toml(_gate_check('ok', _GATE_OK), _gate_check('bad', _GATE_RED)),
+        encoding='utf-8',
+    )
+    result = runner.invoke(
+        cli.app, ['gate', str(series_file), '--workspace', str(tmp_path), '--brief']
+    )
+    assert result.exit_code == EXIT_BLOCKED
+    payload = json.loads(result.stdout)
+    assert set(payload) == {'ok', 'outcome', 'repair_brief', 'convoy_version'}
+    assert payload['outcome'] == 'blocked'
+    assert 'bad' in payload['repair_brief']
+
+
+def test_gate_brief_usage_paths_still_emit_one_object(tmp_path: Path) -> None:
+    missing = tmp_path / 'missing.toml'
+    result = runner.invoke(cli.app, ['gate', str(missing), '--workspace', str(tmp_path), '--brief'])
+    assert result.exit_code == EXIT_USAGE
+    envelope = json.loads(result.stdout)
+    assert envelope['outcome'] == 'usage'

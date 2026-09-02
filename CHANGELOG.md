@@ -15,6 +15,22 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Added
 
+- `convoy gate` and `convoy_gate` discover the project gate spec
+  **(consumer-affecting)**. The series argument is optional on both surfaces: omitted,
+  `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` is tried first, then `.convoy/gate.toml` in
+  the workspace and each of its parents, and nothing found is a usage failure
+  (`error_kind: spec`) naming where it looked. A project spec — one living at
+  `.convoy/gate.toml` — loads with `CONVOY_ORACLES` defaulted to
+  `~/.convoy/oracles/<project dir name>` when the caller has not set it, so the
+  `${CONVOY_ORACLES}/...` references a scaffold writes resolve on a machine that never
+  exported the variable; an explicit series file gets no default. The presence of the
+  project spec is the per-project switch the coming hook keys on. Over the MCP protocol
+  the tool's parameters are keyword-addressed, so the reorder that makes `series_file`
+  optional (`workspace` now first) changes no caller.
+- `convoy gate --brief` and `convoy_gate(brief=true)` **(consumer-affecting)**: the
+  compact envelope `{ok, outcome, repair_brief, convoy_version}` and nothing else, for
+  a caller that must read the verdict inside a model turn — the four fields a repair
+  decision needs, without a per-check list to skim past. Usage paths are unchanged.
 - `[[checks]]` `run` and `asset` expand `${NAME}` from the environment at load
   **(consumer-affecting)**. Only the braced form expands — `$NAME` and `%NAME%` pass
   through untouched, so a command keeps its own shell syntax on either platform — and an

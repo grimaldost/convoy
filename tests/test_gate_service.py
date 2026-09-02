@@ -23,7 +23,16 @@ from convoy.core.gate import (
 from convoy.core.spec import Check, GateSpec
 from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK
 from convoy.interface.gate_runner import SubprocessGateRunner
-from convoy.interface.gate_service import gate_envelope, gate_usage_envelope, run_gate
+from convoy.interface.gate_service import (
+    GateSpecNotFoundError,
+    find_gate_spec,
+    gate_brief_envelope,
+    gate_envelope,
+    gate_spec_env,
+    gate_usage_envelope,
+    resolve_gate_spec,
+    run_gate,
+)
 
 _PY = sys.executable
 
@@ -285,3 +294,93 @@ def test_the_default_timeout_matches_the_runner_signature() -> None:
 
     default = inspect.signature(SubprocessGateRunner.__init__).parameters['timeout_seconds']
     assert default.default == float(DEFAULT_GATE_TIMEOUT_SECONDS)
+
+
+# --- project spec discovery, the oracles default, and the brief envelope ---------------
+
+
+def _project_with_spec(root: Path) -> Path:
+    (root / '.convoy').mkdir(parents=True)
+    spec = root / '.convoy' / 'gate.toml'
+    spec.write_text('', encoding='utf-8')
+    return spec
+
+
+def test_find_gate_spec_prefers_the_project_dir_from_the_environment(tmp_path: Path) -> None:
+    project_spec = _project_with_spec(tmp_path / 'project')
+    _project_with_spec(tmp_path / 'elsewhere')
+    env = {'CLAUDE_PROJECT_DIR': str(tmp_path / 'project')}
+    assert find_gate_spec(tmp_path / 'elsewhere', env) == project_spec
+
+
+def test_find_gate_spec_walks_up_from_the_start_directory(tmp_path: Path) -> None:
+    spec = _project_with_spec(tmp_path / 'repo')
+    nested = tmp_path / 'repo' / 'src' / 'pkg'
+    nested.mkdir(parents=True)
+    assert find_gate_spec(nested, {}) == spec
+
+
+def test_find_gate_spec_falls_through_a_project_dir_without_a_spec(tmp_path: Path) -> None:
+    spec = _project_with_spec(tmp_path / 'repo')
+    (tmp_path / 'bare').mkdir()
+    env = {'CLAUDE_PROJECT_DIR': str(tmp_path / 'bare')}
+    assert find_gate_spec(tmp_path / 'repo', env) == spec
+
+
+def test_find_gate_spec_returns_none_when_nothing_is_found(tmp_path: Path) -> None:
+    (tmp_path / 'empty').mkdir()
+    assert find_gate_spec(tmp_path / 'empty', {}) is None
+
+
+def test_resolve_gate_spec_keeps_an_explicit_series_file(tmp_path: Path) -> None:
+    _project_with_spec(tmp_path)
+    explicit = tmp_path / 'series.toml'
+    assert resolve_gate_spec(explicit, tmp_path, {}) == explicit
+
+
+def test_resolve_gate_spec_refuses_when_nothing_is_found(tmp_path: Path) -> None:
+    (tmp_path / 'empty').mkdir()
+    with pytest.raises(GateSpecNotFoundError) as excinfo:
+        resolve_gate_spec(None, tmp_path / 'empty', {})
+    message = str(excinfo.value)
+    assert 'gate.toml' in message
+    assert 'CLAUDE_PROJECT_DIR' in message
+
+
+def test_gate_spec_env_defaults_the_oracles_dir_for_a_project_spec(tmp_path: Path) -> None:
+    spec = tmp_path / 'proj' / '.convoy' / 'gate.toml'
+    env = gate_spec_env(spec, {'PATH': 'x'}, home=tmp_path / 'home')
+    assert env['CONVOY_ORACLES'] == str(tmp_path / 'home' / '.convoy' / 'oracles' / 'proj')
+    assert env['PATH'] == 'x'
+
+
+def test_gate_spec_env_keeps_an_explicit_oracles_dir(tmp_path: Path) -> None:
+    spec = tmp_path / 'proj' / '.convoy' / 'gate.toml'
+    env = gate_spec_env(spec, {'CONVOY_ORACLES': '/mine'}, home=tmp_path)
+    assert env['CONVOY_ORACLES'] == '/mine'
+
+
+def test_gate_spec_env_injects_no_default_for_an_explicit_series_file(tmp_path: Path) -> None:
+    env = gate_spec_env(tmp_path / 'proj' / 'series.toml', {}, home=tmp_path)
+    assert 'CONVOY_ORACLES' not in env
+
+
+def test_gate_brief_envelope_carries_exactly_four_fields(tmp_path: Path) -> None:
+    outcome = run_gate(_spec(_check('ok', _OK)), tmp_path)
+    assert gate_brief_envelope(outcome) == {
+        'ok': True,
+        'outcome': 'completed',
+        'repair_brief': '',
+        'convoy_version': __version__,
+    }
+
+
+def test_gate_brief_envelope_agrees_with_the_full_envelope_on_red(tmp_path: Path) -> None:
+    spec = _spec(_check('bad', _RED))
+    outcome = run_gate(spec, tmp_path)
+    full = gate_envelope(spec, tmp_path, outcome)
+    brief = gate_brief_envelope(outcome)
+    assert brief['ok'] is False
+    assert brief['outcome'] == 'blocked'
+    assert brief['repair_brief'] == full['repair_brief']
+    assert 'bad' in brief['repair_brief']

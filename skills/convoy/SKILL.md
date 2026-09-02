@@ -275,7 +275,12 @@ non-blocking red advises without blocking — 1 blocking red), and `convoy_versi
 engine that produced the envelope). A refused invocation
 returns the usage envelope instead: `{ok: false, outcome: "usage", error_kind, error,
 exit_code: 3, series_id?}`. The CLI twin `convoy gate --json` prints these same
-objects, usage paths included.
+objects, usage paths included. `brief=true` (CLI `--brief`) returns only `{ok, outcome,
+repair_brief, convoy_version}` — for reading the verdict inside a model turn with nothing
+else in it. `series_file` is optional: omitted, the project spec is used —
+`$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml` in the workspace and its
+parents — and a project spec loads with `CONVOY_ORACLES` defaulted to
+`~/.convoy/oracles/<project dir name>`; none found is a usage result naming where it looked.
 
 ## The gate without the run
 
@@ -291,7 +296,9 @@ branch, a diff another tool produced. The implementer's own "done" is not a verd
 judge and defendant must differ — and this tool is the judge without buying the whole
 courtroom. The `[[checks]]` semantics are identical to a run's, so a series file
 authored for `convoy_run` gates the same way standalone, and a minimal file carrying
-only `[series] id` and `[[checks]]` is enough when no run is ever intended. `convoy
+only `[series] id` and `[[checks]]` is enough when no run is ever intended — a project
+keeps that file at `.convoy/gate.toml`, where both surfaces find it without an argument.
+`convoy
 validate` accepts such a file too: it applies the refusals that stay decidable without a
 run — the selection must contain a blocking check, and every blocking independent check
 must back its isolation — and prints `ok (gate-only)`, which is how you learn a gate file
