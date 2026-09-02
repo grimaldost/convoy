@@ -9,6 +9,8 @@ rejected. Anything touching the filesystem (do ``[paths]`` exist, is an independ
 check's asset out-of-tree) lives elsewhere.
 """
 
+import os
+import re
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -403,13 +405,42 @@ def _parse_paths(data: Mapping[str, Any]) -> Paths:
     )
 
 
-def _parse_check(data: Mapping[str, Any], index: int) -> Check:
+_ENV_REF = re.compile('[$][{]([A-Za-z_][A-Za-z0-9_]*)[}]')
+
+
+def expand_env(value: str, env: Mapping[str, str], where: str, key: str) -> str:
+    """Expand ``${NAME}`` references in a check's ``run`` or ``asset`` from *env*.
+
+    Only the braced form expands; ``$NAME`` and ``%NAME%`` pass through untouched, so
+    a command keeps its own shell syntax on either platform. The convention this serves
+    is ``${CONVOY_ORACLES}``: a project's held-out oracles live out-of-tree under that
+    directory, and a check names them without baking one machine's path into the spec.
+    An unset name is a ``SpecError`` naming the field and the variable — a check whose
+    oracle path cannot resolve here is not runnable here, and saying so at load beats a
+    shell that expands the reference to nothing.
+    """
+
+    def _resolve(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in env:
+            raise SpecError(
+                f'{where}: {key!r} references ${{{name}}}, which is not set in the environment'
+            )
+        return env[name]
+
+    return _ENV_REF.sub(_resolve, value)
+
+
+def _parse_check(data: Mapping[str, Any], index: int, env: Mapping[str, str]) -> Check:
     where = f'[[checks]][{index}]'
     blocking = _require_bool(data, 'blocking', where)
     independent = _require_bool(data, 'independent', where) if 'independent' in data else False
     # A blocking independent check is allowed: its independence is enforced
     # fail-closed at gate time by asset isolation, not forbidden here.
     asset = _optional_str(data, 'asset', where)
+    if asset is not None:
+        asset = expand_env(asset, env, where, 'asset')
+    # ``repair_hint`` is prose shown to a model; a ``${...}`` in it stays literal.
     repair_hint = _optional_str(data, 'repair_hint', where)
     phases = _optional_str_tuple(data, 'phases', where)
     for phase in phases:
@@ -419,7 +450,7 @@ def _parse_check(data: Mapping[str, Any], index: int) -> Check:
             raise SpecError(f'{where}: {"phases"!r} entries must be non-empty')
     return Check(
         name=_require_str(data, 'name', where),
-        run=_require_str(data, 'run', where),
+        run=expand_env(_require_str(data, 'run', where), env, where, 'run'),
         blocking=blocking,
         independent=independent,
         asset='' if asset is None else asset,
@@ -493,7 +524,7 @@ def _parse_spec_pin(data: Mapping[str, Any]) -> tuple[str, str]:
 # --- public API --------------------------------------------------------------
 
 
-def load_series(text: str) -> Series:
+def load_series(text: str, *, env: Mapping[str, str] | None = None) -> Series:
     """Parse and validate TOML *text* into a ``Series``.
 
     Raises ``SpecError`` on any invalid input, including malformed TOML.
@@ -510,7 +541,8 @@ def load_series(text: str) -> Series:
     review = _parse_review(_require_table(data, 'review', 'series.toml'))
 
     check_tables = _require_table_array(data, 'checks', 'series.toml')
-    checks = tuple(_parse_check(table, i) for i, table in enumerate(check_tables))
+    resolved_env = os.environ if env is None else env
+    checks = tuple(_parse_check(table, i, resolved_env) for i, table in enumerate(check_tables))
 
     pr_tables = _require_table_array(data, 'prs', 'series.toml')
     prs = tuple(_parse_pr(table, i) for i, table in enumerate(pr_tables))
@@ -539,7 +571,7 @@ def load_series(text: str) -> Series:
     )
 
 
-def load_gate_spec(text: str) -> GateSpec:
+def load_gate_spec(text: str, *, env: Mapping[str, str] | None = None) -> GateSpec:
     """Parse TOML *text* into the subset a gate-only invocation needs.
 
     Accepts a full series.toml unchanged — ``[[checks]]`` and ``[governance]
@@ -563,7 +595,8 @@ def load_gate_spec(text: str) -> GateSpec:
     check_tables = _require_table_array(data, 'checks', 'series.toml')
     if not check_tables:
         raise SpecError('series.toml: [[checks]] must declare at least one check')
-    checks = tuple(_parse_check(table, i) for i, table in enumerate(check_tables))
+    resolved_env = os.environ if env is None else env
+    checks = tuple(_parse_check(table, i, resolved_env) for i, table in enumerate(check_tables))
     seen: set[str] = set()
     for check in checks:
         if check.name in seen:

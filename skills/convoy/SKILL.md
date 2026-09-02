@@ -407,7 +407,10 @@ least one entry.
   missing `asset` fails closed (a synthetic red; the check does not run). `independent`
   changes only the repair path, never whether a red blocks the merge. `asset` is
   meaningful **only** for a blocking independent check (it is the file whose isolation is
-  verified); it is ignored for any other check.
+  verified); it is ignored for any other check. `run` and `asset` expand `${NAME}` from
+  the environment at load (only the braced form; an unset name refuses the spec), so a
+  check can name its oracle as `${CONVOY_ORACLES}/probe.py` and keep the spec portable —
+  `CONVOY_ORACLES` is the conventional out-of-tree home for a project's held-out oracles.
   **When it is worth setting.** An independent check adds correctness only when the
   implementing agent cannot see the acceptance criteria it is judged against. If your
   prompts hand the agent the tests, it runs them and self-corrects, and the independent

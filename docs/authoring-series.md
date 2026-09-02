@@ -61,7 +61,9 @@ What the gate framework adds over running the same commands by hand:
   out-of-tree `asset` is refused — not skipped, refused — when its isolation cannot
   be backed. An implementer-unreachable oracle is the one gate a self-serving
   implementation cannot quietly satisfy, and the framework makes wiring one safe
-  rather than an act of discipline.
+  rather than an act of discipline. Name the oracle as `${CONVOY_ORACLES}/<file>` —
+  `run` and `asset` expand `${NAME}` at load — and keep the oracles under that
+  directory, outside every checkout the implementer can reach.
 - **A machine verdict.** One envelope with per-check structured results, an exit
   code an orchestrator can branch on, and a failure `detail` (plus the check's
   declared `repair_hint`) written to re-brief a fix attempt.
