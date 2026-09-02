@@ -6,6 +6,7 @@ plugin is needed.
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -1047,6 +1048,9 @@ def test_convoy_gate_discovers_the_project_spec_from_the_workspace(
     monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
     (tmp_path / '.convoy').mkdir()
     (tmp_path / '.convoy' / 'gate.toml').write_text(_gate_only_toml(), encoding='utf-8')
+    from convoy.interface.gate_service import trust_project
+
+    trust_project(tmp_path, dict(os.environ))
     result = asyncio.run(srv.convoy_gate(workspace=str(tmp_path)))
     assert result['ok'] is True
     assert result['series_id'] == 'mcp-gate'
@@ -1071,3 +1075,19 @@ def test_convoy_gate_brief_returns_the_compact_envelope(tmp_path: Path) -> None:
     assert set(result) == {'ok', 'outcome', 'repair_brief', 'convoy_version'}
     assert result['outcome'] == 'blocked'
     assert 'second' in result['repair_brief']
+
+
+def test_convoy_gate_discovery_requires_the_machine_to_trust_the_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    (tmp_path / '.convoy').mkdir()
+    (tmp_path / '.convoy' / 'gate.toml').write_text(_gate_only_toml(), encoding='utf-8')
+    result = asyncio.run(srv.convoy_gate(workspace=str(tmp_path)))
+    assert result['outcome'] == 'usage'
+    assert 'untrusted' in result['error']
+    from convoy.interface.gate_service import trust_project
+
+    trust_project(tmp_path, dict(os.environ))
+    result = asyncio.run(srv.convoy_gate(workspace=str(tmp_path)))
+    assert result['ok'] is True

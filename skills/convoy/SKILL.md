@@ -277,7 +277,8 @@ returns the usage envelope instead: `{ok: false, outcome: "usage", error_kind, e
 exit_code: 3, series_id?}`. The CLI twin `convoy gate --json` prints these same
 objects, usage paths included. `brief=true` (CLI `--brief`) returns only `{ok, outcome,
 repair_brief, convoy_version}` — for reading the verdict inside a model turn with nothing
-else in it. `series_file` is optional: omitted, the project spec is used —
+else in it. `series_file` is optional: omitted, the project spec is used and must be
+trusted on this machine (`convoy gate --trust`), the same standard the hook holds —
 `$CONVOY_GATE_SPEC` when the launching process set it (a missing file is refused, never
 walked past), then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml` in
 the workspace and its parents — and a project spec loads with `CONVOY_ORACLES` defaulted to
@@ -318,55 +319,65 @@ an independent check — a held-out oracle the implementer cannot reach — whic
 --independent <name>` scaffolds as a placeholder under `CONVOY_ORACLES` (default
 `~/.convoy/oracles/<project dir name>/`), declared through `${CONVOY_ORACLES}` so the
 spec stays portable; the placeholder is red until written. Write it before dispatching
-any implementer: the judge is appointed before the defendant.
+any implementer: the judge is appointed before the defendant. Only `${CONVOY_*}`
+names expand, and a value carrying shell syntax is refused at load.
 
 **The hook: the gate the orchestrator never has to think about.** Installing the plugin
 registers `convoy hook` on two events. `SubagentStop` is the judge: when a subagent
-tries to finish, the gate runs in the session's tree; a blocking red exits 2 with the
-repair brief on stderr, which Claude Code hands to the *subagent* as the reason it may
-not stop yet — the implementer repairs its own work, the same shape as a governed
+tries to finish, the gate runs in the tree the spec governs; a blocking red exits 2 with
+the repair brief on stderr, which Claude Code hands to the *subagent* as the reason it
+may not stop yet — the implementer repairs its own work, the same shape as a governed
 run's fix spawn — once; on the retry a residual red is recorded and the subagent may
-stop. A subagent whose transcript shows no mutating tool use (a reader, a reviewer) is
-not gated. `PostToolUse` on `Agent` (and its older name `Task`) is the messenger, for
-synchronous dispatch: when the dispatch returns completed, the hook reuses the judge's
-verdict for that subagent from `.convoy/hook.log` (or runs the gate when there is none)
-and on a residual red exits 2 with the brief, which Claude Code shows to the
-*orchestrator* as feedback on the completed tool call — its cue to dispatch a fix
-subagent. An asynchronous dispatch (the Agent tool's default when `run_in_background`
-is unset) returns before the subagent has done anything and is recorded, not gated,
-there; its subagent is still judged at its stop, and a residual red after that repair
-round shows in the log and in the subagent's own final message, not as orchestrator
-feedback. The hook finds the project spec the way
-`convoy gate` does — `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml`
-from the event's `cwd` upward — and does nothing where none exists: the presence of
-the spec is the per-project switch, so installing the plugin arms nothing until a
-project opts in with `convoy gate --init`. Gate cost: the judge runs the checks once per
-mutating subagent stop (twice when it blocks); the messenger reuses that verdict. The
-operator's trust is the per-machine
-switch: the hook executes a project's checks only where the project root is on
-`CONVOY_HOME/hook-trust.toml` (default `~/.convoy/`), which `convoy gate --init` writes
-for the project it scaffolds and `convoy gate --trust` writes for an existing spec — a
-cloned repository's gate file must not run commands on dispatch until you say so; an
-untrusted spec is logged (`outcome: untrusted`) and not executed. A harness or CI job
-that stages a fresh workspace vouches for it with `CONVOY_TRUSTED_ROOTS` (path-separated
-roots) on the process that launches Claude Code. Green: exit 0 and no
-output, nothing enters
-the orchestrator's context. Blocking red: exit 2 with the repair brief on stderr, which
-Claude Code shows to the orchestrator as feedback on the completed dispatch — the cue
-to dispatch a fix subagent, whose return re-fires the hook, so the loop closes without
-the orchestrator ever running or reading a gate itself. A gate that cannot run
-(invalid spec, refused invocation, dead workspace) is exit 2 with a one-line reason,
-never a silent green. Put `[convoy-phase: <tag>]` in a subagent's brief to scope the
-gate to that tag's checks (the selection `convoy gate --phase <tag>` makes; a tag no
-check declares is reported, not narrowed). A dispatch that did not complete — a
-background one, a failed one — is recorded and not gated. Every firing appends one
-JSON line to `.convoy/hook.log` (verdict, phases, counts, the subagent's id and dated
-model, the gate's wall-clock, `convoy_version`), so an experiment counts firings from
-the log. Exit codes are the hook protocol's (0 silent, 2 feedback), not convoy's. The
-hook's timeout is 1800 s; each check is bounded by the spec's `timeout_seconds`. Hooks
-do not run under `claude --bare`, and convoy's own spawns run under config isolation,
-so the hook never fires inside a governed run. A project without the plugin wires the
-same command in its `.claude/settings.json`.
+stop, and so is a gate that could not run. A subagent whose transcript shows only
+read-only tool use (Read, Grep, Glob, web fetches) is not gated; any tool the hook does
+not know — an MCP writer, a nested dispatch — counts as a write. `PostToolUse` on
+`Agent` (and its older name `Task`) is the messenger, for **synchronous** dispatch only:
+when the dispatch returns completed, the hook reuses the judge's verdict for that
+subagent from `.convoy/hook.log` (same session, same agent, within the hour; a read-only
+verdict is reused as silence) and on a residual red exits 2 with the brief, which Claude
+Code shows to the *orchestrator* as feedback on the completed tool call — its cue to
+dispatch a fix subagent. The Agent tool dispatches asynchronously when
+`run_in_background` is unset (observed, not documented): the tool returns
+`async_launched` before the subagent has done anything, the messenger records it and
+gates nothing, and the orchestrator hears of a residual red only through the
+subagent's own final message and the log. **An orchestrator that wants the feedback
+dispatches with `run_in_background: false`.**
+
+Three switches, all before anything executes. The project spec is the per-project
+switch — `$CONVOY_GATE_SPEC`, then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then
+`.convoy/gate.toml` from the event's `cwd` upward — and with none found the hook exits 0
+silently, so installing the plugin arms nothing until a project opts in. The operator's
+trust is the per-machine switch: `convoy gate --trust` records the project root **and
+the spec's hash** in `CONVOY_HOME/hook-trust.toml` (default `~/.convoy/`); an untrusted
+project is recorded in the hook's own process and nothing is written into it, and a spec
+that changed since it was trusted is refused loudly (exit 2) — the implementer edits the
+tree the spec lives in, and a gate it can rewrite is no gate; re-run `--trust` to accept
+the change. `convoy gate --init` does not trust the project it scaffolds: the scaffold is
+red until edited, so arming is a second, deliberate act. A harness that stages a fresh
+workspace vouches for it with `CONVOY_TRUSTED_ROOTS` (path-separated roots) on the
+process that launches Claude Code, carrying no pin because its spec lives outside the
+tree; the claim is only as strong as that environment, which a project's own settings
+can also set — that is Claude Code's trust model, not convoy's. A workspace a `convoy
+run` is driving (its lock exists) is refused loudly too.
+
+Every firing appends one JSON line to `.convoy/hook.log` — the leg (`judge` /
+`messenger`), the event, the verdict and the hook's own exit code, the subagent's id,
+type and dated model (read from its transcript on the judge leg), the phases, the retry
+flag, per-check facts (`exit_code`, `timed_out`, `detail`), the gate's wall-clock, the
+spec's path and hash, the workspace — so an experiment counts firings from the log;
+count the judge's lines, not both legs. Put `[convoy-phase: <tag>]` in a subagent's
+brief to scope the gate to that tag's checks (a tag no check declares is reported, not
+narrowed). Exit codes are the hook protocol's (0 silent, 2 feedback), not convoy's. Gate
+cost: the judge runs the checks once per writing subagent stop (twice when it blocks);
+the messenger reuses that verdict and runs the gate itself only when no judge record
+exists for that agent and session, or the record is older than an hour. The hook's
+timeout is 1800 s; each check is bounded by the spec's `timeout_seconds`, and a gate
+whose checks together exceed the hook timeout is killed by Claude Code — the one path on
+which nothing is said, so keep the sum under the timeout. Plugin hooks live under the
+config directory, and convoy's own spawns run under config isolation, so the plugin's
+hooks never fire inside a governed run; a hook a project wires in its own
+`.claude/settings.json` survives isolation and would fire inside one — the lock
+refusal above is what keeps it from gating a driven tree.
 
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared
@@ -688,9 +699,10 @@ The boundaries are deliberate scope decisions, not gaps:
   failing-checks section, above, is the one exception).
 - **No consumer or stage hook mechanism inside a run.** There are no pre/post callbacks
   to register in a series; the deterministic `[[checks]]` gate is the only project code
-  a run executes around the spawns. (The plugin's `PostToolUse` hook is that same gate
-  on the *orchestrator's* side — it runs after a subagent dispatch in the operator's
-  session, never inside a scored spawn, which config isolation keeps hook-free.)
+  a run executes around the spawns. (The plugin's hooks — `SubagentStop` and
+  `PostToolUse` — are that same gate on the *orchestrator's* side: they run in the
+  operator's session, never inside a scored spawn, which config isolation keeps free of
+  plugin hooks.)
 - **Telemetry is economy plus gate outcomes** — tokens, turns, cost, duration, verdicts.
   It is not a reflection journal; there is no qualitative self-report channel.
 

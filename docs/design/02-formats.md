@@ -72,10 +72,14 @@ Per-PR governance follows four rules:
   is inert — accepted, round-tripped, and read by nothing. Pre-flight says so with an
   advisory naming the missing flag, rather than rejecting it: the field changes no
   behaviour, so the series is unusual rather than invalid.
-- **`run` and `asset` expand `${NAME}` from the environment at load.** Only the braced
-  form expands (`$NAME` and `%NAME%` pass through, so a command keeps its own shell
-  syntax on either platform); an unset name is a `SpecError` naming the field and the
-  variable, because a check whose path cannot resolve here is not runnable here. The
+- **`run` and `asset` expand `${CONVOY_*}` from the environment at load.** Only the
+  braced form of a `CONVOY_`-prefixed name expands (`$NAME` and `%NAME%` pass through,
+  so a command keeps its own shell syntax on either platform; any other `${NAME}` is
+  refused — a spec is not a channel for pulling arbitrary variables into a command); an
+  unset name is a `SpecError` naming the field and the variable, because a check whose
+  path cannot resolve here is not runnable here, and so is a value carrying shell
+  syntax (quotes, `$`, `;` and the like): the expansion is textual, into a string a
+  shell will read. The
   convention this serves is `${CONVOY_ORACLES}`: a project's held-out oracles live
   out-of-tree under that directory and a check names them without baking one machine's
   path into the spec. `repair_hint` is prose and is never expanded.

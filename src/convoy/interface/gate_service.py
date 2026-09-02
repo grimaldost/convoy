@@ -22,7 +22,9 @@ the same conditions with pre-flight problems and author-declared advisories, whi
 standalone invocation does not have.
 """
 
+import hashlib
 import os
+import re
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -160,14 +162,35 @@ def oracles_dir_for(root: Path, env: Mapping[str, str]) -> Path:
     explicit = env.get(ORACLES_ENV)
     if explicit:
         return Path(explicit)
-    return convoy_home(env) / 'oracles' / Path(root).resolve().name
+    # The directory name becomes part of a shell command through ``${CONVOY_ORACLES}``;
+    # anything a shell could read as syntax is replaced, never passed through.
+    safe = re.sub(r'[^A-Za-z0-9._-]', '_', Path(root).resolve().name) or 'project'
+    return convoy_home(env) / 'oracles' / safe
 
 
-def trusted_projects(env: Mapping[str, str]) -> tuple[Path, ...]:
-    """The project roots the hook may execute checks in, from the trust list; ``()`` when absent.
+@dataclass(frozen=True)
+class TrustEntry:
+    """One trusted project: its root and the hash of the gate spec the operator read."""
+
+    root: Path
+    spec_sha256: str = ''
+
+
+def spec_digest(spec_path: Path) -> str:
+    """sha256 of the spec file's bytes, ``''`` when it cannot be read."""
+    try:
+        return hashlib.sha256(Path(spec_path).read_bytes()).hexdigest()
+    except OSError:
+        return ''
+
+
+def trusted_projects(env: Mapping[str, str]) -> tuple[TrustEntry, ...]:
+    """The trust list — ``[[projects]]`` tables of ``root`` and ``spec_sha256``; ``()`` when absent.
 
     A malformed trust list is a ``SpecError`` — the hook treats it as trusting nothing,
-    and ``convoy gate --trust`` refuses to append to a file it cannot read.
+    and ``convoy gate --trust`` refuses to append to a file it cannot read. A relative
+    ``root`` is malformed too: it would trust whatever directory the hook happens to run
+    in.
     """
     path = convoy_home(env) / TRUST_FILE
     if not path.is_file():
@@ -176,38 +199,71 @@ def trusted_projects(env: Mapping[str, str]) -> tuple[Path, ...]:
         data = tomllib.loads(path.read_text(encoding='utf-8'))
     except tomllib.TOMLDecodeError as exc:
         raise SpecError(f'{path}: invalid TOML: {exc}') from exc
-    table = data.get('trust')
-    projects = table.get('projects') if isinstance(table, dict) else None
-    if not isinstance(projects, list) or not all(isinstance(item, str) for item in projects):
-        raise SpecError(f'{path}: [trust] projects must be a list of strings')
-    return tuple(Path(item) for item in projects)
+    projects = data.get('projects')
+    if not isinstance(projects, list):
+        raise SpecError(f'{path}: [[projects]] tables expected')
+    entries: list[TrustEntry] = []
+    for index, item in enumerate(projects):
+        root = item.get('root') if isinstance(item, dict) else None
+        digest = item.get('spec_sha256', '') if isinstance(item, dict) else None
+        if not isinstance(root, str) or not root or not isinstance(digest, str):
+            raise SpecError(f'{path}: [[projects]][{index}] needs a string root (and spec_sha256)')
+        if not Path(root).is_absolute():
+            raise SpecError(f'{path}: [[projects]][{index}] root must be absolute, got {root!r}')
+        entries.append(TrustEntry(root=Path(root), spec_sha256=digest))
+    return tuple(entries)
 
 
-def is_trusted(root: Path, env: Mapping[str, str]) -> bool:
-    """Whether *root* (resolved) is on the trust list, or vouched for by the launching process.
+def trust_status(root: Path, spec_path: Path | None, env: Mapping[str, str]) -> str:
+    """``trusted``, ``untrusted``, or ``changed`` (trusted, but the spec is not the one that was).
 
     ``CONVOY_TRUSTED_ROOTS`` in *env* names roots the process that launched Claude Code
-    vouches for — set by a harness or a CI job that stages a workspace it created and
-    cannot have listed in advance. Setting a variable on the launcher is an operator act;
-    a cloned repository cannot set it for itself.
+    vouches for — a harness or a CI job that stages a workspace it created and cannot
+    have listed in advance; those carry no spec pin, because the spec lives with the
+    harness, outside the tree. A root on the trust list is ``trusted`` while the spec's
+    hash matches the one recorded when the operator trusted it, and ``changed`` when it
+    does not: the implementer edits the tree the spec lives in, and a gate it can
+    rewrite is no gate. The claim is only as strong as the environment the hook runs in;
+    a project's own settings can set these variables, which is Claude Code's trust model
+    to enforce, not this function's.
     """
     resolved = Path(root).resolve()
     vouched = env.get(TRUSTED_ROOTS_ENV, '')
     if any(Path(item).resolve() == resolved for item in vouched.split(os.pathsep) if item):
-        return True
-    return any(item.resolve() == resolved for item in trusted_projects(env))
+        return 'trusted'
+    for entry in trusted_projects(env):
+        if entry.root.resolve() != resolved:
+            continue
+        if (
+            entry.spec_sha256
+            and spec_path is not None
+            and spec_digest(spec_path) != entry.spec_sha256
+        ):
+            return 'changed'
+        return 'trusted'
+    return 'untrusted'
 
 
-def trust_project(root: Path, env: Mapping[str, str]) -> Path:
-    """Add *root* to the trust list (idempotent) and return the list's path."""
+def is_trusted(root: Path, env: Mapping[str, str], spec_path: Path | None = None) -> bool:
+    """Whether the hook would execute *root*'s spec: :func:`trust_status` is ``trusted``."""
+    return trust_status(root, spec_path, env) == 'trusted'
+
+
+def trust_project(root: Path, env: Mapping[str, str], spec_path: Path | None = None) -> Path:
+    """Record *root* (and the hash of its spec) on the trust list; return the list's path.
+
+    With no *spec_path*, the project's own ``.convoy/gate.toml`` is pinned when it exists.
+    Re-trusting a root replaces its entry, which is how an operator accepts a changed spec.
+    """
     path = convoy_home(env) / TRUST_FILE
-    current = list(trusted_projects(env))
     resolved = Path(root).resolve()
-    if all(item.resolve() != resolved for item in current):
-        current.append(resolved)
+    pinned = spec_path if spec_path is not None else resolved / GATE_SPEC_RELPATH
+    digest = spec_digest(pinned) if Path(pinned).is_file() else ''
+    entries = [e for e in trusted_projects(env) if e.root.resolve() != resolved]
+    entries.append(TrustEntry(root=resolved, spec_sha256=digest))
     path.parent.mkdir(parents=True, exist_ok=True)
-    listed = [item.as_posix() for item in current]
-    path.write_text(tomli_w.dumps({'trust': {'projects': listed}}), encoding='utf-8')
+    listed = [{'root': e.root.as_posix(), 'spec_sha256': e.spec_sha256} for e in entries]
+    path.write_text(tomli_w.dumps({'projects': listed}), encoding='utf-8')
     return path
 
 

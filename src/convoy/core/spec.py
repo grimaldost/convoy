@@ -406,27 +406,43 @@ def _parse_paths(data: Mapping[str, Any]) -> Paths:
 
 
 _ENV_REF = re.compile('[$][{]([A-Za-z_][A-Za-z0-9_]*)[}]')
+# What an expanded value may not carry into a command a shell will read: quotes, the
+# shell's own expansion and control characters. A value is a path, not syntax.
+_SHELL_SYNTAX = re.compile('[\x00-\x1f"\'`$;&|<>]')
 
 
 def expand_env(value: str, env: Mapping[str, str], where: str, key: str) -> str:
-    """Expand ``${NAME}`` references in a check's ``run`` or ``asset`` from *env*.
+    """Expand ``${CONVOY_*}`` references in a check's ``run`` or ``asset`` from *env*.
 
-    Only the braced form expands; ``$NAME`` and ``%NAME%`` pass through untouched, so
-    a command keeps its own shell syntax on either platform. The convention this serves
-    is ``${CONVOY_ORACLES}``: a project's held-out oracles live out-of-tree under that
-    directory, and a check names them without baking one machine's path into the spec.
-    An unset name is a ``SpecError`` naming the field and the variable — a check whose
-    oracle path cannot resolve here is not runnable here, and saying so at load beats a
-    shell that expands the reference to nothing.
+    Only the braced form of a ``CONVOY_``-prefixed name expands; ``$NAME`` and ``%NAME%``
+    pass through untouched, so a command keeps its own shell syntax on either platform,
+    and any other ``${NAME}`` is refused rather than read from the environment at large —
+    a spec is not a channel for pulling arbitrary variables into a command. The
+    convention this serves is ``${CONVOY_ORACLES}``: a project's held-out oracles live
+    out-of-tree under that directory, and a check names them without baking one
+    machine's path into the spec. An unset name is a ``SpecError`` naming the field and
+    the variable, and so is a value carrying shell syntax (quotes, ``$``, ``;`` and the
+    like): the expansion is textual, into a string a shell will read, so the value must
+    be a path and nothing more.
     """
 
     def _resolve(match: re.Match[str]) -> str:
         name = match.group(1)
+        if not name.startswith('CONVOY_'):
+            raise SpecError(
+                f'{where}: {key!r} references ${{{name}}}; only CONVOY_* variables expand'
+            )
         if name not in env:
             raise SpecError(
                 f'{where}: {key!r} references ${{{name}}}, which is not set in the environment'
             )
-        return env[name]
+        resolved = env[name]
+        if _SHELL_SYNTAX.search(resolved):
+            raise SpecError(
+                f'{where}: {key!r}: ${{{name}}} carries shell syntax and cannot be expanded '
+                f'into a command'
+            )
+        return resolved
 
     return _ENV_REF.sub(_resolve, value)
 
@@ -645,8 +661,9 @@ def dump_gate_spec(spec: GateSpec) -> str:
     """Serialize a gate-only spec: ``[series] id``, ``[[checks]]``, and the timeout when set.
 
     ``[governance] timeout_seconds`` is written only when it differs from the default, so
-    a spec that never set it round-trips to the same minimal file. Round-trips:
-    ``load_gate_spec(dump_gate_spec(s)) == s``.
+    a spec that never set it round-trips to the same minimal file. A spec whose checks
+    were expanded at load dumps the expanded values, so the dump is a record of what ran,
+    not a copy of what was written.
     """
     data: dict[str, Any] = {'series': {'id': spec.id}}
     if spec.timeout_seconds != DEFAULT_GATE_TIMEOUT_SECONDS:

@@ -86,19 +86,26 @@ disabling it is an explicit, per-run flag (`--no-config-isolation` /
 
 ### The hook executes a project's checks only where the operator said so
 
-The plugin's `PostToolUse` hook runs a project's `.convoy/gate.toml` only when the
-project root is on this machine's trust list (`CONVOY_HOME/hook-trust.toml`, default
-`~/.convoy/`, written by `convoy gate --init` or `convoy gate --trust`) or named in
-`CONVOY_TRUSTED_ROOTS` by the process that launched Claude Code. A spec in an
-untrusted project is logged as `untrusted` and nothing in it is executed.
+The plugin's hooks (`SubagentStop`, `PostToolUse`) run a project's `.convoy/gate.toml`
+only when the project root is on this machine's trust list with the spec's hash
+(`CONVOY_HOME/hook-trust.toml`, default `~/.convoy/`, written by `convoy gate
+--trust`) or named in `CONVOY_TRUSTED_ROOTS` by the process that launched Claude
+Code. An untrusted project executes nothing and gets no file written into it; a spec
+that changed since it was trusted is refused loudly. `convoy_gate` with no explicit
+series file holds the discovered spec to the same standard.
 
-*Why:* the hook fires automatically on subagent dispatch; without the list, cloning a
-repository that carries a gate file would run arbitrary commands with no operator act
-between the clone and the execution. An explicit `convoy gate` is unaffected — the
-operator's command is the act.
+*Why:* the hooks fire automatically around subagent dispatch; without the list,
+cloning a repository that carries a gate file would run arbitrary commands with no
+operator act between the clone and the execution, and without the pin the implementer
+could rewrite the gate it is judged by. An explicit `convoy gate` is unaffected — the
+operator's command is the act. The claim is only as strong as the environment the
+hook runs in: a project's own `.claude/settings.json` can set `CONVOY_HOME`,
+`CONVOY_TRUSTED_ROOTS` or `CLAUDE_PROJECT_DIR`, which is Claude Code's project-trust
+model to enforce, not this guardrail's.
 
-*Enforced by:* `interface/hook.py` (`is_trusted` before any load or run) +
-`tests/test_hook.py` (an untrusted spec with a side-effecting check leaves no trace).
+*Enforced by:* `interface/hook.py` (`trust_status` before any load or run) +
+`tests/test_hook.py` (an untrusted spec with a side-effecting check leaves no trace and
+no log; a changed spec is refused).
 
 ### Telemetry is append-only and versioned
 

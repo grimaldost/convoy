@@ -31,12 +31,13 @@ from convoy.interface.gate_service import (
     gate_brief_envelope,
     gate_envelope,
     gate_root,
+    gate_spec_env,
     gate_usage_envelope,
-    is_trusted,
     load_gate_spec_file,
     resolve_gate_spec,
     run_gate,
     trust_project,
+    trust_status,
 )
 from convoy.interface.git import Git, GitError
 from convoy.interface.hook import run_hook
@@ -148,7 +149,9 @@ def _is_gate_shaped(text: str) -> bool:
     return not (_SERIES_ONLY_TABLES & data.keys())
 
 
-def _validate_gate_only_or_exit(text: str, workspace: Path | None, series_error: SpecError) -> None:
+def _validate_gate_only_or_exit(
+    text: str, workspace: Path | None, series_error: SpecError, series_file: Path | None = None
+) -> None:
     """Validate ``text`` as a gate-only file, or report the series failure it really is.
 
     Reached only when :func:`load_series` has already refused ``text``. The gate loader
@@ -172,7 +175,10 @@ def _validate_gate_only_or_exit(text: str, workspace: Path | None, series_error:
         typer.echo(str(series_error), err=True)
         raise typer.Exit(EXIT_USAGE)
     try:
-        spec = load_gate_spec(text)
+        # A project spec is entitled to the same environment `convoy gate` gives it,
+        # or validate would blame a missing table for an unset CONVOY_ORACLES.
+        env = gate_spec_env(series_file, os.environ) if series_file is not None else os.environ
+        spec = load_gate_spec(text, env=env)
     except SpecError as exc:
         typer.echo(str(series_error), err=True)
         raise typer.Exit(EXIT_USAGE) from exc
@@ -226,7 +232,7 @@ def validate(
     try:
         series = load_series(text)
     except SpecError as series_error:
-        _validate_gate_only_or_exit(text, workspace, series_error)
+        _validate_gate_only_or_exit(text, workspace, series_error, series_file)
         return
     report = preflight(series, _workspace_or_exit(workspace))
     if report.advisories:
@@ -375,29 +381,38 @@ def gate(
     if init:
         try:
             written = scaffold_gate(target, os.environ, independent=independent)
-            trust_path = trust_project(target, os.environ)
-        except (OSError, GateScaffoldError, SpecError) as exc:
+        except (OSError, GateScaffoldError) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(EXIT_USAGE) from exc
         for path in written:
             typer.echo(f'created {path}')
-        typer.echo(f'trusted {target.resolve()} for the hook ({trust_path})')
-        typer.echo(f'next: convoy gate --workspace {target}  (edit .convoy/gate.toml first)')
+        # Arming is a second, deliberate act: the scaffold is red until edited, and the
+        # hook must not start blocking every subagent with a brief nothing can satisfy.
+        typer.echo(
+            f'next: edit .convoy/gate.toml, then `convoy gate --trust --workspace {target}` '
+            f'to arm the hook'
+        )
         raise typer.Exit(EXIT_OK)
     if trust:
-        if find_gate_spec(target, os.environ) is None:
+        try:
+            found = find_gate_spec(target, os.environ)
+        except SpecError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(EXIT_USAGE) from exc
+        if found is None:
             typer.echo(
                 f'nothing to arm: no .convoy/gate.toml found from {target.resolve()} '
                 f'(run `convoy gate --init` to scaffold one)',
                 err=True,
             )
             raise typer.Exit(EXIT_USAGE)
+        root = gate_root(found, target)
         try:
-            trust_path = trust_project(target, os.environ)
+            trust_path = trust_project(root, os.environ, found)
         except (OSError, SpecError) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(EXIT_USAGE) from exc
-        typer.echo(f'trusted {target.resolve()} for the hook ({trust_path})')
+        typer.echo(f'trusted {root} for the hook, spec {found} pinned ({trust_path})')
         raise typer.Exit(EXIT_OK)
     try:
         spec_path = resolve_gate_spec(series_file, target, os.environ)
@@ -410,11 +425,17 @@ def gate(
         # not run it until the project is trusted, and a silent difference between the
         # two surfaces is exactly what an operator cannot see. Say so.
         try:
-            armed = is_trusted(gate_root(spec_path, target), os.environ)
+            status = trust_status(gate_root(spec_path, target), spec_path, os.environ)
         except SpecError as exc:
-            armed = False
+            status = 'untrusted'
             typer.echo(f'note: {exc}', err=True)
-        if not armed:
+        if status == 'changed':
+            typer.echo(
+                'note: the gate spec changed since the hook was armed; run `convoy gate '
+                '--trust` again to re-arm it',
+                err=True,
+            )
+        elif status != 'trusted':
             typer.echo(
                 'note: the hook is not armed for this project; run `convoy gate --trust` to arm it',
                 err=True,
@@ -788,7 +809,7 @@ def hook() -> None:
     ``.convoy/hook.log``. Exit codes are the hook protocol's (0 silent, 2 feedback),
     not convoy's.
     """
-    raise typer.Exit(run_hook(sys.stdin.read(), os.environ))
+    raise typer.Exit(run_hook(sys.stdin.buffer.read(), os.environ))
 
 
 @app.command()

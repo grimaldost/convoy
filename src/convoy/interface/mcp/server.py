@@ -43,6 +43,7 @@ from convoy.interface.gate_service import (
     load_gate_spec_file,
     resolve_gate_spec,
     run_gate,
+    trust_status,
 )
 from convoy.interface.git import GitError
 from convoy.interface.preflight_probe import preflight
@@ -358,6 +359,15 @@ def _gate_impl(
         explicit = None if series_file is None else Path(series_file)
         spec_path = resolve_gate_spec(explicit, Path(workspace), os.environ)
         root = gate_root(spec_path, Path(workspace)) if explicit is None else None
+        if root is not None:
+            # A discovered spec runs on the model's say-so (the workspace argument is
+            # the model's), so it is held to the hook's standard: the machine's trust.
+            status = trust_status(root, spec_path, os.environ)
+            if status != 'trusted':
+                raise SpecError(
+                    f'the discovered gate spec {spec_path} is {status} on this machine; run '
+                    f'`convoy gate --trust` there, or pass series_file explicitly'
+                )
         spec = load_gate_spec_file(spec_path, os.environ, root=root)
     except (OSError, UnicodeDecodeError, SpecError) as exc:
         return gate_usage_envelope(exc, error_kind=error_kind(exc))
