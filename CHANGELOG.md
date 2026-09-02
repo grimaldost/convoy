@@ -27,6 +27,24 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   project spec is the per-project switch the coming hook keys on. Over the MCP protocol
   the tool's parameters are keyword-addressed, so the reorder that makes `series_file`
   optional (`workspace` now first) changes no caller.
+- `convoy hook` and the plugin-shipped `PostToolUse` hook **(consumer-affecting)**.
+  Installing the plugin now registers `hooks/hooks.json`: after every `Agent` (or
+  `Task`) dispatch, Claude Code runs `convoy hook` with the event JSON on stdin. The
+  hook discovers the project spec the way `convoy gate` does and does nothing where
+  none exists — the spec is the per-project switch, so the plugin arms nothing until a
+  project opts in. Green: exit 0, no output, nothing in the orchestrator's context.
+  Blocking red: exit 2 with the repair brief on stderr, which Claude Code shows to the
+  orchestrator as feedback on the completed dispatch — its cue to dispatch a fix
+  subagent, whose return re-fires the hook, so the fix loop closes without the
+  orchestrator running or reading a gate. A gate that cannot run is exit 2 with a
+  one-line reason, never a silent green. `[convoy-phase: <tag>]` in the subagent's
+  brief scopes the gate; a dispatch that did not complete is recorded, not gated. Each
+  firing appends one JSON line to `.convoy/hook.log` — verdict, phases, counts, the
+  subagent's id and dated model, the gate's wall-clock, `convoy_version` — the
+  attestation an experiment counts from. Exit codes are the hook protocol's (0, 2),
+  not convoy's (0, 1, 3). Config isolation keeps the hook out of every scored spawn.
+  The captured Claude Code 2.1.258 payloads are committed as test fixtures, so the
+  field names the hook reads are the protocol as sent, not as read.
 - `convoy gate --init [--independent NAME]` **(consumer-affecting)**: scaffold the
   project gate spec at `.convoy/gate.toml` (plus `.convoy/.gitignore` for the hook
   log) from the toolchain found in the workspace — Python: the uv lockfile check, ruff

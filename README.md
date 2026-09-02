@@ -45,7 +45,9 @@ claude plugin install convoy@convoy
 ```
 
 Either CLI route installs the `convoy` command, aliased `cvy` (clone and
-`uv sync` for development); the plugin route installs only the MCP tools.
+`uv sync` for development); the plugin route installs the MCP tools and a
+`PostToolUse` hook that runs a project's gate after every subagent dispatch —
+armed only where the project has opted in with `.convoy/gate.toml`.
 
 ## How it works
 
@@ -183,11 +185,13 @@ background shell, same engine. Either way, follow it with `convoy status` /
 | `convoy gate [series.toml]` | Run the series' `[[checks]]` against the workspace once — the gate standalone, for verifying work produced outside convoy. No spawn, no branch, no merge; the same fail-closed independence guard and verdict rules as a run. Accepts a full series.toml or a minimal `[series] id` + `[[checks]]` file; with no argument it runs the project spec — `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml` in the workspace and its parents (none found is a usage failure naming where it looked). Exit 0 green / 1 blocking red / 3 usage — an invocation that cannot answer (an unknown phase tag, a selection with no blocking check, unbacked isolation) is refused as usage, never narrowed to a green | `--workspace <dir>` / `-w` (default: cwd; discovery starts here), `--phase <tag>` (repeatable; run what a PR carrying the tag would be gated on), `--json` (print the gate envelope — usage paths included — to stdout as one JSON object), `--brief` (print the compact `{ok, outcome, repair_brief, convoy_version}` envelope instead), `--init` (scaffold `.convoy/gate.toml` from the toolchain found in the workspace — the project's own suite as blocking checks — and exit; refuses to overwrite), `--independent <name>` (with `--init`: also scaffold a held-out oracle under `CONVOY_ORACLES` and declare it as a blocking independent check) |
 | `convoy run <series.toml>` | Run the series against the workspace | `--workspace <dir>` / `-w` (default: cwd), `--json` (print the run summary to stdout as one JSON object), `--resume` (continue the integration branch, skipping PRs already merged into it), `--fresh` (reset to base, delete prior series branches first), `--run-id <id>` (pin the run id instead of minting one), `--quiet`, `--no-config-isolation` |
 | `convoy clean <series.toml>` | **Destructive** recovery after a halted or killed run: discard uncommitted changes, delete untracked files, return to base, delete the series' branches, remove a stale run lock | `--dry-run` / `-n` (print the plan, change nothing), `--workspace <dir>` / `-w` |
+| `convoy hook` | Run the project gate as a Claude Code `PostToolUse` hook on subagent dispatch. Reads the hook event on stdin. Silent (exit 0) when the tool was not `Agent`/`Task`, when no `.convoy/gate.toml` is found, or when the gate is green; exit 2 with the repair brief on stderr — shown to the orchestrator as feedback on the completed dispatch, its cue to dispatch a fix subagent — on a blocking red; exit 2 with a one-line reason when the gate cannot run. A `[convoy-phase: <tag>]` marker in the subagent's brief scopes the gate. One JSON line per firing goes to `.convoy/hook.log`. Exit codes are the hook protocol's, not convoy's | (the plugin's `hooks/hooks.json` wires it; a project can wire the same command in its own `.claude/settings.json`) |
 | `convoy status <series.toml>` | Report a run's state and economy so far — including one still in progress. Reads the ledger only; spends nothing | `--run-id` (default: the latest run), `--json` |
 | `convoy init <dir>` | Scaffold the starter series | |
 
 Scored spawns run under **credential-only config isolation** by default: the
-operator's hooks, memory, and skills don't leak into the run (the workspace's
+operator's hooks, memory, and skills don't leak into the run — the plugin's own
+hook included, so it never fires inside a governed run (the workspace's
 own agent instructions still apply — they live in the repo). Opt out with
 `--no-config-isolation` or `CONVOY_NO_CONFIG_ISOLATION=1`. Exit codes and the
 telemetry protocol are documented in
@@ -200,7 +204,9 @@ prompt files are authored on demand and can live out-of-tree alongside
 `outputs`; the scored agent inherits the project's conventions from the
 workspace's own agent instruction files through the spawned `claude -p`, not
 from any convoy-side injection. Deliberate non-features: no prompt-injection
-assembly, no consumer hooks, and telemetry is economy + gate outcomes — not
+assembly, no consumer hook API inside a run (the plugin's `PostToolUse` hook is the
+gate on the orchestrator's side, outside any run), and telemetry is economy + gate
+outcomes — not
 reflection journals. See the adoption section in
 [skills/convoy/SKILL.md](skills/convoy/SKILL.md).
 

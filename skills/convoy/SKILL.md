@@ -319,6 +319,30 @@ an independent check — a held-out oracle the implementer cannot reach — whic
 spec stays portable; the placeholder is red until written. Write it before dispatching
 any implementer: the judge is appointed before the defendant.
 
+**The hook: the gate the orchestrator never has to think about.** Installing the plugin
+registers a `PostToolUse` hook on `Agent` (and its older name `Task`) that runs
+`convoy hook` after every subagent dispatch. The hook finds the project spec the way
+`convoy gate` does — `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml`
+from the event's `cwd` upward — and does nothing where none exists: the presence of
+the spec is the per-project switch, so installing the plugin arms nothing until a
+project opts in with `convoy gate --init`. Green: exit 0 and no output, nothing enters
+the orchestrator's context. Blocking red: exit 2 with the repair brief on stderr, which
+Claude Code shows to the orchestrator as feedback on the completed dispatch — the cue
+to dispatch a fix subagent, whose return re-fires the hook, so the loop closes without
+the orchestrator ever running or reading a gate itself. A gate that cannot run
+(invalid spec, refused invocation, dead workspace) is exit 2 with a one-line reason,
+never a silent green. Put `[convoy-phase: <tag>]` in a subagent's brief to scope the
+gate to that tag's checks (the selection `convoy gate --phase <tag>` makes; a tag no
+check declares is reported, not narrowed). A dispatch that did not complete — a
+background one, a failed one — is recorded and not gated. Every firing appends one
+JSON line to `.convoy/hook.log` (verdict, phases, counts, the subagent's id and dated
+model, the gate's wall-clock, `convoy_version`), so an experiment counts firings from
+the log. Exit codes are the hook protocol's (0 silent, 2 feedback), not convoy's. The
+hook's timeout is 1800 s; each check is bounded by the spec's `timeout_seconds`. Hooks
+do not run under `claude --bare`, and convoy's own spawns run under config isolation,
+so the hook never fires inside a governed run. A project without the plugin wires the
+same command in its `.claude/settings.json`.
+
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared
 `repair_hint` — in the exact form convoy appends to its own fix spawn's brief, so an
@@ -637,9 +661,11 @@ The boundaries are deliberate scope decisions, not gaps:
 - **No prompt-injection assembly.** A PR's brief is the authored prompt file, passed to
   the spawn verbatim; convoy composes nothing around it (the fix brief's appended
   failing-checks section, above, is the one exception).
-- **No consumer or stage hook mechanism.** There are no pre/post callbacks to register;
-  the deterministic `[[checks]]` gate is the only project code a run executes around the
-  spawns.
+- **No consumer or stage hook mechanism inside a run.** There are no pre/post callbacks
+  to register in a series; the deterministic `[[checks]]` gate is the only project code
+  a run executes around the spawns. (The plugin's `PostToolUse` hook is that same gate
+  on the *orchestrator's* side — it runs after a subagent dispatch in the operator's
+  session, never inside a scored spawn, which config isolation keeps hook-free.)
 - **Telemetry is economy plus gate outcomes** — tokens, turns, cost, duration, verdicts.
   It is not a reflection journal; there is no qualitative self-report channel.
 

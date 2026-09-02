@@ -1,0 +1,16 @@
+{
+  "session_id": "session-0000",
+  "transcript_path": "C:\\work\\project\\9d2cd6a8-b5b3-45b6-8c92-7eec4c571aaf.jsonl",
+  "cwd": "C:\\work\\project",
+  "scratchpad_dir": "C:\\work\\project\\9d2cd6a8-b5b3-45b6-8c92-7eec4c571aaf\\scratchpad",
+  "prompt_id": "prompt-0000",
+  "permission_mode": "auto",
+  "agent_id": "a1b909db97960854e",
+  "agent_type": "general-purpose",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "C:\\work\\project\\9d2cd6a8-b5b3-45b6-8c92-7eec4c571aaf\\subagents\\agent-a1b909db97960854e.jsonl",
+  "last_assistant_message": "DONE",
+  "background_tasks": [],
+  "session_crons": []
+}

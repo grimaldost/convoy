@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
@@ -34,6 +35,7 @@ from convoy.interface.gate_service import (
     run_gate,
 )
 from convoy.interface.git import Git, GitError
+from convoy.interface.hook import run_hook
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter, StderrReporter
 from convoy.interface.run_service import (
@@ -717,6 +719,25 @@ def status(
             typer.echo(f'  halted at {halt["pr_id"]} (phase {halt["phase"]}, {halt["role"]})')
             if halt['cap_usd'] is not None:
                 typer.echo(f'    spend ${halt["spend_usd"]:.2f} of ${halt["cap_usd"]:.2f}')
+
+
+@app.command()
+def hook() -> None:
+    """Run the project gate as a Claude Code ``PostToolUse`` hook on subagent dispatch.
+
+    Reads the hook event JSON from stdin. Nothing happens unless the tool was ``Agent``
+    (or ``Task``) and the project has a gate spec — ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml``,
+    then ``.convoy/gate.toml`` from the event's ``cwd`` upward — so installing the plugin
+    arms nothing until a project opts in with ``convoy gate --init``. Green: exit 0 and no
+    output, so nothing enters the orchestrator's context. Blocking red: exit 2 with the
+    repair brief on stderr, which Claude Code shows to the orchestrator as feedback on
+    the completed dispatch — its cue to dispatch a fix subagent, whose return re-fires
+    the hook. A gate that cannot run is exit 2 with a one-line reason. A ``[convoy-phase:
+    <tag>]`` marker in the subagent's brief scopes the gate to that tag's checks. Every
+    firing appends one JSON line to ``.convoy/hook.log``. Exit codes are the hook
+    protocol's (0 silent, 2 feedback), not convoy's.
+    """
+    raise typer.Exit(run_hook(sys.stdin.read(), os.environ))
 
 
 @app.command()
