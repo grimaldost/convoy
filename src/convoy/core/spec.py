@@ -641,6 +641,20 @@ def _check_table(check: Check) -> dict[str, Any]:
     return table
 
 
+def dump_gate_spec(spec: GateSpec) -> str:
+    """Serialize a gate-only spec: ``[series] id``, ``[[checks]]``, and the timeout when set.
+
+    ``[governance] timeout_seconds`` is written only when it differs from the default, so
+    a spec that never set it round-trips to the same minimal file. Round-trips:
+    ``load_gate_spec(dump_gate_spec(s)) == s``.
+    """
+    data: dict[str, Any] = {'series': {'id': spec.id}}
+    if spec.timeout_seconds != DEFAULT_GATE_TIMEOUT_SECONDS:
+        data['governance'] = {'timeout_seconds': spec.timeout_seconds}
+    data['checks'] = [_check_table(check) for check in spec.checks]
+    return tomli_w.dumps(data)
+
+
 def _pr_table(pr: PR) -> dict[str, Any]:
     """One ``[[prs]]`` table for ``dump_series``.
 

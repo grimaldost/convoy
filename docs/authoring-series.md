@@ -28,6 +28,17 @@ Convoy is two capabilities with one wire format, and they are adopted separately
 
 The dispatch mistake this section exists to prevent: evaluating convoy as
 all-or-nothing, rejecting the runner on its merits, and discarding the gate with it.
+
+**Judge before defendant.** The spec author writes the independent checks before
+dispatching any implementer. An independent check needs an asset the implementer
+cannot reach, and in-tree is reachable by construction — fail-closed isolation refuses
+it — so the oracles live under `CONVOY_ORACLES` and the check names them through
+`${CONVOY_ORACLES}/<file>`; `convoy gate --init --independent <name>` scaffolds the
+placeholder, red until written. Where a project has none, the gate runs the project's
+own suite — `convoy gate --init` scaffolds that default from the toolchain it finds —
+and that catches regressions, not the class of defect the held-out oracle catches: an
+implementer can satisfy its own suite by self-report, and a gate made only of it is a
+regression gate wearing the independence guard's name.
 The runner's fit conditions are narrow (a settled multi-PR plan); the gate's are
 broad (any work whose verification should be independent of whoever produced it). A
 round of externally orchestrated PRs verified only by the agents that implemented

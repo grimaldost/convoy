@@ -110,22 +110,35 @@ def project_root_of(spec_path: Path) -> Path | None:
     return None
 
 
+def oracles_dir_for(root: Path, env: Mapping[str, str], *, home: Path | None = None) -> Path:
+    """Where a project's held-out oracles live: ``CONVOY_ORACLES`` when set, else the default.
+
+    The default is ``~/.convoy/oracles/<project dir name>`` — outside every checkout the
+    implementer can reach, keyed by the project directory's name so two clones of one
+    project share their oracles.
+    """
+    explicit = env.get(ORACLES_ENV)
+    if explicit:
+        return Path(explicit)
+    base = Path.home() if home is None else home
+    return base / '.convoy' / 'oracles' / Path(root).resolve().name
+
+
 def gate_spec_env(
     spec_path: Path, env: Mapping[str, str], *, home: Path | None = None
 ) -> dict[str, str]:
     """The environment a spec at *spec_path* is loaded with.
 
     A project spec (one living at ``.convoy/gate.toml``) gets ``CONVOY_ORACLES``
-    defaulted to ``~/.convoy/oracles/<project dir name>`` when the caller has not set
-    it, so the scaffolded ``${CONVOY_ORACLES}/...`` references resolve on a machine that
-    never exported the variable. An explicit series file gets no default: its author
-    wrote its paths, and an unset reference is refused at load, as documented.
+    defaulted through :func:`oracles_dir_for` when the caller has not set it, so the
+    scaffolded ``${CONVOY_ORACLES}/...`` references resolve on a machine that never
+    exported the variable. An explicit series file gets no default: its author wrote its
+    paths, and an unset reference is refused at load, as documented.
     """
     resolved = dict(env)
     root = project_root_of(spec_path)
     if root is not None and ORACLES_ENV not in resolved:
-        base = Path.home() if home is None else home
-        resolved[ORACLES_ENV] = str(base / '.convoy' / 'oracles' / root.resolve().name)
+        resolved[ORACLES_ENV] = str(oracles_dir_for(root, env, home=home))
     return resolved
 
 

@@ -306,6 +306,19 @@ is sound before its check commands cost anything. A file carrying `[branches]`, 
 `[review]` or `[[prs]]` is a full series and is validated as one, so a series that lost a
 section is never answered with a gate's narrower yes.
 
+**The per-project gate.** `convoy gate --init` (CLI) scaffolds `.convoy/gate.toml` from
+the toolchain it finds in the workspace — Python: the uv lockfile check, ruff lint and
+format, the type checker the pyproject names, pytest; Node: the `lint`, `typecheck` and
+`test` scripts; else a placeholder check that stays red until you declare the checks —
+as blocking, non-independent checks, plus a `.gitignore` for the hook log. That default
+gate is the project's own suite: it catches regressions, and it is exactly what an
+implementer can satisfy by self-report. The class of defect the gate exists for needs
+an independent check — a held-out oracle the implementer cannot reach — which `--init
+--independent <name>` scaffolds as a placeholder under `CONVOY_ORACLES` (default
+`~/.convoy/oracles/<project dir name>/`), declared through `${CONVOY_ORACLES}` so the
+spec stays portable; the placeholder is red until written. Write it before dispatching
+any implementer: the judge is appointed before the defendant.
+
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared
 `repair_hint` — in the exact form convoy appends to its own fix spawn's brief, so an
@@ -608,8 +621,11 @@ a partial result. Set budgets with headroom.
 
 ## Adopting convoy in an existing project
 
-An adopting repo commits nothing: no fixture, no config file, no convoy section anywhere
-in the tree. A series.toml and its per-PR prompt files are authored on demand for the job
+An adopting repo commits nothing for the runner: no fixture, no config file, no convoy
+section anywhere in the tree. (The standalone gate is the one opt-in: a project that
+wants it commits `.convoy/gate.toml`, scaffolded by `convoy gate --init`, and keeps its
+held-out oracles out-of-tree under `CONVOY_ORACLES`.) A series.toml and its per-PR
+prompt files are authored on demand for the job
 at hand, and since `[paths]` are absolute they can live entirely out-of-tree alongside
 `outputs`. The scored agent inherits the workspace's own conventions — its AGENTS.md /
 CLAUDE.md — through the spawned `claude -p`, which runs with the workspace as its working
