@@ -20,18 +20,22 @@ from convoy.core.gate import (
     UnknownPhaseError,
     repair_brief,
 )
-from convoy.core.spec import Check, GateSpec
+from convoy.core.spec import Check, GateSpec, SpecError
 from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK
 from convoy.interface.gate_runner import SubprocessGateRunner
 from convoy.interface.gate_service import (
     GateSpecNotFoundError,
+    convoy_home,
     find_gate_spec,
     gate_brief_envelope,
     gate_envelope,
     gate_spec_env,
     gate_usage_envelope,
+    is_trusted,
     resolve_gate_spec,
     run_gate,
+    trust_project,
+    trusted_projects,
 )
 
 _PY = sys.executable
@@ -349,19 +353,19 @@ def test_resolve_gate_spec_refuses_when_nothing_is_found(tmp_path: Path) -> None
 
 def test_gate_spec_env_defaults_the_oracles_dir_for_a_project_spec(tmp_path: Path) -> None:
     spec = tmp_path / 'proj' / '.convoy' / 'gate.toml'
-    env = gate_spec_env(spec, {'PATH': 'x'}, home=tmp_path / 'home')
-    assert env['CONVOY_ORACLES'] == str(tmp_path / 'home' / '.convoy' / 'oracles' / 'proj')
+    env = gate_spec_env(spec, {'PATH': 'x', 'CONVOY_HOME': str(tmp_path / 'home')})
+    assert env['CONVOY_ORACLES'] == str(tmp_path / 'home' / 'oracles' / 'proj')
     assert env['PATH'] == 'x'
 
 
 def test_gate_spec_env_keeps_an_explicit_oracles_dir(tmp_path: Path) -> None:
     spec = tmp_path / 'proj' / '.convoy' / 'gate.toml'
-    env = gate_spec_env(spec, {'CONVOY_ORACLES': '/mine'}, home=tmp_path)
+    env = gate_spec_env(spec, {'CONVOY_ORACLES': '/mine', 'CONVOY_HOME': str(tmp_path)})
     assert env['CONVOY_ORACLES'] == '/mine'
 
 
 def test_gate_spec_env_injects_no_default_for_an_explicit_series_file(tmp_path: Path) -> None:
-    env = gate_spec_env(tmp_path / 'proj' / 'series.toml', {}, home=tmp_path)
+    env = gate_spec_env(tmp_path / 'proj' / 'series.toml', {'CONVOY_HOME': str(tmp_path)})
     assert 'CONVOY_ORACLES' not in env
 
 
@@ -384,3 +388,40 @@ def test_gate_brief_envelope_agrees_with_the_full_envelope_on_red(tmp_path: Path
     assert brief['outcome'] == 'blocked'
     assert brief['repair_brief'] == full['repair_brief']
     assert 'bad' in brief['repair_brief']
+
+
+# --- the hook trust list ---------------------------------------------------------------------
+
+
+def test_convoy_home_defaults_to_the_dot_convoy_dir_under_home() -> None:
+    assert convoy_home({}) == Path.home() / '.convoy'
+    assert convoy_home({'CONVOY_HOME': '/elsewhere'}) == Path('/elsewhere')
+
+
+def test_trust_list_is_empty_until_written(tmp_path: Path) -> None:
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    assert trusted_projects(env) == ()
+    assert is_trusted(tmp_path / 'proj', env) is False
+
+
+def test_trust_project_writes_resolves_and_is_idempotent(tmp_path: Path) -> None:
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    project = tmp_path / 'proj'
+    project.mkdir()
+    path = trust_project(project, env)
+    assert path == tmp_path / 'home' / 'hook-trust.toml'
+    trust_project(project / '..' / 'proj', env)
+    assert len(trusted_projects(env)) == 1
+    assert is_trusted(project, env) is True
+    assert is_trusted(tmp_path / 'other', env) is False
+
+
+def test_a_malformed_trust_list_is_a_spec_error(tmp_path: Path) -> None:
+    home = tmp_path / 'home'
+    home.mkdir()
+    env = {'CONVOY_HOME': str(home)}
+    (home / 'hook-trust.toml').write_text('[trust]\nprojects = "not-a-list"\n', encoding='utf-8')
+    with pytest.raises(SpecError, match='list of strings'):
+        trusted_projects(env)
+    with pytest.raises(SpecError):
+        trust_project(tmp_path / 'proj', env)

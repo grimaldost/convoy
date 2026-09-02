@@ -10,7 +10,11 @@ feedback on a tool call that has already completed. Every re-dispatch re-fires t
 so the loop closes without the orchestrator ever running or reading a gate itself.
 
 The presence of a project spec is the per-project switch: with none found the hook exits
-0 silently, so shipping it in the plugin arms nothing until a project opts in. A gate
+0 silently, so shipping it in the plugin arms nothing until a project opts in — and the
+operator's trust is the per-machine switch: a spec in a project this machine has not
+trusted (``convoy gate --init`` or ``convoy gate --trust`` records it) is logged and not
+executed, because a cloned repository's checks must not run commands on dispatch until
+the operator says so. A gate
 that cannot run (an unreadable or invalid spec, a refused invocation, a dead workspace) is
 exit 2 with a one-line reason — the loud answer, because a hook that swallowed its own
 misconfiguration would look like a green gate.
@@ -38,6 +42,7 @@ from convoy.core.spec import SpecError
 from convoy.interface.gate_service import (
     GateOutcome,
     find_gate_spec,
+    is_trusted,
     load_gate_spec_file,
     project_root_of,
     run_gate,
@@ -113,6 +118,24 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str]) -> HookResult:
     spec_path = find_gate_spec(cwd, env)
     if spec_path is None:
         return HookResult(HOOK_EXIT_SILENT, '', None)
+
+    root = project_root_of(spec_path) or spec_path.parent
+    try:
+        trusted = is_trusted(root, env)
+    except SpecError as exc:
+        return HookResult(
+            HOOK_EXIT_SILENT, '', _record(payload, outcome='untrusted', reason=str(exc))
+        )
+    if not trusted:
+        return HookResult(
+            HOOK_EXIT_SILENT,
+            '',
+            _record(
+                payload,
+                outcome='untrusted',
+                reason=f'{root} is not on the hook trust list; run `convoy gate --trust` there',
+            ),
+        )
 
     tool_response = payload.get('tool_response')
     status = _string(tool_response, 'status')

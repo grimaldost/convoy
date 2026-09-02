@@ -43,6 +43,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   subagent's id and dated model, the gate's wall-clock, `convoy_version` — the
   attestation an experiment counts from. Exit codes are the hook protocol's (0, 2),
   not convoy's (0, 1, 3). Config isolation keeps the hook out of every scored spawn.
+  The hook executes a project's checks only where this machine trusts the project:
+  `convoy gate --init` records the project it scaffolds in `CONVOY_HOME/hook-trust.toml`
+  (default `~/.convoy/`), `convoy gate --trust` records an existing one, and a spec in
+  an untrusted project is logged (`outcome: untrusted`) and not executed — a cloned
+  repository's gate file must not run commands on dispatch until the operator says so
+  (a new guardrail). An explicit `convoy gate` on an untrusted project still runs, and
+  says on stderr that the hook is not armed there. `CONVOY_HOME` overrides `~/.convoy`
+  for the trust list and the default oracles home.
   The captured Claude Code 2.1.258 payloads are committed as test fixtures, so the
   field names the hook reads are the protocol as sent, not as read.
 - `convoy gate --init [--independent NAME]` **(consumer-affecting)**: scaffold the

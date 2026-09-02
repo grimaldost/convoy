@@ -27,12 +27,16 @@ from convoy.interface.fs_probe import isolation_result
 from convoy.interface.gate_scaffold import GateScaffoldError, scaffold_gate
 from convoy.interface.gate_service import (
     advisory_only_detail,
+    find_gate_spec,
     gate_brief_envelope,
     gate_envelope,
     gate_usage_envelope,
+    is_trusted,
     load_gate_spec_file,
+    project_root_of,
     resolve_gate_spec,
     run_gate,
+    trust_project,
 )
 from convoy.interface.git import Git, GitError
 from convoy.interface.hook import run_hook
@@ -329,6 +333,19 @@ def gate(
             ),
         ),
     ] = None,
+    trust: Annotated[
+        bool,
+        typer.Option(
+            '--trust',
+            help=(
+                'Arm the hook for this workspace: record its root in the per-machine trust '
+                'list (CONVOY_HOME/hook-trust.toml, default ~/.convoy/), which the hook '
+                "requires before it runs a project's checks — a cloned .convoy/gate.toml "
+                'must not run commands on dispatch until you say so. Needs an existing '
+                'project spec; --init trusts the project it scaffolds.'
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Run a series' ``[[checks]]`` against a workspace once — no spawn, no branch, no merge.
 
@@ -358,18 +375,49 @@ def gate(
     if init:
         try:
             written = scaffold_gate(target, os.environ, independent=independent)
-        except (OSError, GateScaffoldError) as exc:
+            trust_path = trust_project(target, os.environ)
+        except (OSError, GateScaffoldError, SpecError) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(EXIT_USAGE) from exc
         for path in written:
             typer.echo(f'created {path}')
+        typer.echo(f'trusted {target.resolve()} for the hook ({trust_path})')
         typer.echo(f'next: convoy gate --workspace {target}  (edit .convoy/gate.toml first)')
+        raise typer.Exit(EXIT_OK)
+    if trust:
+        if find_gate_spec(target, os.environ) is None:
+            typer.echo(
+                f'nothing to arm: no .convoy/gate.toml found from {target.resolve()} '
+                f'(run `convoy gate --init` to scaffold one)',
+                err=True,
+            )
+            raise typer.Exit(EXIT_USAGE)
+        try:
+            trust_path = trust_project(target, os.environ)
+        except (OSError, SpecError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(EXIT_USAGE) from exc
+        typer.echo(f'trusted {target.resolve()} for the hook ({trust_path})')
         raise typer.Exit(EXIT_OK)
     try:
         spec_path = resolve_gate_spec(series_file, target, os.environ)
         spec = load_gate_spec_file(spec_path, os.environ)
     except (OSError, UnicodeDecodeError, SpecError) as exc:
         raise _gate_usage_exit(exc, machine) from exc
+    if series_file is None:
+        # A discovered project spec runs here because the operator asked; the hook would
+        # not run it until the project is trusted, and a silent difference between the
+        # two surfaces is exactly what an operator cannot see. Say so.
+        try:
+            armed = is_trusted(project_root_of(spec_path) or target, os.environ)
+        except SpecError as exc:
+            armed = False
+            typer.echo(f'note: {exc}', err=True)
+        if not armed:
+            typer.echo(
+                'note: the hook is not armed for this project; run `convoy gate --trust` to arm it',
+                err=True,
+            )
     phases = tuple(phase or ())
     try:
         outcome = run_gate(spec, target, phases)
