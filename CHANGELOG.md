@@ -11,7 +11,20 @@ marked
 engine knows to sync rather than silently mis-handle the new value. See the versioning
 discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
-## [Unreleased]
+## [0.12.0] - 2026-09-02
+
+The gate becomes a hook, and a project can carry one. Written at cut time, over the
+entries below as they stand: **this release is consumer-affecting** — a new command
+(`convoy hook`) and two plugin-shipped hooks, a per-project spec (`.convoy/gate.toml`)
+with discovery and a scaffold, a per-machine trust list the hooks require, `${CONVOY_*}`
+expansion in check commands, `--brief`, and an optional `series_file` on `convoy_gate`.
+Two blind reviews ran on the candidate; every blocker, high and medium they found is
+closed here, and the two limits that remain are stated where they apply: an
+asynchronous dispatch's residual red reaches the orchestrator only through the
+subagent's own message, and a gate whose checks together outrun the hook's timeout is
+killed silently. Smoked end to end in a real session: an asynchronous dispatch judged at
+the subagent's stop, blocked once with the brief, repaired by the subagent itself, and
+passed on the retry.
 
 ### Changed
 
