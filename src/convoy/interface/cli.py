@@ -30,10 +30,10 @@ from convoy.interface.gate_service import (
     find_gate_spec,
     gate_brief_envelope,
     gate_envelope,
+    gate_root,
     gate_usage_envelope,
     is_trusted,
     load_gate_spec_file,
-    project_root_of,
     resolve_gate_spec,
     run_gate,
     trust_project,
@@ -401,7 +401,8 @@ def gate(
         raise typer.Exit(EXIT_OK)
     try:
         spec_path = resolve_gate_spec(series_file, target, os.environ)
-        spec = load_gate_spec_file(spec_path, os.environ)
+        root = gate_root(spec_path, target) if series_file is None else None
+        spec = load_gate_spec_file(spec_path, os.environ, root=root)
     except (OSError, UnicodeDecodeError, SpecError) as exc:
         raise _gate_usage_exit(exc, machine) from exc
     if series_file is None:
@@ -409,7 +410,7 @@ def gate(
         # not run it until the project is trusted, and a silent difference between the
         # two surfaces is exactly what an operator cannot see. Say so.
         try:
-            armed = is_trusted(project_root_of(spec_path) or target, os.environ)
+            armed = is_trusted(gate_root(spec_path, target), os.environ)
         except SpecError as exc:
             armed = False
             typer.echo(f'note: {exc}', err=True)

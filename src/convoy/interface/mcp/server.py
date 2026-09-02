@@ -38,6 +38,7 @@ from convoy.interface.drivers.headless import make_run_id
 from convoy.interface.gate_service import (
     gate_brief_envelope,
     gate_envelope,
+    gate_root,
     gate_usage_envelope,
     load_gate_spec_file,
     resolve_gate_spec,
@@ -356,7 +357,8 @@ def _gate_impl(
     try:
         explicit = None if series_file is None else Path(series_file)
         spec_path = resolve_gate_spec(explicit, Path(workspace), os.environ)
-        spec = load_gate_spec_file(spec_path, os.environ)
+        root = gate_root(spec_path, Path(workspace)) if explicit is None else None
+        spec = load_gate_spec_file(spec_path, os.environ, root=root)
     except (OSError, UnicodeDecodeError, SpecError) as exc:
         return gate_usage_envelope(exc, error_kind=error_kind(exc))
     try:

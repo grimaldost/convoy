@@ -54,9 +54,9 @@ from convoy.core.spec import SpecError
 from convoy.interface.gate_service import (
     GateOutcome,
     find_gate_spec,
+    gate_root,
     is_trusted,
     load_gate_spec_file,
-    project_root_of,
     run_gate,
 )
 from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS
@@ -167,9 +167,9 @@ def _record(payload: Mapping[str, Any], **fields: Any) -> dict[str, Any]:
     }
 
 
-def log_path_for(spec_path: Path) -> Path:
-    root = project_root_of(spec_path)
-    return (root if root is not None else spec_path.parent) / HOOK_LOG_RELPATH
+def log_path_for(spec_path: Path, cwd: Path) -> Path:
+    """The hook log of the tree *spec_path* governs — the workspace, never the spec's own dir."""
+    return gate_root(spec_path, cwd) / HOOK_LOG_RELPATH
 
 
 def latest_stop_record(log_path: Path, agent_id: str) -> dict[str, Any] | None:
@@ -212,7 +212,7 @@ def _gate(
     """Run the gate: the outcome and its wall-clock, or the loud result of a usage failure."""
     started = time.monotonic()
     try:
-        spec = load_gate_spec_file(spec_path, env)
+        spec = load_gate_spec_file(spec_path, env, root=gate_root(spec_path, cwd))
         outcome = run_gate(spec, cwd, phases)
     except (OSError, UnicodeDecodeError, SpecError, GateUsageError) as exc:
         elapsed = round((time.monotonic() - started) * 1000)
@@ -306,7 +306,7 @@ def _decide_dispatch(
             _record(payload, outcome='skipped', reason=f'dispatch status {status!r}'),
         )
     agent_id = _string(tool_response, 'agentId')
-    judged = latest_stop_record(log_path_for(spec_path), agent_id)
+    judged = latest_stop_record(log_path_for(spec_path, cwd), agent_id)
     if judged is not None:
         phases = tuple(str(tag) for tag in judged.get('phases') or ())
         brief = str(judged.get('repair_brief') or '')
@@ -352,11 +352,20 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str]) -> HookResult:
         return HookResult(HOOK_EXIT_SILENT, '', None)
 
     cwd = Path(_string(payload, 'cwd') or '.')
-    spec_path = find_gate_spec(cwd, env)
+    try:
+        spec_path = find_gate_spec(cwd, env)
+    except SpecError as exc:
+        # $CONVOY_GATE_SPEC names a file that is not there: the launcher asked for a
+        # gate it cannot get, which must not read as a green one.
+        return HookResult(
+            HOOK_EXIT_FEEDBACK,
+            f'convoy hook: {exc}\n',
+            _record(payload, outcome='usage', error=str(exc)),
+        )
     if spec_path is None:
         return HookResult(HOOK_EXIT_SILENT, '', None)
 
-    root = project_root_of(spec_path) or spec_path.parent
+    root = gate_root(spec_path, cwd)
     try:
         trusted = is_trusted(root, env)
     except SpecError as exc:
@@ -379,9 +388,9 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str]) -> HookResult:
     return _decide_dispatch(payload, spec_path, cwd, env)
 
 
-def append_log(spec_path: Path, record: Mapping[str, Any]) -> str | None:
+def append_log(spec_path: Path, cwd: Path, record: Mapping[str, Any]) -> str | None:
     """Append one JSON line to the project's hook log; return a message on failure."""
-    log_path = log_path_for(spec_path)
+    log_path = log_path_for(spec_path, cwd)
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open('a', encoding='utf-8') as handle:
@@ -404,9 +413,13 @@ def run_hook(stdin_text: str, env: Mapping[str, str]) -> int:
 
     result = decide(payload, env)
     if result.record is not None:
-        spec_path = find_gate_spec(Path(_string(payload, 'cwd') or '.'), env)
+        cwd = Path(_string(payload, 'cwd') or '.')
+        try:
+            spec_path = find_gate_spec(cwd, env)
+        except SpecError:
+            spec_path = None
         if spec_path is not None:
-            failure = append_log(spec_path, {**result.record, 'spec': str(spec_path)})
+            failure = append_log(spec_path, cwd, {**result.record, 'spec': str(spec_path)})
             if failure is not None:
                 sys.stderr.write(failure)
     if result.stderr:

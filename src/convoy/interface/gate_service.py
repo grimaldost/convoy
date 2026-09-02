@@ -59,6 +59,9 @@ _CHECK_CAP = 50
 GATE_SPEC_RELPATH = Path('.convoy') / 'gate.toml'
 # Claude Code exports the project root to hooks and MCP servers under this name.
 PROJECT_DIR_ENV = 'CLAUDE_PROJECT_DIR'
+# An explicit spec path from the launching process — a harness or CI job that keeps the
+# gate outside the tree it stages. Wins over discovery; a missing file is refused.
+GATE_SPEC_ENV = 'CONVOY_GATE_SPEC'
 # The out-of-tree home for a project's held-out oracles (see ``core.spec.expand_env``).
 ORACLES_ENV = 'CONVOY_ORACLES'
 # Convoy's per-user directory: the default oracles home and the hook trust list live
@@ -78,12 +81,21 @@ class GateSpecNotFoundError(SpecError):
 def find_gate_spec(start: Path, env: Mapping[str, str]) -> Path | None:
     """Locate the project gate spec, or ``None``.
 
-    ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` first — the root Claude Code hands a hook
+    ``$CONVOY_GATE_SPEC`` first when set — an explicit file the launching process names,
+    refused (:class:`GateSpecNotFoundError`) when it does not exist, because a caller
+    that set it and got a walk-up result instead would never learn its file is missing.
+    Then ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` — the root Claude Code hands a hook
     or an MCP server, which may differ from the process cwd — then ``.convoy/gate.toml``
     in *start* and each of its parents, so a gate invoked from a subdirectory finds the
     project's spec the way git finds ``.git``. An env root without a spec falls through
     to the walk rather than ending it.
     """
+    explicit = env.get(GATE_SPEC_ENV)
+    if explicit:
+        named = Path(explicit)
+        if not named.is_file():
+            raise GateSpecNotFoundError(f'${GATE_SPEC_ENV}={explicit} is not an existing file')
+        return named
     candidates: list[Path] = []
     project_dir = env.get(PROJECT_DIR_ENV)
     if project_dir:
@@ -120,6 +132,16 @@ def project_root_of(spec_path: Path) -> Path | None:
     if spec_path.parent.name == GATE_SPEC_RELPATH.parent.name:
         return spec_path.parent.parent
     return None
+
+
+def gate_root(spec_path: Path, workspace: Path) -> Path:
+    """The project a gate spec governs: its ``.convoy`` parent's parent, else the workspace.
+
+    A spec named by ``$CONVOY_GATE_SPEC`` or passed explicitly may live anywhere — a task
+    directory, a CI checkout — so the tree it judges, not the directory it sits in, is
+    what the trust list is checked against and where the hook log goes.
+    """
+    return project_root_of(spec_path) or Path(workspace).resolve()
 
 
 def convoy_home(env: Mapping[str, str]) -> Path:
@@ -189,25 +211,31 @@ def trust_project(root: Path, env: Mapping[str, str]) -> Path:
     return path
 
 
-def gate_spec_env(spec_path: Path, env: Mapping[str, str]) -> dict[str, str]:
+def gate_spec_env(
+    spec_path: Path, env: Mapping[str, str], *, root: Path | None = None
+) -> dict[str, str]:
     """The environment a spec at *spec_path* is loaded with.
 
-    A project spec (one living at ``.convoy/gate.toml``) gets ``CONVOY_ORACLES``
-    defaulted through :func:`oracles_dir_for` when the caller has not set it, so the
-    scaffolded ``${CONVOY_ORACLES}/...`` references resolve on a machine that never
-    exported the variable. An explicit series file gets no default: its author wrote its
-    paths, and an unset reference is refused at load, as documented.
+    A project spec (one living at ``.convoy/gate.toml``, or one whose governed *root* the
+    caller names — the ``$CONVOY_GATE_SPEC`` case) gets ``CONVOY_ORACLES`` defaulted
+    through :func:`oracles_dir_for` when the caller has not set it, so the scaffolded
+    ``${CONVOY_ORACLES}/...`` references resolve on a machine that never exported the
+    variable. An explicit series file with no named root gets no default: its author
+    wrote its paths, and an unset reference is refused at load, as documented.
     """
     resolved = dict(env)
-    root = project_root_of(spec_path)
-    if root is not None and ORACLES_ENV not in resolved:
-        resolved[ORACLES_ENV] = str(oracles_dir_for(root, env))
+    governed = project_root_of(spec_path) if root is None else root
+    if governed is not None and ORACLES_ENV not in resolved:
+        resolved[ORACLES_ENV] = str(oracles_dir_for(governed, env))
     return resolved
 
 
-def load_gate_spec_file(spec_path: Path, env: Mapping[str, str]) -> GateSpec:
+def load_gate_spec_file(
+    spec_path: Path, env: Mapping[str, str], *, root: Path | None = None
+) -> GateSpec:
     """Read and parse *spec_path* under :func:`gate_spec_env`; the loader's errors pass through."""
-    return load_gate_spec(spec_path.read_text(encoding='utf-8'), env=gate_spec_env(spec_path, env))
+    text = spec_path.read_text(encoding='utf-8')
+    return load_gate_spec(text, env=gate_spec_env(spec_path, env, root=root))
 
 
 def advisory_only_detail(selected: Sequence[Check]) -> str:
