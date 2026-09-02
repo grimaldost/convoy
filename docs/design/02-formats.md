@@ -72,6 +72,13 @@ Per-PR governance follows four rules:
   is inert — accepted, round-tripped, and read by nothing. Pre-flight says so with an
   advisory naming the missing flag, rather than rejecting it: the field changes no
   behaviour, so the series is unusual rather than invalid.
+- **`run` and `asset` expand `${NAME}` from the environment at load.** Only the braced
+  form expands (`$NAME` and `%NAME%` pass through, so a command keeps its own shell
+  syntax on either platform); an unset name is a `SpecError` naming the field and the
+  variable, because a check whose path cannot resolve here is not runnable here. The
+  convention this serves is `${CONVOY_ORACLES}`: a project's held-out oracles live
+  out-of-tree under that directory and a check names them without baking one machine's
+  path into the spec. `repair_hint` is prose and is never expanded.
 - **The gate is series-global by default, and may be scoped by phase.** A check with
   no `phases` runs after **every** PR — the default, so a series that scopes nothing
   behaves as it always did. A check that names `phases` gates only the PRs whose

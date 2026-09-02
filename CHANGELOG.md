@@ -11,6 +11,21 @@ marked
 engine knows to sync rather than silently mis-handle the new value. See the versioning
 discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
+## [Unreleased]
+
+### Added
+
+- `[[checks]]` `run` and `asset` expand `${NAME}` from the environment at load
+  **(consumer-affecting)**. Only the braced form expands — `$NAME` and `%NAME%` pass
+  through untouched, so a command keeps its own shell syntax on either platform — and an
+  unset name is a `SpecError` naming the field and the variable: a check whose oracle
+  path cannot resolve on this machine is not runnable on this machine, and the loader
+  says so instead of handing the shell a reference that expands to nothing. The
+  convention it serves is `${CONVOY_ORACLES}`, the out-of-tree home for a project's
+  held-out oracles, so a spec names its independent check's asset without baking one
+  machine's path in. A spec that carried a literal `${...}` in `run` or `asset` before
+  this change now needs the variable set. `repair_hint` is prose and is never expanded.
+
 ## [0.11.0] - 2026-09-01
 
 The gate becomes something an orchestrator can consume without reading prose. Written at

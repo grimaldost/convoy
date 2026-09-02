@@ -379,6 +379,7 @@ _TEXT = st.text(
     min_size=1,
     max_size=12,
 )
+_CHECK_TEXT = _TEXT.filter(lambda text: '${' not in text)
 _TOOL_LIST = st.lists(_TEXT, max_size=4).map(tuple)
 # Budgets must be strictly positive (load_series rejects <= 0), so keep the strategy above 0.
 _MONEY = st.floats(min_value=0.001, max_value=1000, allow_nan=False, allow_infinity=False)
@@ -403,13 +404,15 @@ def _series(draw: st.DrawFn) -> Series:
     checks = tuple(
         Check(
             name=draw(_TEXT),
-            run=draw(_TEXT),
+            # ``run``/``asset`` expand ``${NAME}`` at load (a load-time transform, not a
+            # round-trip property), so the property draws literal text for them.
+            run=draw(_CHECK_TEXT),
             blocking=draw(st.booleans()),
             independent=draw(st.booleans()),
             # asset, repair_hint and phases are optional; the empty value exercises the
             # omit-on-dump path, a non-empty one the round-trip-through-TOML path. Spec
             # data only here — no filesystem is touched by load/dump.
-            asset=draw(st.just('') | _TEXT),
+            asset=draw(st.just('') | _CHECK_TEXT),
             repair_hint=draw(st.just('') | _TEXT),
             phases=draw(st.just(()) | st.lists(_TEXT, max_size=3).map(tuple)),
         )
@@ -672,3 +675,66 @@ def test_load_series_rejects_a_non_positive_timeout() -> None:
     """The full loader shares the guard: a 0s timeout reads as a full red gate."""
     with pytest.raises(SpecError, match='must be positive'):
         load_series(VALID_TOML.replace('timeout_seconds = 1800', 'timeout_seconds = 0'))
+
+
+# --- ``${NAME}`` expansion in ``[[checks]]`` ``run`` and ``asset`` (both loaders) ---
+
+
+def _gate_only(run: str, asset: str = '', repair_hint: str = '') -> str:
+    extra = ''
+    if asset:
+        extra += f'asset = "{asset}"\n'
+    if repair_hint:
+        extra += f'repair_hint = "{repair_hint}"\n'
+    return (
+        '[series]\nid = "x"\n\n[[checks]]\nname = "probe"\n'
+        f'run = "{run}"\nblocking = true\nindependent = false\n{extra}'
+    )
+
+
+def test_checks_expand_braced_env_references_in_run_and_asset() -> None:
+    env = {'CONVOY_ORACLES': '/oracles/proj'}
+    spec = load_gate_spec(
+        _gate_only('python ${CONVOY_ORACLES}/probe.py', asset='${CONVOY_ORACLES}/probe.py'),
+        env=env,
+    )
+    assert spec.checks[0].run == 'python /oracles/proj/probe.py'
+    assert spec.checks[0].asset == '/oracles/proj/probe.py'
+
+
+def test_checks_leave_unbraced_and_percent_forms_alone() -> None:
+    spec = load_gate_spec(_gate_only('echo $X %X% ${X}'), env={'X': 'expanded'})
+    assert spec.checks[0].run == 'echo $X %X% expanded'
+
+
+def test_checks_refuse_an_unset_env_reference_naming_field_and_variable() -> None:
+    with pytest.raises(SpecError) as excinfo:
+        load_gate_spec(_gate_only('python probe.py', asset='${CONVOY_ORACLES}/probe.py'), env={})
+    message = str(excinfo.value)
+    assert '[[checks]][0]' in message
+    assert "'asset'" in message
+    assert '${CONVOY_ORACLES}' in message
+    assert 'not set' in message
+
+
+def test_a_repair_hint_is_prose_and_is_not_expanded() -> None:
+    spec = load_gate_spec(
+        _gate_only('python probe.py', repair_hint='set ${X} before running'), env={'X': 'v'}
+    )
+    assert spec.checks[0].repair_hint == 'set ${X} before running'
+
+
+def test_load_series_expands_check_references_the_same_way() -> None:
+    text = VALID_TOML.replace(
+        'python /abs/assets/oracles/type_probe.py', 'python ${CONVOY_ORACLES}/type_probe.py'
+    )
+    series = load_series(text, env={'CONVOY_ORACLES': '/oracles/proj'})
+    assert any(check.run == 'python /oracles/proj/type_probe.py' for check in series.checks)
+
+
+def test_loaders_read_the_process_environment_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv('CONVOY_ORACLES', '/from/process')
+    spec = load_gate_spec(_gate_only('python ${CONVOY_ORACLES}/probe.py'))
+    assert spec.checks[0].run == 'python /from/process/probe.py'
