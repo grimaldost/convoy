@@ -16,12 +16,14 @@ from convoy.core.governance import GovernanceError
 from convoy.core.preflight import Problem
 from convoy.core.spec import Series, SpecError, load_gate_spec, load_series
 from convoy.interface.drivers.headless import (
+    EXIT_OK,
     EXIT_USAGE,
     format_advisories,
     format_problems,
     make_run_id,
 )
 from convoy.interface.fs_probe import isolation_result
+from convoy.interface.gate_scaffold import GateScaffoldError, scaffold_gate
 from convoy.interface.gate_service import (
     advisory_only_detail,
     gate_brief_envelope,
@@ -299,6 +301,32 @@ def gate(
             ),
         ),
     ] = False,
+    init: Annotated[
+        bool,
+        typer.Option(
+            '--init',
+            help=(
+                'Scaffold the project gate spec at .convoy/gate.toml (plus a .gitignore for '
+                "the hook log) from the toolchain found in the workspace — the project's "
+                'own suite as blocking, non-independent checks — and exit. Refuses to '
+                'overwrite. Nothing detected writes a placeholder check that stays red '
+                'until you declare the checks.'
+            ),
+        ),
+    ] = False,
+    independent: Annotated[
+        str | None,
+        typer.Option(
+            '--independent',
+            metavar='NAME',
+            help=(
+                'With --init: also scaffold a held-out oracle NAME.py under CONVOY_ORACLES '
+                '(default ~/.convoy/oracles/<project dir name>/) and declare it as a '
+                'blocking independent check referencing ${CONVOY_ORACLES}. The placeholder '
+                'stays red until written — write it before dispatching any implementer.'
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Run a series' ``[[checks]]`` against a workspace once — no spawn, no branch, no merge.
 
@@ -322,6 +350,19 @@ def gate(
     # The workspace first: discovery starts from it, so a gate invoked from anywhere
     # with `-w <project>` finds that project's spec, not the invoking directory's.
     target = _workspace_or_exit(workspace)
+    if independent is not None and not init:
+        typer.echo('--independent needs --init: it scaffolds a check into a new spec', err=True)
+        raise typer.Exit(EXIT_USAGE)
+    if init:
+        try:
+            written = scaffold_gate(target, os.environ, independent=independent)
+        except (OSError, GateScaffoldError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(EXIT_USAGE) from exc
+        for path in written:
+            typer.echo(f'created {path}')
+        typer.echo(f'next: convoy gate --workspace {target}  (edit .convoy/gate.toml first)')
+        raise typer.Exit(EXIT_OK)
     try:
         spec_path = resolve_gate_spec(series_file, target, os.environ)
         spec = load_gate_spec_file(spec_path, os.environ)

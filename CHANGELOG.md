@@ -27,6 +27,21 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   project spec is the per-project switch the coming hook keys on. Over the MCP protocol
   the tool's parameters are keyword-addressed, so the reorder that makes `series_file`
   optional (`workspace` now first) changes no caller.
+- `convoy gate --init [--independent NAME]` **(consumer-affecting)**: scaffold the
+  project gate spec at `.convoy/gate.toml` (plus `.convoy/.gitignore` for the hook
+  log) from the toolchain found in the workspace — Python: the uv lockfile check, ruff
+  lint and format, the type checker the pyproject names, pytest, under `uv run` when
+  the project is uv-managed; Node: the `lint`, `typecheck` and `test` scripts; nothing
+  detected: a `configure` placeholder that stays red until the checks are declared —
+  as blocking, non-independent checks, with repair hints. The file's header says what
+  that default is (the project's own suite, which an implementer can satisfy by
+  self-report) and names the next step. `--independent NAME` also scaffolds a
+  placeholder held-out oracle `NAME.py` under `CONVOY_ORACLES` (default
+  `~/.convoy/oracles/<project dir name>/`) and declares it as a blocking independent
+  check through `${CONVOY_ORACLES}`; the placeholder is red until written — the judge
+  is appointed before the defendant, and the authoring guide now says so. Refuses to
+  overwrite any target before writing anything. `core.spec.dump_gate_spec` serializes
+  the gate-only shape it writes.
 - `convoy gate --brief` and `convoy_gate(brief=true)` **(consumer-affecting)**: the
   compact envelope `{ok, outcome, repair_brief, convoy_version}` and nothing else, for
   a caller that must read the verdict inside a model turn — the four fields a repair
