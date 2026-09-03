@@ -1329,10 +1329,12 @@ verification pass on the readout. **The per-PR gate is supported at both tiers:*
 14/16 held-out-clean against control 4/16 and 2/16 and placebo 6/16 and 5/16; the decisive
 gate-vs-placebo contrast clears Holm (0.0004, 0.0048) under every sensitivity the review ran,
 and the arms are matched on iteration dose (about one gate red and one repair round per
-trial in both), so the gain is not the extra iteration. Cost per trial +20% to +25%; cost per
-correct trial a third (Haiku) to a fifth (Sonnet) of control's. **The post-session form is
-not the feature to sell:** 12/16 and 9/16, beating control but not the placebo once one
-exposed trial's disposition varies. **What the measurement does not show,** by the review's
+trial in both, though the treatment still runs about one dispatch and 10% of spend more), so
+the gain is not the extra iteration. Cost per trial +20% to +25%; cost per correct trial a
+third (Haiku) to a sixth (Sonnet) of control's. **The post-session form is not the feature
+to sell:** 12/16 and 9/16; it loses significance against control on the main passes alone,
+does not beat the placebo once one exposed trial's disposition varies, and ran with an
+uncontained gate command. **What the measurement does not show,** by the review's
 verdict: the endpoint is one defect class — the type rule the briefs withheld, which the
 gate's probes assert with different literals — so the result is the gate restoring a withheld
 rule through a repair brief consumed by a fresh subagent, not benefit on work independent of
