@@ -63,12 +63,13 @@ effect size — it has no control arm and counts only what an agent invoked, so 
 counts are a floor.
 
 **A build round ran on 2026-09-02** (program 2, Part 1 — the gate as a hook), from the
-design spec at fathom `docs/specs/2026-09-02-hook-gate-closed-loop-design.md` rather than
-from a triage pass. It mints CONV-B55 through CONV-B59 and ships all five in 0.12.0; two
+design spec of program 2 (kept with the measurement instrument, outside this repository)
+rather than from a triage pass. It mints CONV-B55 through CONV-B59 and ships all five in 0.12.0; two
 blind reviews of the candidate (31 findings) closed every blocker, high and medium before
 the cut and left four residuals, minted here as CONV-B60 through CONV-B63, plus one doctrine
-row the round's own miss earned (CONV-B64). CONV-B53's measurement is iteration 1 of the
-multiagent-composition experiment, in flight in fathom; its row moves when the readout lands.
+row the round's own miss earned (CONV-B64). CONV-B53's measurement — iteration 1 of the
+multiagent-composition experiment — closed and was blind-reviewed on 2026-09-03; its row
+carries the result.
 
 ## Reading this backlog
 
@@ -1317,9 +1318,32 @@ change made to win ships through this repo's own process (PR, CHANGELOG, tag) an
 measured as a **new arm**, never as a silent mutation of a running one. An arm convoy loses
 is a finding, not a defect in the instrument.
 
-**Status.** **In flight** as of 2026-09-01 — arms authored and arming-verified against the
-0.10.0 release (the driver, un-overridden, catches a defect the project's own suite passes),
-24 trials launched. Unresolved until the report lands.
+**Status.** **Measured, 2026-09-03** (iteration 1; 128 trials on the 0.11.0 standalone gate,
+the v1 bank having been at ceiling). Four arms — control (the project's own suite only), a
+ceremony placebo (a gate that reddens once and carries no information), the gate after each
+PR with the envelope's `repair_brief` handed to a fix subagent, and the gate once after the
+session with a bounded fix loop — at Haiku and Sonnet implementer tiers under a Sonnet
+orchestrator, n = 16 per cell, held-out-clean as the primary endpoint, four pre-registered
+one-sided contrasts per tier-set with Holm correction, two blind reviewers and an adversarial
+verification pass on the readout. **The per-PR gate is supported at both tiers:** 16/16 and
+14/16 held-out-clean against control 4/16 and 2/16 and placebo 6/16 and 5/16; the decisive
+gate-vs-placebo contrast clears Holm (0.0004, 0.0048) under every sensitivity the review ran,
+and the arms are matched on iteration dose (about one gate red and one repair round per
+trial in both), so the gain is not the extra iteration. Cost per trial +20% to +25%; cost per
+correct trial a third (Haiku) to a fifth (Sonnet) of control's. **The post-session form is
+not the feature to sell:** 12/16 and 9/16, beating control but not the placebo once one
+exposed trial's disposition varies. **What the measurement does not show,** by the review's
+verdict: the endpoint is one defect class — the type rule the briefs withheld, which the
+gate's probes assert with different literals — so the result is the gate restoring a withheld
+rule through a repair brief consumed by a fresh subagent, not benefit on work independent of
+the rule it teaches; the placebo does not match the repair actor or the brief's content; four
+counted trials reached the task directory before a harness repair and are retained with the
+sensitivity. The findings, the typed record and the pre-registration with its dated
+corrections live with the instrument. Doctrine this row now carries: run the gate at the
+smallest unit the workflow has (per PR, per subagent — the hook's `SubagentStop` judge has
+that shape); a repair brief that names one PR's reds beats one that names five. Iteration 2
+measures the 0.12.0 hook on the same bank and needs a held-out group with a second defect
+class before it can claim more.
 
 **Effort** M (the arms exist; the cost is wall-clock and analysis) · **Source** [triage] ·
 **Rows** T53a
@@ -1736,7 +1760,7 @@ shipped (see above) or carried forward unchanged in the watch table.
 | T49a, T49b | CONV-B49 (shipped) |
 | T50a | CONV-B50 (shipped) |
 | T52a, T52b | CONV-B52 (shipped 0.10.0; T52b's doctrine folded into CONV-B08's home) |
-| T53a | CONV-B53 (in flight) |
+| T53a | CONV-B53 (measured 2026-09-03) |
 | T54a, T54b | watch table (declared red windows; halt-for-adjudication resume) |
 | T55b, T55c | CONV-B54 (shipped 0.10.0) |
 | T55a | CONV-B54, held at `watch` — per-PR changelog fragments |
