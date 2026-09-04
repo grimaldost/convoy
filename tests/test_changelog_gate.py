@@ -7,6 +7,8 @@ warning while the workflow stays green.
 """
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -73,6 +75,15 @@ def test_the_declared_exemption_is_case_insensitive() -> None:
     assert errors == []
 
 
+def test_a_whitespace_only_changelog_edit_does_not_record_the_change() -> None:
+    """Red proof: a trailing-space edit to a blank line, or an appended blank line,
+    produces a non-empty added diff that carries no non-whitespace content — not a
+    record. (``changelog_added`` is stripped before the truthiness check.)"""
+    errors, _ = _evaluate(['src/convoy/interface/git.py'], changelog_added='   \n\n')
+    assert len(errors) == 1
+    assert 'CHANGELOG.md' in errors[0]
+
+
 def test_a_change_outside_the_engine_carries_no_obligation() -> None:
     errors, warnings = _evaluate(['docs/backlog.md', '.github/workflows/ci.yml'])
     assert errors == []
@@ -129,14 +140,12 @@ def test_an_added_changelog_line_exempts_every_engine_commit_in_the_range() -> N
     assert errors == []
 
 
-def test_a_merge_commit_is_not_charged_with_its_own_engine_diff() -> None:
-    """Merge commits keep passing as today: ``main`` builds no per-commit entry for
-    them, so a merge commit that would otherwise show an engine touch is not judged."""
-    commits = [(['docs/backlog.md'], 'chore: tidy a comment\n')]
-    errors, _ = gate.evaluate(
-        ['src/convoy/interface/git.py', 'docs/backlog.md'], commits, '', (0, 9, 1), (0, 9, 1)
-    )
-    assert errors == []
+# A merge commit is no longer skipped — ``main`` charges it with its own resolution
+# diff (``git diff-tree --cc``). That is ``main``'s job, not ``evaluate``'s, so it is
+# proven end to end below (a real repo, a real merge, the real script as a subprocess)
+# rather than through ``evaluate`` directly: see
+# ``test_end_to_end_a_merge_resolution_that_touches_the_engine_needs_recording`` and
+# ``test_end_to_end_a_clean_merge_passes``.
 
 
 # --- the release heading must move the version forward -----------------------
@@ -240,3 +249,158 @@ def test_the_vocabulary_check_reads_only_the_added_lines() -> None:
         changelog_added='- an ordinary bullet under an existing heading\n',
     )
     assert errors == []
+
+
+# --- end to end: a real repo, a real merge, the real script as a subprocess --------
+#
+# ``evaluate`` is pure and the tests above drive it directly, but two things live only
+# in ``main``: which commits are merges (and what their own resolution diff is), and
+# what the script actually prints and exits with. These run ``scripts/changelog_gate.py``
+# unchanged, as CI does, against a repo built from real commits — which makes them the
+# black-box counterpart of the record-or-declare red proofs: point the same test, run
+# unchanged, at the pre-fix script (swapped in at the same path) and it fails for the
+# reported reason, not from a signature mismatch or a `changed=[]` the pre-fix code
+# could never fault.
+
+
+def _git(args: list[str], cwd: Path) -> str:
+    return subprocess.run(
+        ['git', *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def _init_repo(repo: Path) -> None:
+    """One commit on branch ``base``: an engine file, a docs file, an open
+    ``[Unreleased]`` section, and ``pyproject.toml`` at 0.9.0 — a PR branch builds on
+    top of this."""
+    _git(['init', '-q', '-b', 'main', '.'], cwd=repo)
+    _git(['config', 'user.email', 't@t'], cwd=repo)
+    _git(['config', 'user.name', 't'], cwd=repo)
+    _git(['config', 'commit.gpgsign', 'false'], cwd=repo)
+    (repo / 'src' / 'convoy').mkdir(parents=True)
+    (repo / 'docs').mkdir()
+    (repo / 'pyproject.toml').write_text(
+        '[project]\nname = "t"\nversion = "0.9.0"\n', encoding='utf-8'
+    )
+    (repo / 'CHANGELOG.md').write_text(
+        '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- an old line\n', encoding='utf-8'
+    )
+    (repo / 'src' / 'convoy' / 'engine.py').write_text('x = 1\n', encoding='utf-8')
+    (repo / 'docs' / 'backlog.md').write_text('docs\n', encoding='utf-8')
+    _git(['add', '-A'], cwd=repo)
+    _git(['commit', '-q', '-m', 'chore: base'], cwd=repo)
+    _git(['branch', 'base'], cwd=repo)
+
+
+def _commit(repo: Path, message: str, edits: dict[str, str]) -> None:
+    """Write each ``path -> content`` edit and commit them with ``message``."""
+    for rel, content in edits.items():
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding='utf-8')
+    _git(['add', '-A'], cwd=repo)
+    _git(['commit', '-q', '-m', message], cwd=repo)
+
+
+def _run_gate(repo: Path) -> subprocess.CompletedProcess[str]:
+    """Run the real script as a subprocess against ``repo``, base ref ``base``."""
+    return subprocess.run(
+        [sys.executable, str(_SCRIPT), 'base'], cwd=repo, capture_output=True, text=True
+    )
+
+
+def test_end_to_end_a_trailer_on_one_commit_does_not_exempt_another(tmp_path: Path) -> None:
+    """Red proof: commit A touches the engine with no trailer; commit B is unrelated
+    and carries the trailer. Pre-fix, ``_TRAILER.search`` ran over every message in the
+    range concatenated and found B's trailer, wrongly exempting A."""
+    _init_repo(tmp_path)
+    _commit(tmp_path, 'fix: change engine behavior\n', {'src/convoy/engine.py': 'x = 2\n'})
+    _commit(
+        tmp_path,
+        'chore: tidy a comment\n\nChangelog: none (comment only)\n',
+        {'docs/backlog.md': 'docs, tidied\n'},
+    )
+    result = _run_gate(tmp_path)
+    assert result.returncode == 1
+    assert 'change engine behavior' in result.stdout
+    assert 'CHANGELOG.md' in result.stdout
+
+
+def test_end_to_end_deleting_the_changelog_does_not_record_the_change(tmp_path: Path) -> None:
+    """Red proof: a commit that changes the engine and deletes CHANGELOG.md must still
+    fail. Pre-fix, the aggregate changed-file list contained ``CHANGELOG.md`` (deleted
+    is still touched), which alone satisfied the old ``RECORD not in paths`` check."""
+    _init_repo(tmp_path)
+    (tmp_path / 'CHANGELOG.md').unlink()
+    _commit(tmp_path, 'fix: change engine behavior\n', {'src/convoy/engine.py': 'x = 2\n'})
+    result = _run_gate(tmp_path)
+    assert result.returncode == 1
+    assert 'CHANGELOG.md' in result.stdout
+
+
+def test_end_to_end_a_whitespace_only_changelog_edit_does_not_record_the_change(
+    tmp_path: Path,
+) -> None:
+    """Red proof: a commit that changes the engine and only appends blank lines to
+    CHANGELOG.md must still fail — a non-empty diff is not the same as a record."""
+    _init_repo(tmp_path)
+    original = (tmp_path / 'CHANGELOG.md').read_text(encoding='utf-8')
+    _commit(
+        tmp_path,
+        'fix: change engine behavior\n',
+        {'src/convoy/engine.py': 'x = 2\n', 'CHANGELOG.md': original + '\n\n'},
+    )
+    result = _run_gate(tmp_path)
+    assert result.returncode == 1
+    assert 'CHANGELOG.md' in result.stdout
+
+
+def test_end_to_end_a_merge_resolution_that_touches_the_engine_needs_recording(
+    tmp_path: Path,
+) -> None:
+    """Red proof: a merge whose conflict resolution edits the engine, with neither a
+    changelog addition nor a trailer on the merge commit itself, must fail — the merge
+    is not exempt just because it is a merge. Both sides record their own change with a
+    trailer, so the only unrecorded change left is the merge's own resolution."""
+    _init_repo(tmp_path)
+    _git(['checkout', '-q', '-b', 'side'], cwd=tmp_path)
+    _commit(
+        tmp_path,
+        'fix: side engine tweak\n\nChangelog: none (internal only)\n',
+        {'src/convoy/engine.py': 'x = 2  # side\n'},
+    )
+    _git(['checkout', '-q', 'main'], cwd=tmp_path)
+    _commit(
+        tmp_path,
+        'fix: main engine tweak\n\nChangelog: none (internal only)\n',
+        {'src/convoy/engine.py': 'x = 2  # main\n'},
+    )
+    subprocess.run(  # a real conflict: both sides touched the same line; do not check=True
+        ['git', 'merge', '--no-ff', 'side'], cwd=tmp_path, capture_output=True, text=True
+    )
+    # Resolve by hand with content matching neither parent verbatim — the merge's own
+    # contribution, the thing the fix charges to the merge commit.
+    (tmp_path / 'src' / 'convoy' / 'engine.py').write_text('x = 2  # merged\n', encoding='utf-8')
+    _git(['add', '-A'], cwd=tmp_path)
+    _git(['commit', '-q', '-m', 'Merge branch side'], cwd=tmp_path)
+    result = _run_gate(tmp_path)
+    assert result.returncode == 1
+    assert 'Merge branch side' in result.stdout
+    assert 'CHANGELOG.md' in result.stdout
+
+
+def test_end_to_end_a_clean_merge_passes(tmp_path: Path) -> None:
+    """A merge with no conflict-resolution content of its own (each side's own change
+    already recorded on its own commit) must not be charged a second time."""
+    _init_repo(tmp_path)
+    _git(['checkout', '-q', '-b', 'side'], cwd=tmp_path)
+    _commit(
+        tmp_path,
+        'fix: side engine tweak\n\nChangelog: none (internal only)\n',
+        {'src/convoy/engine.py': 'x = 2\n'},
+    )
+    _git(['checkout', '-q', 'main'], cwd=tmp_path)
+    _commit(tmp_path, 'docs: unrelated tidy\n', {'docs/backlog.md': 'docs, tidied\n'})
+    _git(['merge', '--no-ff', '-m', 'Merge branch side', 'side'], cwd=tmp_path)
+    result = _run_gate(tmp_path)
+    assert result.returncode == 0

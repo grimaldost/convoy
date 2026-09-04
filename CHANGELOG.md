@@ -17,10 +17,17 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 - The changelog gate (`scripts/changelog_gate.py`) no longer lets one commit's
   `Changelog: none (<reason>)` trailer exempt every other commit in the pushed range,
-  and no longer accepts merely touching `CHANGELOG.md` (including a deletion or a
-  whitespace-only edit) as recording a change. The record-or-declare check is now
-  judged per commit: a commit that changes the engine passes only if the PR's
-  CHANGELOG diff actually adds lines, or that same commit carries the trailer.
+  and no longer accepts merely touching `CHANGELOG.md` — including a deletion or a
+  whitespace-only edit (a trailing-space change, or an appended blank line) — as
+  recording a change. The record-or-declare check is now judged per commit: a commit
+  that changes the engine passes only if the PR's CHANGELOG diff actually adds
+  non-whitespace content, or that same commit carries the trailer. A merge commit is
+  judged on its own resolution diff instead of skipped: a conflict resolution that
+  edits `src/` needs the same recording as any other commit, and a clean merge is not
+  charged. Judging per commit trades in a new false positive: an intermediate commit
+  whose own diff touches the engine but is reverted later in the same range must
+  still carry the trailer or a changelog line, even though the pushed range's net
+  diff shows nothing for it — declare it with the trailer, same as any other commit.
 
 ## [0.12.0] - 2026-09-02
 

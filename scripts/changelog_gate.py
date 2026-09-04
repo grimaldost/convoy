@@ -12,8 +12,15 @@ Three checks and one advisory, all over the merge-base diff:
   must have the PR's ``CHANGELOG.md`` diff *add* lines, or that commit carries the
   trailer ``Changelog: none (<reason>)`` — the opt-out for a change nothing a
   changelog reader could notice (comment wording, an internal rename). Touching
-  ``CHANGELOG.md`` without adding to it does not count, and a trailer declares only
-  the commit it rides on, not the whole range.
+  ``CHANGELOG.md`` without adding non-whitespace content does not count — a trailing-
+  space edit or an appended blank line is not a record — and a trailer declares only
+  the commit it rides on, not the whole range. A merge commit is judged on its own
+  resolution diff (``git diff-tree --cc``), not skipped: a conflict resolution that
+  edits ``src/`` needs the same recording as any other commit. Granularity has a
+  cost of its own: an intermediate commit's engine change that a later commit in the
+  same range reverts still needs its own trailer or entry, even though the range's
+  final diff never shows it — convoy's own history integrates by merge commit rather
+  than squash, so a WIP commit like that stays attributable instead of disappearing.
 - **A release heading moves the version forward.** When the diff adds a ``## [X.Y.Z]``
   heading, ``pyproject.toml`` at HEAD must carry exactly ``X.Y.Z`` and the merge-base
   version must be smaller. The three version *sites* agreeing is
@@ -87,23 +94,28 @@ def evaluate(
 
     ``changed`` is the merge-base changed-file list, read by the section-heading and
     contract-surface checks below — both judge the PR's final shape, not any one
-    commit. ``commits`` is one ``(paths, message)`` pair per non-merge commit in the
-    range: ``paths`` that commit's *own* diff (against its parent), ``message`` that
-    commit's own message — the record-or-declare check needs this per-commit, not
-    range-wide, or a trailer on one commit exempts every commit, and a commit's own
-    engine touch could be missed inside the range's aggregate. ``changelog_added`` is
-    the added lines of CHANGELOG.md's diff across the whole range (without the ``+``
-    prefixes) — a shared PR-level record, since one entry can cover several commits —
-    and the versions come from ``pyproject.toml`` at each end.
+    commit. ``commits`` is one ``(paths, message)`` pair per commit in the range,
+    merges included: ``paths`` that commit's *own* diff (a merge's own resolution
+    diff, an ordinary commit's diff against its parent), ``message`` that commit's
+    own message — the record-or-declare check needs this per-commit, not range-wide,
+    or a trailer on one commit exempts every commit, and a commit's own engine touch
+    (a merge's own conflict resolution included) could be missed inside the range's
+    aggregate. ``changelog_added`` is the added lines of CHANGELOG.md's diff across
+    the whole range (without the ``+`` prefixes) — a shared PR-level record, since
+    one entry can cover several commits — and the versions come from
+    ``pyproject.toml`` at each end. Whitespace-only content (a trailing-space edit to
+    an existing line, or blank lines) does not count as a record: it is stripped
+    before the record-or-declare check reads it.
     """
     errors: list[str] = []
     warnings: list[str] = []
     paths = [path.strip().replace('\\', '/') for path in changed if path.strip()]
+    recorded = bool(changelog_added.strip())
 
     for raw_paths, message in commits:
         commit_paths = [path.strip().replace('\\', '/') for path in raw_paths if path.strip()]
         engine_paths = [path for path in commit_paths if path.startswith(ENGINE_PREFIXES)]
-        if engine_paths and not changelog_added and not _TRAILER.search(message):
+        if engine_paths and not recorded and not _TRAILER.search(message):
             listed = ', '.join(engine_paths[:5]) + (' …' if len(engine_paths) > 5 else '')
             subject = next(iter(message.splitlines()), '(empty message)')
             errors.append(
@@ -187,8 +199,17 @@ def main(argv: list[str]) -> int:
     for sha in commit_shas:
         parents = _git('log', '-1', '--format=%P', sha).split()
         if len(parents) > 1:
-            continue  # a merge commit: no per-commit diff considered, same as today
-        own_paths = _git('diff-tree', '--no-commit-id', '--name-only', '-r', sha).splitlines()
+            # A merge commit's own diff is its conflict resolution: empty for a clean
+            # merge, non-empty exactly when the merge introduced content of its own —
+            # `--cc` is what makes that distinction (a plain diff-tree on a merge shows
+            # nothing at all, which is not the same claim).
+            own_paths = _git(
+                'diff-tree', '--cc', '--no-commit-id', '--name-only', '-r', sha
+            ).splitlines()
+        else:
+            own_paths = _git(
+                'diff-tree', '--no-commit-id', '--name-only', '-r', '--root', sha
+            ).splitlines()
         own_message = _git('log', '-1', '--format=%B', sha)
         commits.append((own_paths, own_message))
 
