@@ -19,8 +19,10 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           python-version: '3.14'
       # Before anything that would rewrite it. uv.lock carries the package version, and it
@@ -57,3 +59,16 @@ jobs:
     steps:
       - name: Every leg of the matrix must have succeeded
         run: '[ "${{ needs.checks.result }}" = "success" ]'
+
+  zizmor:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uvx zizmor==1.30.0 --min-severity high .github/workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
