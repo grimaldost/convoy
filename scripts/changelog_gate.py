@@ -8,10 +8,12 @@ not an aspiration. ``.github/workflows/changelog.yml`` runs this on every pull r
 
 Three checks and one advisory, all over the merge-base diff:
 
-- **Record or declare.** A diff that touches ``src/`` must also touch ``CHANGELOG.md``,
-  or a commit in the range must carry the trailer ``Changelog: none (<reason>)`` — the
-  opt-out for a change nothing a changelog reader could notice (comment wording, an
-  internal rename).
+- **Record or declare.** Judged per commit: a commit whose own diff touches ``src/``
+  must have the PR's ``CHANGELOG.md`` diff *add* lines, or that commit carries the
+  trailer ``Changelog: none (<reason>)`` — the opt-out for a change nothing a
+  changelog reader could notice (comment wording, an internal rename). Touching
+  ``CHANGELOG.md`` without adding to it does not count, and a trailer declares only
+  the commit it rides on, not the whole range.
 - **A release heading moves the version forward.** When the diff adds a ``## [X.Y.Z]``
   heading, ``pyproject.toml`` at HEAD must carry exactly ``X.Y.Z`` and the merge-base
   version must be smaller. The three version *sites* agreeing is
@@ -76,29 +78,40 @@ Version = tuple[int, int, int]
 
 def evaluate(
     changed: list[str],
-    messages: str,
+    commits: list[tuple[list[str], str]],
     changelog_added: str,
     base_version: Version | None,
     head_version: Version | None,
 ) -> tuple[list[str], list[str]]:
     """The whole decision, pure: ``(errors, warnings)`` for one pull request's diff.
 
-    ``changed`` is the merge-base changed-file list, ``messages`` every commit message in
-    the range, ``changelog_added`` the added lines of CHANGELOG.md's diff (without the
-    ``+`` prefixes), and the versions come from ``pyproject.toml`` at each end.
+    ``changed`` is the merge-base changed-file list, read by the section-heading and
+    contract-surface checks below — both judge the PR's final shape, not any one
+    commit. ``commits`` is one ``(paths, message)`` pair per non-merge commit in the
+    range: ``paths`` that commit's *own* diff (against its parent), ``message`` that
+    commit's own message — the record-or-declare check needs this per-commit, not
+    range-wide, or a trailer on one commit exempts every commit, and a commit's own
+    engine touch could be missed inside the range's aggregate. ``changelog_added`` is
+    the added lines of CHANGELOG.md's diff across the whole range (without the ``+``
+    prefixes) — a shared PR-level record, since one entry can cover several commits —
+    and the versions come from ``pyproject.toml`` at each end.
     """
     errors: list[str] = []
     warnings: list[str] = []
     paths = [path.strip().replace('\\', '/') for path in changed if path.strip()]
 
-    engine_paths = [path for path in paths if path.startswith(ENGINE_PREFIXES)]
-    if engine_paths and RECORD not in paths and not _TRAILER.search(messages):
-        listed = ', '.join(engine_paths[:5]) + (' …' if len(engine_paths) > 5 else '')
-        errors.append(
-            f'the diff changes the engine ({listed}) without touching {RECORD}. '
-            f'Record the change under [Unreleased], or declare the exemption with a '
-            f'commit trailer: Changelog: none (<reason>)'
-        )
+    for raw_paths, message in commits:
+        commit_paths = [path.strip().replace('\\', '/') for path in raw_paths if path.strip()]
+        engine_paths = [path for path in commit_paths if path.startswith(ENGINE_PREFIXES)]
+        if engine_paths and not changelog_added and not _TRAILER.search(message):
+            listed = ', '.join(engine_paths[:5]) + (' …' if len(engine_paths) > 5 else '')
+            subject = next(iter(message.splitlines()), '(empty message)')
+            errors.append(
+                f'commit "{subject}" changes the engine ({listed}) without the PR '
+                f'adding lines to {RECORD}. Record the change under [Unreleased], or '
+                f'declare the exemption on that commit with a trailer: '
+                f'Changelog: none (<reason>)'
+            )
 
     headings = _ADDED_HEADING.findall(changelog_added)
     if headings:
@@ -168,7 +181,17 @@ def main(argv: list[str]) -> int:
     merge_base = _git('merge-base', base_ref, 'HEAD').strip()
 
     changed = _git('diff', '--name-only', f'{merge_base}..HEAD').splitlines()
-    messages = _git('log', '--format=%B', f'{merge_base}..HEAD')
+
+    commit_shas = _git('log', '--format=%H', f'{merge_base}..HEAD').split()
+    commits: list[tuple[list[str], str]] = []
+    for sha in commit_shas:
+        parents = _git('log', '-1', '--format=%P', sha).split()
+        if len(parents) > 1:
+            continue  # a merge commit: no per-commit diff considered, same as today
+        own_paths = _git('diff-tree', '--no-commit-id', '--name-only', '-r', sha).splitlines()
+        own_message = _git('log', '-1', '--format=%B', sha)
+        commits.append((own_paths, own_message))
+
     changelog_diff = _git('diff', f'{merge_base}..HEAD', '--', RECORD)
     changelog_added = '\n'.join(
         line[1:]
@@ -182,7 +205,7 @@ def main(argv: list[str]) -> int:
     except subprocess.CalledProcessError:  # a history with no pyproject at the base
         base_version = None
 
-    errors, warnings = evaluate(changed, messages, changelog_added, base_version, head_version)
+    errors, warnings = evaluate(changed, commits, changelog_added, base_version, head_version)
     for warning in warnings:
         print(f'::warning::{warning}')
     for error in errors:

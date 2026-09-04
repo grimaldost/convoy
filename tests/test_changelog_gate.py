@@ -25,7 +25,10 @@ def _evaluate(
     base_version: tuple[int, int, int] | None = (0, 9, 1),
     head_version: tuple[int, int, int] | None = (0, 9, 1),
 ) -> tuple[list[str], list[str]]:
-    return gate.evaluate(changed, messages, changelog_added, base_version, head_version)
+    """Single-commit convenience: ``changed``/``messages`` are that one commit's own
+    diff and message, which is also the whole range's aggregate for the other checks."""
+    commits = [(changed, messages)]
+    return gate.evaluate(changed, commits, changelog_added, base_version, head_version)
 
 
 # --- record or declare -------------------------------------------------------
@@ -39,7 +42,11 @@ def test_an_engine_change_without_a_changelog_entry_fails() -> None:
 
 
 def test_an_engine_change_with_a_changelog_entry_passes() -> None:
-    errors, _ = _evaluate(['src/convoy/interface/git.py', 'CHANGELOG.md'])
+    """A changelog *entry* means added lines, not merely the path being touched."""
+    errors, _ = _evaluate(
+        ['src/convoy/interface/git.py', 'CHANGELOG.md'],
+        changelog_added='- Recorded the change.\n',
+    )
     assert errors == []
 
 
@@ -75,6 +82,61 @@ def test_a_change_outside_the_engine_carries_no_obligation() -> None:
 def test_windows_path_separators_are_normalized() -> None:
     errors, _ = _evaluate(['src\\convoy\\interface\\git.py'])
     assert len(errors) == 1
+
+
+# --- record or declare is judged per commit, not per range --------------------
+
+
+def test_a_trailer_on_one_commit_does_not_exempt_a_different_untrailered_commit() -> None:
+    """Red proof: commit A touches src/ with no changelog and no trailer; commit B is
+    unrelated and carries the trailer. The declaration is reviewable for B and must not
+    silently cover A."""
+    commits = [
+        (['src/convoy/interface/git.py'], 'fix: change engine behavior\n'),
+        (['docs/backlog.md'], 'chore: tidy a comment\n\nChangelog: none (comment only)\n'),
+    ]
+    errors, _ = gate.evaluate([], commits, '', (0, 9, 1), (0, 9, 1))
+    assert len(errors) == 1
+    assert 'git.py' in errors[0]
+
+
+def test_a_commit_that_deletes_the_changelog_still_fails() -> None:
+    """Red proof: a commit touching src/ that only deletes or whitespace-edits
+    CHANGELOG.md must fail — touching the file is not recording the change."""
+    commits = [(['src/convoy/interface/git.py', 'CHANGELOG.md'], 'fix: change engine behavior\n')]
+    errors, _ = gate.evaluate([], commits, '', (0, 9, 1), (0, 9, 1))
+    assert len(errors) == 1
+
+
+def test_a_trailer_on_the_commit_that_touches_the_engine_passes() -> None:
+    commits = [
+        (
+            ['src/convoy/interface/git.py'],
+            'fix: change engine behavior\n\nChangelog: none (internal only)\n',
+        ),
+        (['docs/backlog.md'], 'chore: tidy a comment\n'),
+    ]
+    errors, _ = gate.evaluate([], commits, '', (0, 9, 1), (0, 9, 1))
+    assert errors == []
+
+
+def test_an_added_changelog_line_exempts_every_engine_commit_in_the_range() -> None:
+    commits = [
+        (['src/convoy/interface/git.py'], 'fix: change engine behavior\n'),
+        (['src/convoy/interface/other.py'], 'fix: another engine change\n'),
+    ]
+    errors, _ = gate.evaluate([], commits, '- Recorded the change.\n', (0, 9, 1), (0, 9, 1))
+    assert errors == []
+
+
+def test_a_merge_commit_is_not_charged_with_its_own_engine_diff() -> None:
+    """Merge commits keep passing as today: ``main`` builds no per-commit entry for
+    them, so a merge commit that would otherwise show an engine touch is not judged."""
+    commits = [(['docs/backlog.md'], 'chore: tidy a comment\n')]
+    errors, _ = gate.evaluate(
+        ['src/convoy/interface/git.py', 'docs/backlog.md'], commits, '', (0, 9, 1), (0, 9, 1)
+    )
+    assert errors == []
 
 
 # --- the release heading must move the version forward -----------------------

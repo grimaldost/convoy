@@ -11,6 +11,17 @@ marked
 engine knows to sync rather than silently mis-handle the new value. See the versioning
 discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
+## [Unreleased]
+
+### Fixed
+
+- The changelog gate (`scripts/changelog_gate.py`) no longer lets one commit's
+  `Changelog: none (<reason>)` trailer exempt every other commit in the pushed range,
+  and no longer accepts merely touching `CHANGELOG.md` (including a deletion or a
+  whitespace-only edit) as recording a change. The record-or-declare check is now
+  judged per commit: a commit that changes the engine passes only if the PR's
+  CHANGELOG diff actually adds lines, or that same commit carries the trailer.
+
 ## [0.12.0] - 2026-09-02
 
 The gate becomes a hook, and a project can carry one. Written at cut time, over the
