@@ -778,7 +778,7 @@ def status(
     economy = envelope['economy']
     typer.echo(
         f'  spawns {economy["spawn_count"]}, turns {economy["num_turns"]}, '
-        f'${economy["total_cost_usd"]:.2f}{" (estimated)" if economy["cost_estimated"] else ""}'
+        f'${economy["total_cost_usd"]:.2f}'
     )
     if state == 'dead':
         typer.echo(f'  {envelope["message"]}')
