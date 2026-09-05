@@ -294,10 +294,11 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   is a third party's account of a run that never reported anything.
 - **Per-spawn granularity is mandatory.** A run-total-only file cannot be joined
   per spawn and is useless for economy analysis. Each spawn is one line.
-- **`cost_usd` fallback.** When the provider reports `0.0` under a subscription
-  auth, convoy substitutes a `input_tokens × price_in + output_tokens × price_out`
-  estimate and sets `cost_estimated: true` on that line, so a consumer never
-  silently reads a real run as free.
+- **`cost_usd` is the provider's number, always.** `cost_estimated` is retired and
+  permanently `false`: it once marked a line priced from a local table when the
+  provider reported `0.0`, a branch measured dead over 76 production spawns. The key
+  stays in the schema because a consumer reads it — a removed key breaks more than a
+  frozen one. A future zero-cost provider gets `cost_usd: null`, not a price table.
 
 ### Worked example
 

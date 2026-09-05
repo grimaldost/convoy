@@ -48,7 +48,6 @@ from convoy.core.telemetry import (
     RunStart,
     SpawnComplete,
     SpawnStart,
-    apply_cost_fallback,
     budget_is_nearing,
 )
 from convoy.interface.gate_runner import GateRunner
@@ -243,24 +242,22 @@ def _record_spawn(
     cap_usd = governed.budget_usd
     nearing = budget_is_nearing(spend_usd, cap_usd)
     telemetry.write(
-        apply_cost_fallback(
-            SpawnComplete(
-                run_id=run_id,
-                pr_id=pr_id,
-                role=role,
-                exit_code=result.exit_code,
-                input_tokens=result.economy.input_tokens,
-                output_tokens=result.economy.output_tokens,
-                num_turns=result.economy.num_turns,
-                duration_s=result.economy.duration_s,
-                cost_usd=spend_usd,
-                effective_model=result.economy.effective_model,
-                effort=governed.effort,
-                output_tail=output_tail,
-                classification=result.classification,
-                budget_cap_usd=cap_usd,
-                budget_nearing=nearing,
-            )
+        SpawnComplete(
+            run_id=run_id,
+            pr_id=pr_id,
+            role=role,
+            exit_code=result.exit_code,
+            input_tokens=result.economy.input_tokens,
+            output_tokens=result.economy.output_tokens,
+            num_turns=result.economy.num_turns,
+            duration_s=result.economy.duration_s,
+            cost_usd=spend_usd,
+            effective_model=result.economy.effective_model,
+            effort=governed.effort,
+            output_tail=output_tail,
+            classification=result.classification,
+            budget_cap_usd=cap_usd,
+            budget_nearing=nearing,
         )
     )
     reporter.spawn_done(pr_id, role, result)

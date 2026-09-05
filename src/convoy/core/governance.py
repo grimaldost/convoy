@@ -15,11 +15,24 @@ from dataclasses import dataclass, replace
 
 from convoy.core.spec import PR, Governance, Series
 
+# The date the UPSTREAM tier data was last reconciled against the platform's model
+# list -- not the date this file was edited. Stamping the edit would date the wrong
+# thing: a table copied from an already-stale source would certify itself fresh, and
+# an age check would then be measuring the stamp rather than the lineup.
+# lineup synced 2026-09-05
+LINEUP_RECONCILED = '2026-09-05'
+
+# A FLOOR, not the answer. A series file that resolves its own tier -- an explicit
+# ``model``, or a tier the authoring side already resolved -- never reaches this table.
+# It exists so convoy installs and runs for someone who has no access to whatever
+# resolved that lineup, which is the charter, and it goes stale between releases by
+# design. Correct it locally rather than waiting for one: set ``model`` on the series
+# or on the PR.
 DEFAULT_TIER_MODELS: dict[str, str] = {
     'weak': 'claude-haiku-4-5',
     'mid': 'claude-sonnet-5',
     'strong': 'claude-opus-5',
-    'frontier': 'claude-fable-5',
+    'frontier': 'claude-fable-5-1',
 }
 
 _ROLES = ('implementation', 'review', 'fix')

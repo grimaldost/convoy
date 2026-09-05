@@ -13,6 +13,48 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Removed
+
+- **`core/pricing.py` and `apply_cost_fallback` are gone (consumer-affecting).**
+  They substituted a token x local-price estimate whenever the provider reported
+  `cost_usd == 0.0`, on the premise that subscription auth reports no cost. The
+  premise is false and was measured so: `cost_estimated` was true **0 times across
+  76 production spawns**, 0 of 22 more re-counted on 2026-09-05, and a direct check
+  against the installed CLI on a subscription seat returns a real `total_cost_usd`.
+  The module was also internally inconsistent — its docstring promised a
+  conservative fallback while its default rate under-counted a frontier-priced model
+  two-fold — and it was a second copy of a price list convoy had to keep in sync with
+  a lineup it does not own. `cost_usd` is now always the provider's number.
+  **`cost_estimated` stays in the telemetry schema, permanently `false`**: the schema
+  is a public contract, and removing a key a consumer reads is worse than freezing
+  one. A future zero-cost provider gets `cost_usd: null` and a consumer that decides,
+  not a price table here.
+
+### Added
+
+- **`[governance]` rejects an unknown field (consumer-affecting).** The parser read
+  only the keys it named and dropped the rest, so a series authored against a newer
+  convoy would load, have the unread key silently ignored, and run every PR on
+  whatever the built-in table resolves — a wrong run with plausible telemetry and no
+  signal anywhere. It is now an allow-list, because the failure is always the key
+  nobody thought to forbid, and the error names the near-miss (`'permision_mode'; did
+  you mean 'permission_mode'?`) rather than sending the author to a schema doc.
+  ADR-0005 already refuses an unknown per-PR governance key; this closes the same
+  hole on the series block. A spec that relied on a typo being ignored now fails at
+  load, which is the point.
+
+### Changed
+
+- **The `frontier` tier resolves to `claude-fable-5-1`**, and `DEFAULT_TIER_MODELS`
+  is documented as the **floor** it always was, with a `LINEUP_RECONCILED` stamp. The
+  stamp records when the upstream tier data was reconciled against the platform's
+  model list, **not** when this file was edited: dating the edit would let a table
+  copied from an already-stale source certify itself fresh, and an age check would
+  then be measuring the stamp rather than the lineup. A series that resolves its own
+  model never reaches this table; it exists so convoy installs and runs for someone
+  with no access to whatever maintains a lineup, and it goes stale between releases
+  by design. `skills/convoy/SKILL.md` says the same instead of restating the ids.
+
 ### Fixed
 
 - The changelog gate (`scripts/changelog_gate.py`) no longer lets one commit's

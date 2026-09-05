@@ -13,8 +13,6 @@ import dataclasses
 import json
 from dataclasses import dataclass
 
-from convoy.core import pricing
-
 SCHEMA_VERSION = 1
 
 # The fraction of a spawn's cap at which its spend is called out. The cap itself is not
@@ -98,9 +96,12 @@ class SpawnStart:
 class SpawnComplete:
     """Emitted once per agent spawn — the per-spawn economy record.
 
-    ``role`` is one of ``implementation``, ``review``, ``fix``. ``cost_estimated``
-    marks a line whose ``cost_usd`` was substituted from a token estimate rather than
-    reported by the provider (see ``apply_cost_fallback``). ``output_tail`` carries the
+    ``role`` is one of ``implementation``, ``review``, ``fix``. ``cost_estimated`` is
+    permanently ``False``: it once marked a line whose ``cost_usd`` came from a local
+    price table, and that path is gone (the provider reports a real cost, measured over
+    76 production spawns and again on 2026-09-05). The field stays because the schema is
+    a public contract and removing a key a consumer reads is worse than leaving it.
+    ``output_tail`` carries the
     bounded tail of the spawn's combined stdout+stderr on a non-``ok`` classification
     (``''`` on ok lines), so an infrastructure or budget halt is diagnosable from
     telemetry alone instead of demanding a manual re-run of the spawn.
@@ -294,15 +295,11 @@ def budget_is_nearing(cost_usd: float, cap_usd: float | None) -> bool:
     return cost_usd >= cap_usd * BUDGET_NEARING_FRACTION
 
 
-def apply_cost_fallback(event: SpawnComplete) -> SpawnComplete:
-    """Substitute a token-count cost estimate when the provider reported ``0.0``.
-
-    If ``cost_usd`` is ``0.0``, return a copy with the estimated cost and
-    ``cost_estimated = True``; otherwise return the event unchanged.
-    """
-    if event.cost_usd != 0.0:
-        return event
-    estimated = pricing.estimate_cost_usd(
-        event.effective_model, event.input_tokens, event.output_tokens
-    )
-    return dataclasses.replace(event, cost_usd=estimated, cost_estimated=True)
+# ``apply_cost_fallback`` lived here. It substituted a token x local-price estimate when
+# the provider reported ``0.0``, on the premise that subscription auth reports no cost.
+# The premise is false: ``cost_estimated`` was true 0 times across 76 production spawns,
+# 0 of 22 more on 2026-09-05, and a direct check against the installed CLI on a
+# subscription seat returns a real ``total_cost_usd``. Keeping it meant maintaining a
+# second unowned copy of the price list for a branch nothing takes. If a zero-cost
+# provider ever reappears, the answer is ``cost_usd: null`` and a consumer that decides
+# what to do, not a price table convoy has to keep in sync. (CONV-B29)

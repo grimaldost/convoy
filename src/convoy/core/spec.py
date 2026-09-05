@@ -9,6 +9,7 @@ rejected. Anything touching the filesystem (do ``[paths]`` exist, is an independ
 check's asset out-of-tree) lives elsewhere.
 """
 
+import difflib
 import os
 import re
 import tomllib
@@ -41,6 +42,15 @@ EFFORT_LEVELS = frozenset({'low', 'medium', 'high', 'xhigh', 'max'})
 # bind to — a different axis, not a narrower version of the same thing. The series-wide
 # repair bound stays ``[review].max_fix_attempts`` (02-formats.md).
 _FORBIDDEN_PR_KEYS = ('budget', 'budgets')
+
+# Every key ``_parse_governance`` reads. A ``[governance]`` table carrying anything else
+# is REJECTED rather than ignored: a spec written against a newer convoy would otherwise
+# load, have the unread key dropped, and run on whatever the built-in floor resolves --
+# a wrong run with plausible telemetry and no signal anywhere. An allow-list rather than
+# a blocklist, because the failure is always the key nobody thought to forbid.
+_KNOWN_GOVERNANCE_KEYS = frozenset(
+    {'effort', 'permission_mode', 'timeout_seconds', 'budgets', 'tools', 'model', 'tier'}
+)
 
 
 class SpecError(ValueError):
@@ -365,8 +375,32 @@ def _parse_tools(data: Mapping[str, Any]) -> Tools:
     )
 
 
+def _nearest(name: str, known: frozenset[str]) -> str | None:
+    """The known key ``name`` was most likely meant to be, or None if nothing is close.
+
+    A bare 'unknown field' sends the author hunting through a schema doc for a name they
+    already almost typed, so the rejection carries the candidate.
+    """
+    matches = difflib.get_close_matches(name, sorted(known), n=1, cutoff=0.7)
+    return matches[0] if matches else None
+
+
+def _reject_unknown_keys(data: Mapping[str, Any], known: frozenset[str], where: str) -> None:
+    """Raise on any key outside ``known``. See :data:`_KNOWN_GOVERNANCE_KEYS`."""
+    for name in sorted(k for k in data if k not in known):
+        near = _nearest(str(name), known)
+        hint = f'; did you mean {near!r}?' if near else ''
+        raise SpecError(
+            f'{where}: unknown field {name!r}{hint} '
+            f'(known: {", ".join(sorted(known))}). '
+            'Convoy rejects rather than ignores it: a key this engine does not read '
+            'would otherwise change nothing while the author believes it did.'
+        )
+
+
 def _parse_governance(data: Mapping[str, Any]) -> Governance:
     where = '[governance]'
+    _reject_unknown_keys(data, _KNOWN_GOVERNANCE_KEYS, where)
     return Governance(
         effort=_require_choice(data, 'effort', where, EFFORT_LEVELS),
         permission_mode=_require_choice(data, 'permission_mode', where, PERMISSION_MODES),

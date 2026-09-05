@@ -89,6 +89,35 @@ depends_on = ["pr-1-lexer"]
 """
 
 
+def test_an_unknown_key_under_governance_is_rejected() -> None:
+    """A key the engine does not read must fail loudly, not be dropped.
+
+    A series authored against a newer convoy -- one carrying, say, a resolved tier
+    table -- would otherwise load here, have the key silently ignored, and resolve
+    every PR through the built-in floor instead. The run would look correct and its
+    telemetry would agree with it. ADR-0005 refuses an unknown per-PR governance key
+    for the same reason; this closes the same hole on the series block.
+    """
+    text = VALID_TOML.replace(
+        'effort = "medium"',
+        'effort = "medium"\ntier_models = { weak = "claude-haiku-4-5" }',
+    )
+    with pytest.raises(SpecError) as exc:
+        load_series(text)
+    assert 'tier_models' in str(exc.value)
+    assert '[governance]' in str(exc.value)
+
+
+def test_a_typo_under_governance_names_the_keys_it_could_have_been() -> None:
+    """The rejection has to be actionable: a bare 'unknown key' sends the author
+    hunting through a schema doc for a name they already almost typed."""
+    text = VALID_TOML.replace('permission_mode = "default"', 'permision_mode = "default"')
+    with pytest.raises(SpecError) as exc:
+        load_series(text)
+    assert 'permision_mode' in str(exc.value)
+    assert 'permission_mode' in str(exc.value)
+
+
 def test_valid_full_example_parses_to_expected_series() -> None:
     series = load_series(VALID_TOML)
 

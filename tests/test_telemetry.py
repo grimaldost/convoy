@@ -18,7 +18,6 @@ from convoy.core.telemetry import (
     RunComplete,
     RunStart,
     SpawnComplete,
-    apply_cost_fallback,
     budget_is_nearing,
     to_json_line,
 )
@@ -136,22 +135,15 @@ def test_json_line_is_single_line_without_trailing_newline() -> None:
     assert '\n' not in line
 
 
-def test_cost_fallback_estimates_when_cost_is_zero() -> None:
-    # sonnet 3/15: 1,000,000 in + 200,000 out = 3.0 + 3.0 = 6.0.
-    event = _spawn(cost_usd=0.0, input_tokens=1_000_000, output_tokens=200_000)
-    result = apply_cost_fallback(event)
-    assert result.cost_usd == 6.0
-    assert result.cost_estimated is True
-    # Every other field is preserved.
-    assert result.run_id == event.run_id
-    assert result.effective_model == event.effective_model
-
-
-def test_cost_fallback_leaves_nonzero_cost_unchanged() -> None:
-    event = _spawn(cost_usd=0.11)
-    result = apply_cost_fallback(event)
-    assert result is event
-    assert result.cost_estimated is False
+def test_a_zero_cost_spawn_stays_zero_and_unestimated() -> None:
+    """The price table that used to fill this in is gone (CONV-B29). A provider
+    reporting 0.0 now serializes as 0.0 rather than as a local guess wearing a flag,
+    and ``cost_estimated`` stays in the schema permanently false because a consumer
+    reads it."""
+    line = to_json_line(_spawn(cost_usd=0.0, input_tokens=1_000_000, output_tokens=200_000))
+    parsed = json.loads(line)
+    assert parsed['cost_usd'] == 0.0
+    assert parsed['cost_estimated'] is False
 
 
 def test_writer_appends_three_lines_that_parse_back(tmp_path: Path) -> None:
