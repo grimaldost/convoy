@@ -58,7 +58,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Every leg of the matrix must have succeeded
-        run: '[ "${{ needs.checks.result }}" = "success" ]'
+        # Through the environment, not through a `${{ }}` expansion in the script. An
+        # expansion is substituted into the script TEXT before bash parses it, so whether
+        # the line is safe depends on what the value contains; an env var is data whatever
+        # it contains. This value is one of four words GitHub chooses, so nothing is
+        # exploitable here - the point is to stop carrying a shape an audit has to judge.
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: '[ "$CHECKS_RESULT" = "success" ]'
 
   zizmor:
     permissions:
