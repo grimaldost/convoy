@@ -43,6 +43,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   range's net diff shows nothing for it — declare it with the trailer, same as any
   other commit.
 
+### Security
+
+- `cryptography` moves from 49.0.0 to 50.0.1, closing the high-severity advisory that
+  covers `>= 44.0.0, < 50.0.0`. It reaches convoy transitively, through `pyjwt[crypto]`;
+  only `uv.lock` changes. The alert had no pull request behind it because Dependabot was
+  configured to watch GitHub Actions and nothing else, which `.github/dependabot.yml`
+  now fixes for the Python dependencies as well.
+
 ## [0.12.0] - 2026-09-02
 
 The gate becomes a hook, and a project can carry one. Written at cut time, over the
