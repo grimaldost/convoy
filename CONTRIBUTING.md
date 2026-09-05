@@ -56,9 +56,13 @@ subjects, no attribution trailers). The PR template carries the checklist; CI
 runs the same gates as above.
 
 The CHANGELOG half of that discipline is machine-enforced: the `changelog`
-workflow fails a PR whose diff touches `src/` without touching `CHANGELOG.md`,
-unless a commit in the range carries the trailer `Changelog: none (<reason>)`
-— the opt-out for a change nothing a changelog reader could notice. It fails
+workflow fails a PR when a commit's own diff touches `src/` and neither the
+PR's `CHANGELOG.md` diff records the change — an added line the same diff does
+not also remove once whitespace is collapsed, so touching the file, reflowing
+it or reordering it is not a record — nor that same commit carries the trailer
+`Changelog: none (<reason>)`, the opt-out for a change nothing a changelog
+reader could notice. A merge commit is judged the same way, on the resolution
+its author wrote rather than on what git merged automatically. It fails
 an added `### ` section heading outside the Keep a Changelog vocabulary
 (Added / Changed / Deprecated / Removed / Fixed / Security). It also
 warns, without failing, when a contract-surface file changes and the entry
