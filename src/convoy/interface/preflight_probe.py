@@ -19,6 +19,7 @@ from convoy.core.preflight import (
     PreflightReport,
     Problem,
     inert_assets,
+    lineup_origin,
     structural_problems,
     ungated_prs,
 )
@@ -342,5 +343,10 @@ def preflight(series: Series, workspace: Path) -> PreflightReport:
         ),
         # Appended after the existing producers, so a consumer that has been reading
         # advisories[0] since 0.3.0 still finds the ungated-PR remark there.
-        advisories=(*ungated_prs(series), *inert_assets(series), *gate_scope(series, workspace)),
+        advisories=(
+            *ungated_prs(series),
+            *inert_assets(series),
+            *gate_scope(series, workspace),
+            *lineup_origin(series),
+        ),
     )

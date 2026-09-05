@@ -16,7 +16,7 @@ PR-sized tasks plus the governance and gate that apply to them.
 | `[series]` | `id`, `version`, `spec_path`, `spec_sha256` | Series identity, plus an optional pin naming the spec it was decomposed from |
 | `[branches]` | `base`, `integration` | Fixture staged on `base`; integrated result on `integration` |
 | `[paths]` | `prompts` (dir), `outputs` (dir) | Asset locations; **absolute paths accepted** so assets can live outside the scored workspace |
-| `[governance]` | `model` (or `tier`), `effort`, `permission_mode`, `timeout_seconds` | The default per-spawn governance; a `[[prs]]` table may override `model`/`tier`/`effort` for itself |
+| `[governance]` | `model` (or `tier`), `effort`, `permission_mode`, `timeout_seconds`, optional `tier_models` | The default per-spawn governance; a `[[prs]]` table may override `model`/`tier`/`effort` for itself. `tier_models` is the tier-to-model table THIS series carries: it outranks convoy's built-in floor, so the run resolves from its own file rather than from whatever the installed build ships (ADR-0010). Any tier that falls through to the floor raises a pre-flight advisory naming it |
 | `[governance.budgets]` | `implementation`, `review`, `fix` | USD ceiling per phase |
 | `[governance.tools]` | `implementation`, `review`, `fix` | Tool allow-list per phase |
 | `[review]` | `blocking` (optional), `max_fix_attempts` | `max_fix_attempts` bounds the fix loop; `blocking` is **reserved** for an optional blocking LLM self-review the v1 headless driver does not run — optional, default `false` (the deterministic `[[checks]]` gate is the sole merge arbiter) |

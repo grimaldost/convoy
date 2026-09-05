@@ -11,6 +11,7 @@ the spec, is visible before the run, and nothing escalates a model during a run.
 unresolvable model or an unknown role is a ``GovernanceError``.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from convoy.core.spec import PR, Governance, Series
@@ -80,14 +81,26 @@ def effective_governance(governance: Governance, pr: PR) -> Governance:
 def resolve_model(governance: Governance, tier_models: dict[str, str] | None = None) -> str:
     """Return the model for ``governance``.
 
-    ``governance.model`` wins if set; otherwise ``governance.tier`` is mapped through
-    ``tier_models`` (defaulting to :data:`DEFAULT_TIER_MODELS`); if neither yields a
-    model, raise :class:`GovernanceError`. Resolves whatever governance it is handed —
-    the series' own, or a PR's effective governance from :func:`effective_governance`.
+    Order, strongest first: an explicit ``governance.model``; the ``tier_models`` table
+    the caller injects (the operator/test seam); the table the SERIES itself carries in
+    ``[governance.tier_models]``; and last :data:`DEFAULT_TIER_MODELS`, the built-in
+    floor. If none yields a model, raise :class:`GovernanceError`.
+
+    The series' own table sits above the floor because it is part of the artefact: it
+    was resolved when the run was authored, it travels with the file, and it makes the
+    run reproducible without convoy having to reach anything it does not own. The floor
+    is what a stranger gets, and it goes stale between releases by design. Resolves
+    whatever governance it is handed — the series' own, or a PR's effective governance
+    from :func:`effective_governance`.
     """
     if governance.model is not None:
         return governance.model
-    table = tier_models if tier_models is not None else DEFAULT_TIER_MODELS
+    if tier_models is not None:
+        table: Mapping[str, str] = tier_models
+    elif governance.tier is not None and governance.tier in governance.tier_models:
+        table = governance.tier_models
+    else:
+        table = DEFAULT_TIER_MODELS
     if governance.tier is not None:
         model = table.get(governance.tier)
         if model is not None:
@@ -126,29 +139,55 @@ def resolve_spawn(
     )
 
 
-def implementation_model_sources(series: Series) -> tuple[tuple[str, str], ...]:
+def model_origin(governance: Governance) -> str:
+    """How :func:`resolve_model` would resolve this governance: the WHERE, not the what.
+
+    ``explicit`` (the artefact names the model), ``series-table`` (the artefact carries
+    a tier table that covers this tier), or ``floor`` (neither, so the built-in table
+    decides). A run resolved from the artefact and a run resolved from whatever this
+    build happens to ship are not the same run, and before this they looked identical
+    everywhere convoy reports.
+    """
+    if governance.model is not None:
+        return 'explicit'
+    if governance.tier is not None and governance.tier in governance.tier_models:
+        return 'series-table'
+    return 'floor'
+
+
+def implementation_model_sources(series: Series) -> tuple[tuple[str, str, str], ...]:
     """Every distinct implementation model, paired with the section that declares it.
 
     Same set and order as :func:`implementation_models` — first-PR-seen, deduped — but
     each model carries a ``where`` string locating it for a :class:`~convoy.core.preflight.Problem`:
     ``'[governance]'`` when the first PR to introduce the model inherited it (set neither
     ``model`` nor ``tier``), or ``"[[prs]] '<id>'"`` when that PR set its own. First source
-    wins per model, so a later duplicate never relabels it. A series naming no PRs yields the
-    one ``[governance]`` model located at ``'[governance]'``. Raises :class:`GovernanceError`
-    if any resolved governance names no model.
+    wins per model, so a later duplicate never relabels it.
+
+    The third element is the ORIGIN from :func:`model_origin` — whether the value came
+    from the artefact or from the built-in floor. ``where`` says which section of the
+    file chose it; ``origin`` says whether the file chose it at all. Both are needed:
+    a series can name ``[governance]`` as the location and still be running on whatever
+    lineup this build happens to ship.
+
+    A series naming no PRs yields the one ``[governance]`` model. Raises
+    :class:`GovernanceError` if any resolved governance names no model.
     """
-    where_of: dict[str, str] = {}
+    where_of: dict[str, tuple[str, str]] = {}
     order: list[str] = []
     for pr in series.prs:
-        model = resolve_model(effective_governance(series.governance, pr))
+        effective = effective_governance(series.governance, pr)
+        model = resolve_model(effective)
         if model in where_of:
             continue
         overrides = pr.model is not None or pr.tier is not None
-        where_of[model] = f'[[prs]] {pr.id!r}' if overrides else '[governance]'
+        where = f'[[prs]] {pr.id!r}' if overrides else '[governance]'
+        where_of[model] = (where, model_origin(effective))
         order.append(model)
     if not order:
-        return ((resolve_model(series.governance), '[governance]'),)
-    return tuple((model, where_of[model]) for model in order)
+        governance = series.governance
+        return ((resolve_model(governance), '[governance]', model_origin(governance)),)
+    return tuple((model, *where_of[model]) for model in order)
 
 
 def implementation_models(series: Series) -> tuple[str, ...]:
@@ -161,4 +200,4 @@ def implementation_models(series: Series) -> tuple[str, ...]:
     :func:`implementation_model_sources`. Raises :class:`GovernanceError` if any resolved
     governance names no model.
     """
-    return tuple(model for model, _where in implementation_model_sources(series))
+    return tuple(model for model, _where, _origin in implementation_model_sources(series))

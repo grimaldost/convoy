@@ -1,12 +1,16 @@
 """Tests for the pure structural pre-flight (core/preflight.py)."""
 
+from dataclasses import replace
+
 import pytest
 
+from convoy.core.governance import DEFAULT_TIER_MODELS, LINEUP_RECONCILED
 from convoy.core.preflight import (
     check_dag,
     check_governance,
     check_phases,
     inert_assets,
+    lineup_origin,
     structural_problems,
     ungated_prs,
 )
@@ -269,3 +273,32 @@ def test_an_inert_asset_never_becomes_a_problem() -> None:
     series = _series(checks=(_asset_check('oracle', blocking=False, independent=False),))
 
     assert structural_problems(series) == []
+
+
+# --- the floor announces itself ------------------------------------------------
+
+
+def test_resolving_through_the_floor_raises_an_advisory_naming_its_date() -> None:
+    """A stale floor that decides a run in silence is the failure this change is
+    about. It stays an Advisory, not a Problem: refusing to run would strand exactly
+    the operator the floor exists for."""
+    advisories = lineup_origin(_series(governance=_gov(tier='weak'), prs=_ACYCLIC))
+    assert len(advisories) == 1
+    assert advisories[0].kind == 'lineup'
+    assert LINEUP_RECONCILED in advisories[0].message
+    assert DEFAULT_TIER_MODELS['weak'] in advisories[0].message
+
+
+def test_a_carried_tier_table_raises_no_advisory() -> None:
+    gov = replace(_gov(tier='weak'), tier_models={'weak': 'carried'})
+    assert lineup_origin(_series(governance=gov, prs=_ACYCLIC)) == []
+
+
+def test_an_explicit_model_raises_no_advisory() -> None:
+    assert lineup_origin(_series(governance=_gov(model='m'), prs=_ACYCLIC)) == []
+
+
+def test_one_advisory_per_distinct_model_not_per_pr() -> None:
+    """Several PRs inheriting one stale tier is one fact, not one line each."""
+    assert len(_ACYCLIC) > 1, 'the fixture needs more than one PR for this to mean anything'
+    assert len(lineup_origin(_series(governance=_gov(tier='weak'), prs=_ACYCLIC))) == 1

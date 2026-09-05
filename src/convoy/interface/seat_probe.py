@@ -40,7 +40,7 @@ def seat_problem(spawn: AgentSpawn, series: Series, workspace: Path) -> Problem 
     declared the failing model — ``[governance]`` or the overriding PR's ``[[prs]]`` table — so
     the user is pointed at the config location that actually chose it.
     """
-    for model, where in implementation_model_sources(series):
+    for model, where, _origin in implementation_model_sources(series):
         request = SpawnRequest(
             brief=_PROBE_BRIEF,
             model=model,

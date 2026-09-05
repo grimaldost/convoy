@@ -13,6 +13,29 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **`[governance.tier_models]`: the series carries its own tier-to-model table**
+  (consumer-affecting, additive; ADR-0010). Resolution order, strongest first: an
+  explicit `model`; a table injected by the caller (the operator/test seam); the
+  table **this series carries**; then `DEFAULT_TIER_MODELS`, the built-in floor. The
+  first two live in the artefact, so a run is reproducible from its own file rather
+  than from whatever lineup the installed build happens to ship. A partial table is
+  fine — a tier it does not name falls through to the floor. `dump_series` is taught
+  the field, so a read-modify-write cannot silently erase the lineup a file carried.
+- **A pre-flight advisory when a tier resolves through the floor**
+  (`Advisory(kind='lineup')`), naming the model and the floor's `LINEUP_RECONCILED`
+  date, once per distinct model rather than once per PR. It rides `run_start` like
+  every other advisory, so the fact is reconstructible from the ledger alone, and it
+  prints to stderr in `validate` and pre-flight without touching the exit code.
+  **Advice, not a refusal**: blocking would strand exactly the operator the floor
+  exists for. This is the difference the whole change is about — before it, a run
+  resolved from a months-old built-in table was indistinguishable, in every artefact
+  and every telemetry line, from one resolved from the file.
+- **`implementation_model_sources` reports an origin** (`explicit` / `series-table`
+  / `floor`) as a third element. `where` says which section of the file chose the
+  model; origin says whether the file chose it at all.
+
 ### Removed
 
 - **`core/pricing.py` and `apply_cost_fallback` are gone (consumer-affecting).**

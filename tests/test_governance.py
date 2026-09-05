@@ -257,14 +257,14 @@ def test_implementation_models_falls_back_to_the_series_model_on_empty_prs() -> 
 def test_implementation_model_sources_locates_an_inheriting_pr_at_governance() -> None:
     """A PR that inherits [governance] sources its model to [governance]."""
     got = implementation_model_sources(_series_over(_governance(model='series-model'), (_pr(),)))
-    assert got == (('series-model', '[governance]'),)
+    assert got == (('series-model', '[governance]', 'explicit'),)
 
 
 def test_implementation_model_sources_locates_an_override_at_its_own_pr_table() -> None:
     """A PR that sets its own model sources that model to its own [[prs]] table, by id."""
     prs = (PR(id='pr-x', branch='b', prompt='b.md', phase='p', model='m-x'),)
     got = implementation_model_sources(_series_over(_governance(model='series-model'), prs))
-    assert got == (('m-x', "[[prs]] 'pr-x'"),)
+    assert got == (('m-x', "[[prs]] 'pr-x'", 'explicit'),)
 
 
 def test_implementation_model_sources_attributes_a_model_to_its_first_seen_pr() -> None:
@@ -275,13 +275,16 @@ def test_implementation_model_sources_attributes_a_model_to_its_first_seen_pr() 
         PR(id='c', branch='c', prompt='c.md', phase='p', model='opus'),  # dupe of b
     )
     got = implementation_model_sources(_series_over(_governance(model='series-model'), prs))
-    assert got == (('series-model', '[governance]'), ('opus', "[[prs]] 'b'"))
+    assert got == (
+        ('series-model', '[governance]', 'explicit'),
+        ('opus', "[[prs]] 'b'", 'explicit'),
+    )
 
 
 def test_implementation_model_sources_falls_back_to_governance_on_empty_prs() -> None:
     """A series naming no PRs sources its one [governance] model to [governance]."""
     got = implementation_model_sources(_series_over(_governance(tier='mid'), ()))
-    assert got == ((DEFAULT_TIER_MODELS['mid'], '[governance]'),)
+    assert got == ((DEFAULT_TIER_MODELS['mid'], '[governance]', 'floor'),)
 
 
 def test_implementation_models_agrees_with_the_sources_model_column() -> None:
@@ -292,7 +295,7 @@ def test_implementation_models_agrees_with_the_sources_model_column() -> None:
     )
     series = _series_over(_governance(model='series-model'), prs)
     assert implementation_models(series) == tuple(
-        m for m, _ in implementation_model_sources(series)
+        m for m, _where, _origin in implementation_model_sources(series)
     )
 
 
@@ -399,3 +402,62 @@ def test_parity_per_pr_value_wins_over_the_series_value(
         return
     expected = resolve_model(replace(governance, model=pr.model, tier=pr.tier))
     assert resolve_spawn(effective_governance(governance, pr), role).model == expected
+
+
+# --- the series' own tier table outranks the built-in floor --------------------
+
+
+def test_a_series_tier_table_outranks_the_built_in_floor() -> None:
+    """The floor is what convoy falls back to, never what overrides the artefact."""
+    governance = _governance(tier='strong')
+    carried = replace(governance, tier_models={'strong': 'carried-model'})
+    assert resolve_model(carried) == 'carried-model'
+    assert resolve_model(carried) != DEFAULT_TIER_MODELS['strong']
+
+
+def test_an_explicit_model_still_outranks_the_series_tier_table() -> None:
+    """Order is unchanged at the top: model beats tier, whatever resolves the tier."""
+    carried = _governance(model='pinned', tier='strong')
+    carried = replace(carried, tier_models={'strong': 'carried-model'})
+    assert resolve_model(carried) == 'pinned'
+
+
+def test_a_tier_the_carried_table_does_not_name_falls_through_to_the_floor() -> None:
+    """A partial table is legitimate: an author resolving only the tiers the series
+    uses should not have to write out the ones it does not."""
+    carried = replace(_governance(tier='weak'), tier_models={'strong': 'x'})
+    assert resolve_model(carried) == DEFAULT_TIER_MODELS['weak']
+
+
+def test_a_per_pr_tier_resolves_through_the_series_table() -> None:
+    """``effective_governance`` replaces the (model, tier) pair and carries everything
+    else, so a PR's tier must resolve through the table the series carries -- not
+    through the floor, which would route one PR somewhere the artefact never named."""
+    governance = replace(_governance(tier='weak'), tier_models={'weak': 'w', 'strong': 's'})
+    effective = effective_governance(governance, _pr(tier='strong'))
+    assert resolve_model(effective) == 's'
+
+
+def test_the_injected_table_parameter_still_wins_over_a_carried_one() -> None:
+    """The ``tier_models=`` seam stays the operator/test override at the top."""
+    carried = replace(_governance(tier='weak'), tier_models={'weak': 'carried'})
+    assert resolve_model(carried, tier_models={'weak': 'injected'}) == 'injected'
+
+
+# --- every model says where it came from ---------------------------------------
+
+
+def test_model_sources_report_an_explicit_model_as_explicit() -> None:
+    sources = implementation_model_sources(_series_over(_governance(model='m'), (_pr(),)))
+    assert [(m, o) for m, _, o in sources] == [('m', 'explicit')]
+
+
+def test_model_sources_report_a_carried_table_apart_from_the_floor() -> None:
+    """The distinction the pre-flight print exists to make: a run resolved from the
+    artefact and a run resolved from whatever this build happens to ship are not the
+    same run, and today they look identical."""
+    governance = replace(_governance(tier='weak'), tier_models={'weak': 'carried'})
+    carried = implementation_model_sources(_series_over(governance, (_pr(),)))
+    floor = implementation_model_sources(_series_over(_governance(tier='weak'), (_pr(),)))
+    assert [o for _, _, o in carried] == ['series-table']
+    assert [o for _, _, o in floor] == ['floor']

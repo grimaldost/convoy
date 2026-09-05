@@ -92,19 +92,21 @@ depends_on = ["pr-1-lexer"]
 def test_an_unknown_key_under_governance_is_rejected() -> None:
     """A key the engine does not read must fail loudly, not be dropped.
 
-    A series authored against a newer convoy -- one carrying, say, a resolved tier
-    table -- would otherwise load here, have the key silently ignored, and resolve
-    every PR through the built-in floor instead. The run would look correct and its
-    telemetry would agree with it. ADR-0005 refuses an unknown per-PR governance key
-    for the same reason; this closes the same hole on the series block.
+    ``tier_models`` is the worked example of why. Authored against a convoy that
+    reads it, a series carrying one would have loaded on an older build, had the key
+    silently ignored, and resolved every PR through the built-in floor instead -- a
+    run that looks correct and whose telemetry agrees with it. That key is read now,
+    so the guard is exercised here with a shape convoy does not have yet, which is
+    exactly the point: the failure is always the key nobody thought to forbid.
+    ADR-0005 refuses an unknown per-PR governance key for the same reason.
     """
     text = VALID_TOML.replace(
         'effort = "medium"',
-        'effort = "medium"\ntier_models = { weak = "claude-haiku-4-5" }',
+        'effort = "medium"\nretry_policy = "aggressive"',
     )
     with pytest.raises(SpecError) as exc:
         load_series(text)
-    assert 'tier_models' in str(exc.value)
+    assert 'retry_policy' in str(exc.value)
     assert '[governance]' in str(exc.value)
 
 
@@ -786,3 +788,50 @@ def test_loaders_read_the_process_environment_by_default(
     monkeypatch.setenv('CONVOY_ORACLES', '/from/process')
     spec = load_gate_spec(_gate_only('python ${CONVOY_ORACLES}/probe.py'))
     assert spec.checks[0].run == 'python /from/process/probe.py'
+
+
+# --- [governance.tier_models]: the artefact carries the lineup ------------------
+
+
+def _with_tier_models(table: str = '{ weak = "w-model", strong = "s-model" }') -> str:
+    return VALID_TOML.replace('effort = "medium"', f'effort = "medium"\ntier_models = {table}')
+
+
+def test_a_series_can_carry_its_own_tier_table() -> None:
+    """The point of the whole design: the run's artefact carries the resolved lineup,
+    so the engine's built-in table stops being what decides a run."""
+    series = load_series(_with_tier_models())
+    assert series.governance.tier_models == {'weak': 'w-model', 'strong': 's-model'}
+
+
+def test_a_series_without_the_table_keeps_it_empty_not_absent() -> None:
+    """An empty mapping, not None: every reader asks the same question of every
+    series, and 'inherited the floor' is a value rather than a missing case."""
+    assert load_series(VALID_TOML).governance.tier_models == {}
+
+
+def test_the_tier_table_round_trips_through_the_dumper() -> None:
+    """``dump_series`` builds the governance table key by key, so a field it is not
+    taught is silently dropped -- and any read-modify-write of a series file would
+    then erase the lineup it carried, with nothing to show for it."""
+    series = load_series(_with_tier_models())
+    assert load_series(dump_series(series)) == series
+    assert 'tier_models' in dump_series(series)
+
+
+def test_an_empty_tier_table_is_omitted_by_the_dumper() -> None:
+    """So a series that carries no table round-trips to the same minimal file it
+    came from, exactly as the other optional governance fields do."""
+    assert 'tier_models' not in dump_series(load_series(VALID_TOML))
+
+
+def test_a_tier_table_value_must_be_a_non_empty_string() -> None:
+    text = _with_tier_models('{ weak = "" }')
+    with pytest.raises(SpecError):
+        load_series(text)
+
+
+def test_a_tier_table_value_must_not_be_a_number() -> None:
+    text = _with_tier_models('{ weak = 5 }')
+    with pytest.raises(SpecError):
+        load_series(text)

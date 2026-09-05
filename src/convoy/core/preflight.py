@@ -19,7 +19,13 @@ from dataclasses import dataclass
 
 from convoy.core.dag import DagError, order
 from convoy.core.gate import checks_for
-from convoy.core.governance import GovernanceError, effective_governance, resolve_model
+from convoy.core.governance import (
+    LINEUP_RECONCILED,
+    GovernanceError,
+    effective_governance,
+    implementation_model_sources,
+    resolve_model,
+)
 from convoy.core.spec import Series
 
 
@@ -194,6 +200,40 @@ def inert_assets(series: Series) -> list[Advisory]:
                 message=(
                     f'declares an asset but is {missing}, so its isolation is never verified '
                     'and the asset is never read; set both flags, or drop the asset'
+                ),
+            )
+        )
+    return advisories
+
+
+def lineup_origin(series: Series) -> list[Advisory]:
+    """An Advisory per distinct model this run resolves from the BUILT-IN floor.
+
+    The floor exists so convoy installs and runs for someone with no access to whatever
+    maintains a model lineup, and it goes stale between releases by design. What it must
+    never do is decide a run in silence: a series whose tier resolved through a table
+    shipped months ago produces a run that looks, in every artefact and every telemetry
+    line, exactly like one that resolved from the file. This is that difference, said out
+    loud once per model rather than once per PR.
+
+    Advice, not a problem, and deliberately so: refusing to run would strand precisely
+    the operator the floor exists for. The fix is local and named in the message — set
+    ``model``, or carry a ``[governance.tier_models]`` table.
+    """
+    advisories: list[Advisory] = []
+    for model, where, origin in implementation_model_sources(series):
+        if origin != 'floor':
+            continue
+        advisories.append(
+            Advisory(
+                kind='lineup',
+                where=where,
+                message=(
+                    f'{model!r} came from the built-in tier table, reconciled '
+                    f'{LINEUP_RECONCILED}, not from this series. That table is a floor '
+                    'and is only as fresh as the installed release. To pin the run to '
+                    'the artefact, set an explicit model or carry a '
+                    '[governance.tier_models] table.'
                 ),
             )
         )
