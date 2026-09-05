@@ -427,12 +427,14 @@ least one entry.
 | `[[checks]]` | `name`, `run` (shell command), `blocking` (bool), `independent` (bool, default `false`), `asset` (optional path), `repair_hint` (optional string), `phases` (optional array of phase tags) | the gate; a check runs after **every** PR unless `phases` scopes it — see "Scoping checks by phase" |
 | `[[prs]]` | `id`, `branch`, `prompt` (file under `[paths].prompts`), `phase` (tag), `depends_on` (array of PR ids, default `[]`), `model` / `tier` / `effort` (optional, inherit `[governance]`) | the PR DAG |
 
-- **`model` vs `tier`.** Set an explicit `model` (e.g. `claude-haiku-4-5`), or a `tier`
-  that convoy resolves through its built-in table. Prefer the explicit `model` when the
-  authoring side already knows it: the built-in table is a **floor**, carried so convoy
-  runs for someone with no access to whatever maintains a lineup, and it is only as fresh
-  as the release you installed (its `LINEUP_RECONCILED` stamp says when). `model` wins if
-  both are set. A
+- **`model` vs `tier`, and where the lineup comes from.** Resolution order, strongest
+  first: an explicit `model` (e.g. `claude-haiku-4-5`); the `[governance.tier_models]`
+  table **this series carries**; then convoy's built-in table. The first two live in the
+  artefact, so the run is reproducible from its own file. The third is a **floor** —
+  carried so convoy runs for someone with no access to whatever maintains a lineup, only
+  as fresh as the release you installed, and it says so: any tier it resolves raises a
+  pre-flight advisory naming the model and the table's `LINEUP_RECONCILED` date. That is
+  advice, not a refusal. `model` wins if both are set. A
   `[[prs]]` table may set its own `model` / `tier` / `effort`, falling back to
   `[governance]` when absent; a PR that sets `model` or `tier` supplies both (the series
   pair is not consulted), and both spawns of a PR — implementation and fix — resolve the

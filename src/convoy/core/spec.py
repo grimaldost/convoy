@@ -14,8 +14,9 @@ import os
 import re
 import tomllib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath, PureWindowsPath
+from types import MappingProxyType
 from typing import Any, cast
 
 import tomli_w
@@ -49,7 +50,16 @@ _FORBIDDEN_PR_KEYS = ('budget', 'budgets')
 # a wrong run with plausible telemetry and no signal anywhere. An allow-list rather than
 # a blocklist, because the failure is always the key nobody thought to forbid.
 _KNOWN_GOVERNANCE_KEYS = frozenset(
-    {'effort', 'permission_mode', 'timeout_seconds', 'budgets', 'tools', 'model', 'tier'}
+    {
+        'effort',
+        'permission_mode',
+        'timeout_seconds',
+        'budgets',
+        'tools',
+        'model',
+        'tier',
+        'tier_models',
+    }
 )
 
 
@@ -80,6 +90,37 @@ class Governance:
     tools: Tools
     model: str | None = None
     tier: str | None = None
+    # The tier-to-model table THIS series carries, resolved by whoever authored it and
+    # written into the artefact rather than looked up at run time. It outranks convoy's
+    # built-in floor and is outranked by an explicit ``model``.
+    #
+    # Why it lives in the artefact: the lineup is owned somewhere convoy cannot reach --
+    # this repository installs and runs for someone who has never heard of whatever
+    # maintains it. An import or a lookup would break that; a value the run's own file
+    # carries does not, and it makes the run reproducible from the file alone. Empty
+    # rather than ``None`` so every reader asks the same question of every series and
+    # "inherited the floor" is a value, not a missing case.
+    tier_models: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Frozen dataclasses are compared and hashed by field; a dict would make the
+        # series unhashable and mutable through a shared reference.
+        object.__setattr__(self, 'tier_models', MappingProxyType(dict(self.tier_models)))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Governance):
+            return NotImplemented
+        return (self.effort, self.permission_mode, self.timeout_seconds) == (
+            other.effort,
+            other.permission_mode,
+            other.timeout_seconds,
+        ) and (
+            self.budgets,
+            self.tools,
+            self.model,
+            self.tier,
+            dict(self.tier_models),
+        ) == (other.budgets, other.tools, other.model, other.tier, dict(other.tier_models))
 
 
 @dataclass(frozen=True)
@@ -398,10 +439,32 @@ def _reject_unknown_keys(data: Mapping[str, Any], known: frozenset[str], where: 
         )
 
 
+def _parse_tier_models(data: Mapping[str, Any], where: str) -> dict[str, str]:
+    """The optional ``tier_models`` sub-table: tier name to model, all strings.
+
+    A number or an empty string here would resolve to a model that cannot be spawned,
+    and the failure would surface as a provider error mid-run rather than at load.
+    """
+    raw = data.get('tier_models')
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise SpecError(f'{where}.tier_models must be a table of tier = "model"')
+    table: dict[str, str] = {}
+    for tier, model in raw.items():
+        if not isinstance(model, str) or not model.strip():
+            raise SpecError(
+                f'{where}.tier_models: {tier!r} must map to a non-empty model string, got {model!r}'
+            )
+        table[str(tier)] = model
+    return table
+
+
 def _parse_governance(data: Mapping[str, Any]) -> Governance:
     where = '[governance]'
     _reject_unknown_keys(data, _KNOWN_GOVERNANCE_KEYS, where)
     return Governance(
+        tier_models=_parse_tier_models(data, where),
         effort=_require_choice(data, 'effort', where, EFFORT_LEVELS),
         permission_mode=_require_choice(data, 'permission_mode', where, PERMISSION_MODES),
         timeout_seconds=_require_positive_int(data, 'timeout_seconds', where),
@@ -745,6 +808,12 @@ def dump_series(series: Series) -> str:
         governance['model'] = series.governance.model
     if series.governance.tier is not None:
         governance['tier'] = series.governance.tier
+    # Omitted when empty, like the other optional governance fields, so a series that
+    # carries no table round-trips to the same minimal file. Taught here deliberately:
+    # the dumper builds this dict key by key, so a field it does not know is dropped,
+    # and any read-modify-write would erase the lineup the artefact carried.
+    if series.governance.tier_models:
+        governance['tier_models'] = dict(series.governance.tier_models)
     governance['budgets'] = {
         'implementation': series.governance.budgets.implementation,
         'review': series.governance.budgets.review,
