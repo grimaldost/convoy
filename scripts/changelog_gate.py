@@ -21,7 +21,10 @@ Three checks and one advisory, all over the merge-base diff:
   with its *resolution* — the content an automatic merge of its parents would not
   have produced (``git merge-tree --write-tree``, diffed against the merge's own
   tree; git 2.38 or newer, and the gate fails naming the git it ran rather than
-  guessing on an older one). A hand resolution that edits ``src/`` needs the same
+  guessing on an older one). Unrelated histories are the exception: there is no
+  automatic merge to compare against, so the combined diff stands in — a
+  conservative approximation that under-charges a resolution taking one root
+  verbatim. A hand resolution that edits ``src/`` needs the same
   recording as any other commit; a clean auto-merge, including the synthetic
   ``refs/pull/N/merge`` CI checks out, contributes nothing and is charged nothing.
   An octopus merge is outside ``--write-tree``'s two-parent scope and keeps the
@@ -57,6 +60,7 @@ holds the red proofs.
     python scripts/changelog_gate.py origin/main
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -96,10 +100,19 @@ _SECTION_HEADING = re.compile(r'^### (.*)$', re.MULTILINE)
 # What `git merge-tree --write-tree` prints on its first line when it wrote a tree —
 # SHA-1 or SHA-256, so the object id is 40 or 64 hex digits.
 _OBJECT_ID = re.compile(r'[0-9a-f]{40}(?:[0-9a-f]{24})?')
-# How a git too old for `--write-tree` answers it: the option is unknown, so git
-# prints usage. Anything else it refuses (unrelated histories) is about the merge,
-# not the machine - see _auto_merge_tree.
-_OLD_GIT = re.compile(r'usage: git merge-tree|unknown option|error: unknown', re.I)
+# The ONE non-tree outcome that is about this merge rather than about this git, and so
+# the one that may be answered with the combined diff instead of a failure. Everything
+# else raises - see _auto_merge_tree, and note the direction: an unrecognised message
+# must fail, never fall back, or the machine that cannot detect the bug is the machine
+# that silently keeps it.
+#
+# Matching the message and not the exit code is deliberate: git 2.38 exits 128 for this,
+# for a bad rev, and for a repository it cannot read. Matching a guess at what an OLD git
+# says was the round-4 defect: `git merge-tree --write-tree A B` is four arguments, which
+# is exactly what pre-2.38 merge-tree expects, so it never prints usage - it reaches
+# get_tree_descriptor and dies `unknown rev --write-tree`, which no old-git pattern here
+# would have caught. The gate runs merge-tree under LC_ALL=C so this text is the text.
+_SAFE_REFUSAL = re.compile(r'refusing to merge unrelated histories', re.I)
 
 Version = tuple[int, int, int]
 
@@ -232,31 +245,37 @@ def _auto_merge_tree(written: subprocess.CompletedProcess[str], git_version: str
     tree — the conflict markers are in it — and that tree is exactly what tells a hand
     resolution from an automatic one, so it is used like any other.
 
-    A git older than 2.38 answers the option with its usage string. That is a property
-    of the *machine*, it holds for every merge in the range, and it may not be quietly
-    downgraded back to the combined diff: that charge is what this replaces, and falling
-    back to it would restore the bug on exactly the machines that cannot detect it. So
-    it raises, naming the git it ran under, and the job says why.
+    ``refusing to merge unrelated histories`` is a property of the *merge*, and it is
+    not an error at all: there is no automatic merge of unrelated histories, so there is
+    nothing to diff the result against. ``None`` says that, and the caller falls back to
+    the combined diff. That fallback is a conservative approximation and not an
+    equivalent reading: ``-c`` lists what differs from *every* parent, so a resolution
+    that takes one root's file verbatim differs from that root and goes uncharged, where
+    the module's own rule ("no automatic merge, so all of it is authored") would charge
+    it. Accepted because the alternative — charging both roots entire — is worse, and
+    because the trailer remains available on the merge.
 
-    A git that refuses this particular pair — ``refusing to merge unrelated histories``
-    is the one that occurs — is a property of the *merge*, and it is not an error at
-    all: there is no automatic merge of unrelated histories, so nothing the merge
-    contains was produced by one. ``None`` says exactly that, and the caller charges the
-    combined diff, which under ``-c`` lists only what differs from every parent — the
-    same reading, reached the other way. Raising here instead cost a verdict: the gate
-    exited on a traceback with no ``::error::`` and advice to upgrade a git that was
-    already new enough.
+    Anything else raises, naming the git it ran under, and the job says why. That
+    includes a git too old for ``--write-tree``, which is a property of the *machine* and
+    holds for every merge in the range: falling back there would restore the bug this
+    replaces on exactly the machines that cannot detect it. The classification is by the
+    message and in this direction on purpose. Round 4 had it the other way, keying on a
+    guess at what an old git prints, and the guess was wrong: ``merge-tree --write-tree A
+    B`` is the four arguments pre-2.38 merge-tree expects, so it never prints usage — it
+    dies ``unknown rev --write-tree``, matched nothing, and fell through to the silent
+    fallback. An unrecognised message now fails loudly instead.
     """
     first = next(iter(written.stdout.splitlines()), '').strip()
     if _OBJECT_ID.fullmatch(first):
         return first
     said = written.stderr.strip() or written.stdout.strip() or '(no output)'
-    headline = next(iter(said.splitlines()), said)
-    if not _OLD_GIT.search(said):
+    if _SAFE_REFUSAL.search(said):
         return None
+    headline = next(iter(said.splitlines()), said)
     raise RuntimeError(
         f'git merge-tree --write-tree wrote no tree (exit {written.returncode}) under '
-        f'{git_version.strip()}; charging a merge commit with its resolution needs git '
+        f'{git_version.strip()}, and did not refuse for a reason this gate can read as '
+        f'a fact about the merge. Charging a merge commit with its resolution needs git '
         f'2.38 or newer. It said: {headline}'
     )
 
@@ -310,12 +329,15 @@ def main(argv: list[str]) -> int:
                 text=True,
                 encoding='utf-8',
                 errors='replace',
+                # _SAFE_REFUSAL reads git's own words, so they must not be localized.
+                env={**os.environ, 'LC_ALL': 'C'},
             )
             auto = _auto_merge_tree(written, git_version)
             if auto is None:
                 # git refused this pair outright (unrelated histories), so there is no
-                # automatic merge and nothing here came from one. `-c` lists what differs
-                # from every parent, which is that same content, reached the other way.
+                # automatic merge to diff against. The combined diff is the conservative
+                # approximation left: it under-charges a resolution that takes one root's
+                # file verbatim, and the trailer stays available for the rest.
                 own_paths = _git(
                     'diff-tree', '--cc', '--no-commit-id', '--name-only', '-r', sha
                 ).splitlines()

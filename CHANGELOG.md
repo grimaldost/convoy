@@ -34,7 +34,8 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   anything. Charging a two-parent merge needs git 2.38 or newer, and the gate fails
   naming the git it ran under rather than guessing on an older one, while a pair git
   refuses outright (unrelated histories) has no automatic merge to compare against
-  and falls back to the combined diff instead of failing; an octopus merge
+  and falls back to the combined diff instead of failing — an approximation that
+  under-charges a resolution taking one root's file verbatim; an octopus merge
   is outside that scope and keeps the combined (`--cc`) diff.
 - Judging the changelog gate per commit trades in a new false positive: an
   intermediate commit whose own diff touches the engine but is reverted later in the

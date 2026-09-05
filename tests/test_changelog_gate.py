@@ -14,6 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT = _ROOT / 'scripts' / 'changelog_gate.py'
 
@@ -225,6 +227,41 @@ def test_a_pair_git_refuses_to_merge_is_no_tree_and_no_failure() -> None:
         stderr='fatal: refusing to merge unrelated histories\n',
     )
     assert gate._auto_merge_tree(refused, 'git version 2.53.0.windows.1') is None
+
+
+def test_the_message_a_real_pre_2_38_git_prints_here_still_raises() -> None:
+    """The boundary round 4 got wrong, from git's own source rather than from a guess.
+    ``git merge-tree --write-tree A B`` is four arguments, which is exactly what pre-2.38
+    ``cmd_merge_tree`` expects, so it never reaches its usage branch: it calls
+    ``get_tree_descriptor`` on ``--write-tree`` and dies ``unknown rev --write-tree``.
+    Round 4 classified by a pattern for the usage string, so this — the message that
+    actually occurs — fell through to the silent combined-diff fallback on precisely the
+    machines that cannot detect the bug. Only the known-safe refusal returns None now."""
+    old = subprocess.CompletedProcess(
+        args=['git', 'merge-tree', '--write-tree', 'a', 'b'],
+        returncode=128,
+        stdout='',
+        stderr='fatal: unknown rev --write-tree\n',
+    )
+    with pytest.raises(RuntimeError, match='2.38 or newer'):
+        gate._auto_merge_tree(old, 'git version 2.30.0')
+
+
+def test_a_parent_git_cannot_read_raises_rather_than_falling_back() -> None:
+    """The other half of the same direction. A modern git that cannot read one of the
+    parents says so in its own words, and that is neither a tree nor a statement about
+    this merge — a shallow clone would produce it, and answering it with the combined
+    diff would charge content nobody authored while claiming the resolution was read."""
+    unreadable = subprocess.CompletedProcess(
+        args=['git', 'merge-tree', '--write-tree', 'a', 'b'],
+        returncode=128,
+        stdout='',
+        stderr=(
+            'merge-tree: 0123456789abcdef0123456789abcdef01234567 - not something we can merge\n'
+        ),
+    )
+    with pytest.raises(RuntimeError, match='wrote no tree'):
+        gate._auto_merge_tree(unreadable, 'git version 2.53.0')
 
 
 # --- the release heading must move the version forward -----------------------
@@ -827,3 +864,48 @@ def test_end_to_end_a_clean_octopus_over_one_file_is_over_charged(tmp_path: Path
 
     assert result.returncode == 1, result.stdout
     assert 'Merge branches b and c' in result.stdout, result.stdout
+
+
+def test_end_to_end_an_unrelated_histories_resolution_is_charged_to_the_merge(
+    tmp_path: Path,
+) -> None:
+    """The two tests above it assert that this range is judged rather than crashed, and
+    both survive a mutant that charges the merge nothing at all — the error they see comes
+    from the root commit's own diff. This one pins the merge's charge: the root carries the
+    trailer, so only the merge can fail, and its resolution is a hand edit of an engine
+    file that neither root contains."""
+    _init_repo(tmp_path)
+    _git(['checkout', '-q', '--orphan', 'stranger'], cwd=tmp_path)
+    _git(['rm', '-rq', '--cached', '.'], cwd=tmp_path)
+    for rel in (
+        'src/convoy/engine.py',
+        'src/convoy/wide.py',
+        'docs/backlog.md',
+        'CHANGELOG.md',
+        'pyproject.toml',
+    ):
+        (tmp_path / rel).unlink()
+    (tmp_path / 'src' / 'convoy' / 'other.py').write_text('y = 1\n', encoding='utf-8')
+    _git(['add', '-A'], cwd=tmp_path)
+    _git(
+        [
+            'commit',
+            '-q',
+            '-m',
+            'feat: a root commit changing the engine\n\nChangelog: none (vendored tree)\n',
+        ],
+        cwd=tmp_path,
+    )
+    _git(['checkout', '-q', 'main'], cwd=tmp_path)
+    _git(
+        ['merge', '--no-ff', '--no-commit', '--allow-unrelated-histories', 'stranger'],
+        cwd=tmp_path,
+    )
+    (tmp_path / 'src' / 'convoy' / 'other.py').write_text('y = 99\n', encoding='utf-8')
+    _git(['add', '-A'], cwd=tmp_path)
+    _git(['commit', '-q', '-m', 'Merge the stranger'], cwd=tmp_path)
+
+    result = _run_gate(tmp_path)
+
+    assert result.returncode == 1, result.stdout
+    assert 'Merge the stranger' in result.stdout, result.stdout
