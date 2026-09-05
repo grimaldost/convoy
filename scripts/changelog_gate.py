@@ -250,7 +250,7 @@ def _auto_merge_tree(written: subprocess.CompletedProcess[str], git_version: str
     nothing to diff the result against. ``None`` says that, and the caller falls back to
     the combined diff. That fallback is a conservative approximation and not an
     equivalent reading: ``-c`` lists what differs from *every* parent, so a resolution
-    that takes one root's file verbatim differs from that root and goes uncharged, where
+    that takes one root's file verbatim matches that root and goes uncharged, where
     the module's own rule ("no automatic merge, so all of it is authored") would charge
     it. Accepted because the alternative — charging both roots entire — is worse, and
     because the trailer remains available on the merge.

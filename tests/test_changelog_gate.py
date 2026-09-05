@@ -181,10 +181,14 @@ def test_an_added_changelog_line_exempts_every_engine_commit_in_the_range() -> N
 
 
 def test_a_merge_tree_that_wrote_no_tree_fails_naming_the_git_version() -> None:
-    """``git merge-tree --write-tree`` arrived in git 2.38; an older git answers the
-    option with a usage error on stdout, and a git that cannot merge the two parents
-    answers with a diagnostic. Neither is a tree, and neither may be quietly downgraded
-    back to the combined diff — the failure has to name the git it ran."""
+    """Anything that is not a tree and not the one known-safe refusal raises, naming the
+    git it ran. This fixture is the wrong-argument-count shape, which is a usage error on
+    stdout — kept because it exercises the raise path through a second door, not because
+    it is what a pre-2.38 git prints for this argv: that is
+    ``fatal: unknown rev --write-tree``, and the test three functions below is the one
+    that pins it. The exception, and the only one, is
+    ``refusing to merge unrelated histories``, which is a fact about the merge rather
+    than about the machine and is deliberately answered with the combined diff."""
     refused = subprocess.CompletedProcess(
         args=['git', 'merge-tree', '--write-tree', 'a', 'b'],
         returncode=129,
