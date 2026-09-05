@@ -88,10 +88,10 @@ a red blocks the merge.
 @dataclass(frozen=True)
 class Check:
     name: str
-    run: str                    # the shell command run against the workspace
+    run: str  # the shell command run against the workspace
     blocking: bool
-    independent: bool = False   # supplied by the author, unreachable by the implementer
-    asset: str = ''             # out-of-tree oracle path; isolation verified fail-closed at gate time
+    independent: bool = False  # supplied by the author, unreachable by the implementer
+    asset: str = ''  # out-of-tree oracle path; isolation verified fail-closed at gate time
 ```
 
 ```python
@@ -99,11 +99,13 @@ class Check:
 from dataclasses import dataclass
 from collections.abc import Sequence
 
+
 @dataclass(frozen=True)
 class CheckResult:
     check: Check
     passed: bool
     detail: str
+
 
 @dataclass(frozen=True)
 class GateVerdict:
@@ -111,16 +113,14 @@ class GateVerdict:
 
     @property
     def blocking_red(self) -> bool:
-        'Any blocking check failed. A red is a red — this drives the merge/exit.'
+        "Any blocking check failed. A red is a red — this drives the merge/exit."
         return any(not r.passed and r.check.blocking for r in self.results)
 
     @property
     def independent_red(self) -> bool:
-        'A blocking *independent* check failed — a trustworthy signal to auto-fix.'
-        return any(
-            not r.passed and r.check.blocking and r.check.independent
-            for r in self.results
-        )
+        "A blocking *independent* check failed — a trustworthy signal to auto-fix."
+        return any(not r.passed and r.check.blocking and r.check.independent for r in self.results)
+
 
 def decide(results: Sequence[CheckResult]) -> GateVerdict:
     return GateVerdict(results=tuple(results))
@@ -131,9 +131,10 @@ def decide(results: Sequence[CheckResult]) -> GateVerdict:
 class GateRunner(Protocol):
     def run(self, workspace: Path, checks: Sequence[Check]) -> tuple[CheckResult, ...]: ...
 
+
 # src/convoy/interface/fs_probe.py — shell (a free function, not a Protocol)
 def isolation_result(workspace: Path, check: Check) -> CheckResult | None:
-    'For a blocking independent check, verify its asset is outside the scored '
+    "For a blocking independent check, verify its asset is outside the scored"
     'workspace and exists. convoy checks workspace containment and existence; '
     'it does NOT verify write permissions. On violation (no asset, in-tree '
     'asset, or missing asset), return a synthetic FAILING CheckResult so the '
