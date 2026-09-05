@@ -32,7 +32,9 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   one engine file in different hunks, and the synthetic `refs/pull/N/merge` that CI
   checks out once the base branch has moved, both merge without a human writing
   anything. Charging a two-parent merge needs git 2.38 or newer, and the gate fails
-  naming the git it ran under rather than guessing on an older one; an octopus merge
+  naming the git it ran under rather than guessing on an older one, while a pair git
+  refuses outright (unrelated histories) has no automatic merge to compare against
+  and falls back to the combined diff instead of failing; an octopus merge
   is outside that scope and keeps the combined (`--cc`) diff.
 - Judging the changelog gate per commit trades in a new false positive: an
   intermediate commit whose own diff touches the engine but is reverted later in the

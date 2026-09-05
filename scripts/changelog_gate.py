@@ -25,7 +25,10 @@ Three checks and one advisory, all over the merge-base diff:
   recording as any other commit; a clean auto-merge, including the synthetic
   ``refs/pull/N/merge`` CI checks out, contributes nothing and is charged nothing.
   An octopus merge is outside ``--write-tree``'s two-parent scope and keeps the
-  combined (``--cc``) diff, which is sound for three or more parents. Granularity
+  combined (``--cc``) diff, which OVER-charges: an octopus git merged cleanly is
+  charged with the files its branches both touched, though no one authored the
+  result. The trailer on the octopus commit is the remedy, and convoy's history
+  holds no octopus merge to need it. Granularity
   has a cost of its own: an intermediate commit's engine change that a later commit
   in the same range reverts still needs its own trailer or entry, even though the
   range's final diff never shows it — convoy's own history integrates by merge
@@ -93,6 +96,10 @@ _SECTION_HEADING = re.compile(r'^### (.*)$', re.MULTILINE)
 # What `git merge-tree --write-tree` prints on its first line when it wrote a tree —
 # SHA-1 or SHA-256, so the object id is 40 or 64 hex digits.
 _OBJECT_ID = re.compile(r'[0-9a-f]{40}(?:[0-9a-f]{24})?')
+# How a git too old for `--write-tree` answers it: the option is unknown, so git
+# prints usage. Anything else it refuses (unrelated histories) is about the merge,
+# not the machine - see _auto_merge_tree.
+_OLD_GIT = re.compile(r'usage: git merge-tree|unknown option|error: unknown', re.I)
 
 Version = tuple[int, int, int]
 
@@ -215,26 +222,42 @@ def _git(*args: str) -> str:
     ).stdout
 
 
-def _auto_merge_tree(written: subprocess.CompletedProcess[str], git_version: str) -> str:
-    """The tree id ``git merge-tree --write-tree`` wrote, or a loud failure.
+def _auto_merge_tree(written: subprocess.CompletedProcess[str], git_version: str) -> str | None:
+    """The tree id ``git merge-tree --write-tree`` wrote, ``None`` if there is no
+    automatic merge to compare against, or a loud failure if this git cannot compute one.
+
+    Three outcomes, and the difference between the last two is the whole point:
 
     Exit 1 is a *conflicted* automatic merge, not an error: merge-tree still writes a
     tree — the conflict markers are in it — and that tree is exactly what tells a hand
-    resolution from an automatic one, so it is used like any other. What is not a tree
-    is an older git answering the option with its usage string (``--write-tree`` arrived
-    in git 2.38) or a git that could not read the two commits at all. Neither may be
-    quietly downgraded back to the combined diff: that charge is what this replaces, and
-    falling back to it would restore the bug on exactly the machines that cannot detect
-    it. So it raises, naming the git it ran under, and the job fails saying why.
+    resolution from an automatic one, so it is used like any other.
+
+    A git older than 2.38 answers the option with its usage string. That is a property
+    of the *machine*, it holds for every merge in the range, and it may not be quietly
+    downgraded back to the combined diff: that charge is what this replaces, and falling
+    back to it would restore the bug on exactly the machines that cannot detect it. So
+    it raises, naming the git it ran under, and the job says why.
+
+    A git that refuses this particular pair — ``refusing to merge unrelated histories``
+    is the one that occurs — is a property of the *merge*, and it is not an error at
+    all: there is no automatic merge of unrelated histories, so nothing the merge
+    contains was produced by one. ``None`` says exactly that, and the caller charges the
+    combined diff, which under ``-c`` lists only what differs from every parent — the
+    same reading, reached the other way. Raising here instead cost a verdict: the gate
+    exited on a traceback with no ``::error::`` and advice to upgrade a git that was
+    already new enough.
     """
     first = next(iter(written.stdout.splitlines()), '').strip()
     if _OBJECT_ID.fullmatch(first):
         return first
     said = written.stderr.strip() or written.stdout.strip() or '(no output)'
+    headline = next(iter(said.splitlines()), said)
+    if not _OLD_GIT.search(said):
+        return None
     raise RuntimeError(
         f'git merge-tree --write-tree wrote no tree (exit {written.returncode}) under '
         f'{git_version.strip()}; charging a merge commit with its resolution needs git '
-        f'2.38 or newer. It said: {next(iter(said.splitlines()), said)}'
+        f'2.38 or newer. It said: {headline}'
     )
 
 
@@ -288,20 +311,27 @@ def main(argv: list[str]) -> int:
                 encoding='utf-8',
                 errors='replace',
             )
-            own_paths = _git(
-                'diff-tree',
-                '--no-commit-id',
-                '--name-only',
-                '-r',
-                _auto_merge_tree(written, git_version),
-                sha,
-            ).splitlines()
+            auto = _auto_merge_tree(written, git_version)
+            if auto is None:
+                # git refused this pair outright (unrelated histories), so there is no
+                # automatic merge and nothing here came from one. `-c` lists what differs
+                # from every parent, which is that same content, reached the other way.
+                own_paths = _git(
+                    'diff-tree', '--cc', '--no-commit-id', '--name-only', '-r', sha
+                ).splitlines()
+            else:
+                own_paths = _git(
+                    'diff-tree', '--no-commit-id', '--name-only', '-r', auto, sha
+                ).splitlines()
         elif len(parents) > 2:
             # An octopus is outside `--write-tree`'s two-parent scope (and reducing it to
             # its first two parents would charge it the other branches' content), so it
-            # keeps the combined diff. `-c` is sound here for the opposite reason it is
-            # unsound above: it lists only files differing from *every* parent, which for
-            # an octopus is content the merge really did have to author.
+            # keeps the combined diff. This OVER-charges and the docstring says so: `-c`
+            # lists files differing from every parent, which for a clean automatic
+            # octopus over two hunks of one file is still nobody's authorship. Left as
+            # the conservative reading because a wrong charge has a remedy the author can
+            # apply (the trailer) and a missed one does not, and because this repository
+            # has never made an octopus merge.
             own_paths = _git(
                 'diff-tree', '--cc', '--no-commit-id', '--name-only', '-r', sha
             ).splitlines()

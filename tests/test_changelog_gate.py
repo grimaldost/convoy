@@ -211,6 +211,22 @@ def test_a_conflicted_merge_tree_is_still_a_tree() -> None:
     assert gate._auto_merge_tree(conflicted, 'git version 2.53.0') == '0' * 40
 
 
+def test_a_pair_git_refuses_to_merge_is_no_tree_and_no_failure() -> None:
+    """The boundary the old-git test does not cross. ``refusing to merge unrelated
+    histories`` is a statement about this *pair*, not about this *git*: there is no
+    automatic merge to compare against, so ``None`` is the answer and the caller charges
+    the combined diff. Raising here — which is what a version check alone does, since the
+    git is new enough — cost the verdict entirely: the gate exited on a traceback with no
+    ``::error::`` line and told the contributor to upgrade a git that was already 2.53."""
+    refused = subprocess.CompletedProcess(
+        args=['git', 'merge-tree', '--write-tree', 'a', 'b'],
+        returncode=128,
+        stdout='',
+        stderr='fatal: refusing to merge unrelated histories\n',
+    )
+    assert gate._auto_merge_tree(refused, 'git version 2.53.0.windows.1') is None
+
+
 # --- the release heading must move the version forward -----------------------
 
 
@@ -699,3 +715,115 @@ def test_end_to_end_an_octopus_merge_keeps_the_combined_diff(tmp_path: Path) -> 
     assert len(_git(['log', '-1', '--format=%P'], cwd=tmp_path).split()) == 3
     result = _run_gate(tmp_path)
     assert result.returncode == 0, result.stdout
+
+
+def test_end_to_end_an_unrelated_histories_merge_is_judged_not_crashed(tmp_path: Path) -> None:
+    """Red proof for the crash. A second root merged in with ``--allow-unrelated-histories``
+    makes ``git merge-tree --write-tree`` exit 128 rather than write a tree, and the gate
+    used to die on an uncaught ``RuntimeError`` — no ``::error::``, no verdict, and advice
+    to upgrade a git that was already new enough. Both earlier versions of the script
+    answered this range with a proper error line, so the crash was a regression. It must
+    judge: the engine change rides in on the merge with nothing recorded, so exit 1 and
+    say which commit."""
+    _init_repo(tmp_path)
+    _git(['checkout', '-q', '--orphan', 'stranger'], cwd=tmp_path)
+    _git(['rm', '-rq', '--cached', '.'], cwd=tmp_path)
+    for rel in (
+        'src/convoy/engine.py',
+        'src/convoy/wide.py',
+        'docs/backlog.md',
+        'CHANGELOG.md',
+        'pyproject.toml',
+    ):
+        (tmp_path / rel).unlink()
+    (tmp_path / 'src' / 'convoy' / 'other.py').write_text('y = 1\n', encoding='utf-8')
+    _git(['add', '-A'], cwd=tmp_path)
+    _git(['commit', '-q', '-m', 'feat: a root commit changing the engine'], cwd=tmp_path)
+    _git(['checkout', '-q', 'main'], cwd=tmp_path)
+    _git(
+        ['merge', '--no-ff', '--allow-unrelated-histories', '-m', 'Merge the stranger', 'stranger'],
+        cwd=tmp_path,
+    )
+
+    result = _run_gate(tmp_path)
+
+    assert 'Traceback' not in result.stderr, result.stderr
+    assert result.returncode == 1, result.stdout
+    assert '::error::' in result.stdout, result.stdout
+    assert 'src/convoy/other.py' in result.stdout, result.stdout
+
+
+def test_end_to_end_an_unrelated_histories_merge_takes_the_trailer(tmp_path: Path) -> None:
+    """The remedy has to exist, or the previous test only moved the dead end. The
+    combined diff charges the merge, and a trailer on a commit inside it clears the
+    charge like any other."""
+    _init_repo(tmp_path)
+    _git(['checkout', '-q', '--orphan', 'stranger'], cwd=tmp_path)
+    _git(['rm', '-rq', '--cached', '.'], cwd=tmp_path)
+    for rel in (
+        'src/convoy/engine.py',
+        'src/convoy/wide.py',
+        'docs/backlog.md',
+        'CHANGELOG.md',
+        'pyproject.toml',
+    ):
+        (tmp_path / rel).unlink()
+    (tmp_path / 'src' / 'convoy' / 'other.py').write_text('y = 1\n', encoding='utf-8')
+    _git(['add', '-A'], cwd=tmp_path)
+    _git(
+        [
+            'commit',
+            '-q',
+            '-m',
+            'feat: a root commit changing the engine\n\nChangelog: none (vendored tree)\n',
+        ],
+        cwd=tmp_path,
+    )
+    _git(['checkout', '-q', 'main'], cwd=tmp_path)
+    _git(
+        [
+            'merge',
+            '--no-ff',
+            '--allow-unrelated-histories',
+            '-m',
+            'Merge the stranger\n\nChangelog: none (vendored tree)\n',
+            'stranger',
+        ],
+        cwd=tmp_path,
+    )
+
+    result = _run_gate(tmp_path)
+
+    assert result.returncode == 0, result.stdout
+
+
+def test_end_to_end_a_clean_octopus_over_one_file_is_over_charged(tmp_path: Path) -> None:
+    """Characterization, not a red proof: this documents a known over-charge rather than
+    fixing one. Two branches edit the same engine file in different hunks and git merges
+    all three heads at once with no conflict — the octopus tree is byte-identical to the
+    automatic merge of its parents, so nobody authored the result. An octopus is outside
+    ``git merge-tree --write-tree``'s two-parent scope, so it keeps the combined diff and
+    is charged anyway. Left that way deliberately: a wrong charge has a remedy the author
+    can apply, a missed one does not, and this repository has never made an octopus
+    merge. The docstring says the same; this test is what keeps the two honest. The
+    sibling ``..._keeps_the_combined_diff`` puts the branches on different files, where
+    the charge is empty and cannot tell a sound rule from an unsound one."""
+    _init_repo(tmp_path)
+    for name, kwargs in (('b', {'top': 'b'}), ('c', {'bottom': 'c'})):
+        _git(['checkout', '-q', '-b', name, 'main'], cwd=tmp_path)
+        _commit(
+            tmp_path,
+            f'fix: {name} engine tweak\n\nChangelog: none (internal only)\n',
+            {'src/convoy/wide.py': _wide(**kwargs)},
+        )
+    _git(['checkout', '-q', 'main'], cwd=tmp_path)
+    _git(['merge', '--no-ff', '-m', 'Merge branches b and c', 'b', 'c'], cwd=tmp_path)
+    assert len(_git(['log', '-1', '--format=%P'], cwd=tmp_path).split()) == 3
+    assert (tmp_path / 'src' / 'convoy' / 'wide.py').read_text(encoding='utf-8') == _wide(
+        top='b', bottom='c'
+    ), 'the fixture must be a clean automatic octopus, not a resolution'
+
+    result = _run_gate(tmp_path)
+
+    assert result.returncode == 1, result.stdout
+    assert 'Merge branches b and c' in result.stdout, result.stdout
