@@ -13,6 +13,24 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-05
+
+**Minor**, by the test in `docs/design/02-formats.md`: three `[Unreleased]` entries
+carry **(consumer-affecting)** — a new `series.toml` key (`[governance.tier_models]`),
+a load-time rejection that a spec relying on an ignored key will now hit, and a
+telemetry field frozen to `false` after its writer was deleted.
+
+What it serves: the lineup this engine carries stops being what decides a run.
+`[governance.tier_models]` lets the series file carry its own resolved tier table, so
+a run is reproducible from its own artefact; the built-in table is documented and
+stamped as the floor it always was, and announces itself in pre-flight whenever it is
+actually consulted. `core/pricing.py` is gone — a second copy of a price list this
+repository has to keep in sync with a lineup it does not own, backing a branch
+measured dead across 76 production spawns. And `[governance]` now rejects an unknown
+field rather than dropping it, which is the precondition that keeps the first change
+from silently doing nothing on an older build. ADR-0010 records the decision.
+
+
 ### Added
 
 - **`[governance.tier_models]`: the series carries its own tier-to-model table**
