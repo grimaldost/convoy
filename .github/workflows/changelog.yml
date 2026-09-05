@@ -23,7 +23,10 @@ jobs:
   recorded:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # the merge-base with the target branch has to exist locally
-      - run: python scripts/changelog_gate.py "origin/${{ github.base_ref }}"
+          persist-credentials: false
+      - env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python scripts/changelog_gate.py "origin/$BASE_REF"
