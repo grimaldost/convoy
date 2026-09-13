@@ -964,6 +964,65 @@ def test_clean_on_a_non_repo_is_a_usage_error(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_USAGE
 
 
+def test_unlock_removes_a_stale_run_lock(tmp_path: Path) -> None:
+    """The surgical half `dead` should recommend: releases the workspace, touches nothing else."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    stale = lock_path(workspace)
+    stale.write_text('99999')
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+    assert result.exit_code == EXIT_OK
+    assert not stale.exists()
+    assert 'removed the run lock' in result.output
+
+
+def test_unlock_leaves_the_tree_and_branches_untouched(tmp_path: Path) -> None:
+    """Unlike `clean`, this is not the destructive path -- --resume needs what it leaves."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    git = Git(workspace)
+    git.checkout('integration', create=True)
+    git.checkout('pr-1', create=True)
+    (workspace / 'debris.txt').write_text('left by a killed run\n')
+    lock_path(workspace).write_text('99999')
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+
+    assert result.exit_code == EXIT_OK
+    assert git.current_branch() == 'pr-1'
+    assert git.branch_exists('integration')
+    assert git.branch_exists('pr-1')
+    assert (workspace / 'debris.txt').exists()
+
+
+def test_unlock_closes_the_killed_runs_ledger_entry(tmp_path: Path) -> None:
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    outputs = tmp_path / 'outputs'
+    _unfinished_ledger(outputs)
+    lock_path(workspace).write_text('99999')
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+    assert result.exit_code == EXIT_OK
+    assert 'recorded run r1 as abandoned' in result.output
+
+    written = [json.loads(line) for line in (outputs / 'spawns.jsonl').read_text().splitlines()]
+    assert written[-1]['event'] == 'run_abandoned'
+    assert written[-1]['run_id'] == 'r1'
+    assert 'unlock' in written[-1]['reason']
+
+
+def test_unlock_without_a_stale_lock_says_so_and_writes_nothing(tmp_path: Path) -> None:
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    outputs = tmp_path / 'outputs'
+    _unfinished_ledger(outputs)
+    before = (outputs / 'spawns.jsonl').read_text()
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+
+    assert result.exit_code == EXIT_OK
+    assert 'no run lock' in result.output
+    assert (outputs / 'spawns.jsonl').read_text() == before
+
+
 def test_clean_takes_no_lock_and_runs_no_seat_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1513,7 +1572,11 @@ def test_status_human_output_says_how_to_recover_a_dead_run(tmp_path: Path) -> N
     result = runner.invoke(cli.app, ['status', str(series_file), '-w', str(workspace)])
 
     assert 'dead' in result.stdout
-    assert 'convoy clean' in result.stdout
+    # Not `convoy clean`: that message would recommend the command that deletes the
+    # integration and PR branches `--resume` needs. `unlock` releases the workspace
+    # without touching either.
+    assert 'convoy unlock' in result.stdout
+    assert 'convoy clean' not in result.stdout
 
 
 # --- status of a detached run that never reached the ledger -------------------------------

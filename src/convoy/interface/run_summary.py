@@ -50,6 +50,11 @@ _EXIT_BY_OUTCOME: dict[str, int] = {
 # The reason recorded on a ``run_abandoned`` line written by the recovery path.
 ABANDONED_BY_CLEAN_REASON = 'workspace lock cleared by convoy clean; the run never returned'
 
+# Same, for the surgical recovery path (``convoy unlock``) that clears a lock without
+# touching the tree — a distinct reason so the ledger says which verb actually ran, not
+# just that the lock was cleared.
+ABANDONED_BY_UNLOCK_REASON = 'workspace lock cleared by convoy unlock; the run never returned'
+
 
 def _run_lines(telemetry_path: Path, run_id: str | None = None) -> list[dict[str, Any]]:
     """Every parsed ledger line, optionally narrowed to one ``run_id``.
@@ -307,7 +312,7 @@ def summarize_run(
         # reader because "dead" is the one state whose recovery is not obvious.
         envelope['message'] = (
             f'the process that was running {run_id} is gone and it recorded no outcome; '
-            'run `convoy clean` to release the workspace, then re-run with --resume to '
+            'run `convoy unlock` to release the workspace, then re-run with --resume to '
             'continue from the PRs that already integrated'
         )
     return envelope
