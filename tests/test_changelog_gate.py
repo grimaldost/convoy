@@ -10,6 +10,7 @@ a real git repository in ``tmp_path`` and the real script as a subprocess.
 """
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +39,79 @@ def _evaluate(
     commits = [(changed, messages)]
     return gate.evaluate(
         changed, commits, changelog_added, changelog_removed, base_version, head_version
+    )
+
+
+# --- self-description (--explain) --------------------------------------------------------
+#
+# The gate's own policy drifted from the prose describing it twice: once inside this
+# repository (three changelog_gate.py docstring claims proven by fixtures on the easy side
+# of their own boundary, see GUARDRAILS.md) and once across a port to a sibling repository,
+# whose CONTRIBUTING.md named three watched directories while ENGINE_PREFIXES named one.
+# `--explain` prints the constants instead of a hand-written paraphrase of them, and the
+# tests below are the mechanical half: they compare what it prints against what
+# CONTRIBUTING.md claims, in both directions, so neither can drift from the other in silence.
+
+
+# The paragraph that states what the gate watches — scoped so the cross-check below does
+# not also read `docs/feedback/` (an unrelated backtick-quoted directory two sections away)
+# as a claim about watched prefixes.
+_WATCHED_PREFIXES_PARAGRAPH = re.compile(
+    r'The CHANGELOG half of that discipline is machine-enforced.*?(?=\n\n)', re.S
+)
+
+
+def _contributing() -> str:
+    return (_ROOT / 'CONTRIBUTING.md').read_text(encoding='utf-8')
+
+
+def _watched_prefixes_paragraph() -> str:
+    match = _WATCHED_PREFIXES_PARAGRAPH.search(_contributing())
+    assert match is not None, 'CONTRIBUTING.md no longer carries the changelog-gate paragraph'
+    return match.group(0)
+
+
+def test_the_constants_being_cross_checked_are_not_empty() -> None:
+    """Non-vacuity guard: an emptied ``ENGINE_PREFIXES`` would make both checks below pass
+    while checking nothing — the same failure mode ``test_doc_claims.py`` guards against."""
+    assert gate.ENGINE_PREFIXES
+
+
+def test_explain_names_the_watched_prefixes_trailer_and_merge_policy() -> None:
+    """Prints from the constants, not a hand-written restatement of them."""
+    output = gate._explain()
+    for prefix in gate.ENGINE_PREFIXES:
+        assert prefix in output
+    assert 'Changelog: none (<reason>)' in output
+    assert 'merge-tree' in output
+
+
+def test_explain_is_reachable_as_a_cli_flag() -> None:
+    """The real entry point a porting author actually runs, not just the helper function."""
+    result = subprocess.run(
+        [sys.executable, str(_SCRIPT), '--explain'], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    for prefix in gate.ENGINE_PREFIXES:
+        assert prefix in result.stdout
+
+
+def test_every_watched_prefix_is_named_in_contributing() -> None:
+    """The direction the sibling-repo port got wrong: the code watched a prefix the
+    project's own CONTRIBUTING.md never told a contributor about."""
+    paragraph = _watched_prefixes_paragraph()
+    missing = [prefix for prefix in gate.ENGINE_PREFIXES if prefix not in paragraph]
+    assert not missing, f'CONTRIBUTING.md does not name watched prefix(es): {missing}'
+
+
+def test_contributing_claims_no_watched_prefix_the_gate_does_not_watch() -> None:
+    """The other direction: a claim CONTRIBUTING.md makes that ``ENGINE_PREFIXES`` cannot
+    back up would be exactly as false as the fact that motivated this row."""
+    paragraph = _watched_prefixes_paragraph()
+    claimed = set(re.findall(r'`([\w./-]+/)`', paragraph))
+    unknown = sorted(claimed - set(gate.ENGINE_PREFIXES))
+    assert not unknown, (
+        f'CONTRIBUTING.md claims watched prefix(es) the gate does not watch: {unknown}'
     )
 
 
