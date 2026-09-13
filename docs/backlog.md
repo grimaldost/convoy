@@ -922,11 +922,16 @@ message, with `clean` kept for the case where a wipe is what the operator wants.
 zero-unique-commit case with a logged note, which is the state that already cannot lose
 work. **(consumer-affecting: a new recovery verb or flag)**
 
-**Effort** M · **Source** [triage] · **Rows** T43a, T43b · **Status** shipped in full.
-T43a (the lock half — `convoy unlock`, `interface/cli.py`; the `dead` message now names it
-instead of `clean`; T56a/T56b in the 2026-09-13 delta triage) ships in 0.14.0. T43b (`resume`
-pre-flight self-clearing a zero-unique-commit PR branch) shipped earlier and was
-field-confirmed 2026-09-13 (five branches skipped, $0 re-spent).
+**Effort** M · **Source** [triage] · **Rows** T43a, T43b · **Status** T43a and T43b both
+ship, though T43a ships narrower than this row's Change paragraph asks. T43a (the lock
+half — `convoy unlock`, `interface/cli.py`; the `dead` message now names it instead of
+`clean`; T56a/T56b in the 2026-09-13 delta triage) reuses `remove_stale_lock` exactly as
+`clean` already calls it — unconditional removal, no check that the owner process is
+actually gone, matching `remove_stale_lock`'s existing documented contract. This paragraph's
+"confirm the owner process is gone" clause is not built; it would be a behavior change to
+the primitive itself, not a new door onto it, and stays open. T43b (`resume` pre-flight
+self-clearing a zero-unique-commit PR branch) shipped earlier and was field-confirmed
+2026-09-13 (five branches skipped, $0 re-spent).
 
 ### CONV-B43 — A run can be over while `convoy_status` still says `running`, and the result file exists from launch, so neither the state nor the file answers "is it finished?".
 
