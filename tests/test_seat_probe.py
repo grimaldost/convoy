@@ -1,7 +1,9 @@
 """Tests for the pre-run seat viability probe (interface/seat_probe.py)."""
 
+import json
 import stat
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -99,6 +101,109 @@ def test_probe_request_is_minimal_but_uses_the_run_model(tmp_path: Path) -> None
     assert request.tools == ()  # tool-less: nothing can touch the workspace
     assert 0 < request.budget_usd <= 0.05  # near-zero spend cap
     assert cwd == tmp_path
+
+
+# --- the pre-spawn credential check (CONV-B41 / T60a) --------------------------------------
+#
+# The seat's failure state is legible from two fields in ~/.claude/.credentials.json
+# (never the token itself) before any spawn: a failed refresh writes the access token's
+# expiresAt back at (or before) now while refreshTokenExpiresAt is still valid, and no
+# spawn -- live or copied -- can authenticate from that file until a human logs in again.
+# Reading it first turns a diagnosis that used to cost a spawn into the cost of one file
+# read, and answers with the operator's actual next action rather than a classification.
+
+
+def _write_credential(config_dir: Path, *, expires_at: float, refresh_expires_at: float) -> None:
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / '.credentials.json').write_text(
+        json.dumps(
+            {
+                'claudeAiOauth': {
+                    'expiresAt': expires_at,
+                    'refreshTokenExpiresAt': refresh_expires_at,
+                }
+            }
+        ),
+        encoding='utf-8',
+    )
+
+
+def _environ(config_dir: Path) -> dict[str, str]:
+    return {'CLAUDE_CONFIG_DIR': str(config_dir)}
+
+
+def test_an_already_expired_credential_with_a_live_refresh_blocks_before_any_spawn(
+    tmp_path: Path,
+) -> None:
+    """A failed refresh: expiresAt in the past, refreshTokenExpiresAt still valid."""
+    now_ms = time.time() * 1000
+    _write_credential(tmp_path, expires_at=now_ms - 60_000, refresh_expires_at=now_ms + 3_600_000)
+    spawn = FakeSpawn([])  # any call would raise -- proves zero spawn cost
+
+    problem = seat_problem(spawn, _series(), tmp_path, environ=_environ(tmp_path))
+
+    assert problem is not None
+    assert problem.kind == 'seat'
+    assert 're-authenticate' in problem.message
+    assert spawn.calls == []
+
+
+def test_a_credential_whose_refresh_has_also_expired_says_log_in_again(tmp_path: Path) -> None:
+    now_ms = time.time() * 1000
+    _write_credential(tmp_path, expires_at=now_ms - 60_000, refresh_expires_at=now_ms - 1_000)
+    spawn = FakeSpawn([])
+
+    problem = seat_problem(spawn, _series(), tmp_path, environ=_environ(tmp_path))
+
+    assert problem is not None
+    assert 'log in again' in problem.message
+    assert spawn.calls == []
+
+
+def test_a_credential_not_yet_expired_proceeds_to_the_normal_probe(tmp_path: Path) -> None:
+    now_ms = time.time() * 1000
+    _write_credential(
+        tmp_path, expires_at=now_ms + 3_600_000, refresh_expires_at=now_ms + 7_200_000
+    )
+
+    problem = seat_problem(
+        FakeSpawn([ok_result()]), _series(), tmp_path, environ=_environ(tmp_path)
+    )
+
+    assert problem is None
+
+
+def test_no_credential_file_proceeds_to_the_normal_probe(tmp_path: Path) -> None:
+    """Keychain-backed auth keeps no file here -- this must never become a spurious block."""
+    problem = seat_problem(
+        FakeSpawn([ok_result()]), _series(), tmp_path, environ=_environ(tmp_path)
+    )
+    assert problem is None
+
+
+def test_an_unparseable_credential_file_proceeds_to_the_normal_probe(tmp_path: Path) -> None:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / '.credentials.json').write_text('not json', encoding='utf-8')
+
+    problem = seat_problem(
+        FakeSpawn([ok_result()]), _series(), tmp_path, environ=_environ(tmp_path)
+    )
+    assert problem is None
+
+
+def test_a_credential_missing_the_expiry_fields_proceeds_to_the_normal_probe(
+    tmp_path: Path,
+) -> None:
+    """Some other shape under claudeAiOauth -- degrade to the spawn, never guess."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / '.credentials.json').write_text(
+        json.dumps({'claudeAiOauth': {'accessToken': 'redacted'}}), encoding='utf-8'
+    )
+
+    problem = seat_problem(
+        FakeSpawn([ok_result()]), _series(), tmp_path, environ=_environ(tmp_path)
+    )
+    assert problem is None
 
 
 def test_budget_probe_result_is_not_a_seat_problem(tmp_path: Path) -> None:
