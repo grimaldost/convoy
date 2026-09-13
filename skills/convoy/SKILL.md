@@ -22,6 +22,10 @@ description: >-
 
 # convoy
 
+This document describes convoy `0.13.0`, locked to `.claude-plugin/plugin.json` by
+`tests/test_manifest.py::test_versions_are_locked` — a served-versus-installed skew
+then costs a glance at this line rather than a walk through the plugin cache.
+
 convoy runs a **governed, measurable multi-PR series**. You give it a series
 (PR-sized tasks with dependencies, a base branch, per-phase budgets, and a
 quality gate); it drives a coding agent to implement each PR in dependency order
