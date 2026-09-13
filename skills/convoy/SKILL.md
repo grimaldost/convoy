@@ -22,7 +22,7 @@ description: >-
 
 # convoy
 
-This document describes convoy `0.14.0`, locked to `.claude-plugin/plugin.json` by
+This document describes convoy `0.15.0`, locked to `.claude-plugin/plugin.json` by
 `tests/test_manifest.py::test_versions_are_locked` — a served-versus-installed skew
 then costs a glance at this line rather than a walk through the plugin cache.
 

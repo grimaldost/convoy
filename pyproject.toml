@@ -1,6 +1,6 @@
 [project]
 name = 'convoy-engine'
-version = '0.14.0'
+version = '0.15.0'
 description = 'Governed, measurable multi-PR execution engine.'
 readme = 'README.md'
 requires-python = '>=3.14'
@@ -17,7 +17,13 @@ classifiers = [
 dependencies = [
     'typer>=0.12',
     'tomli-w>=1.0',
-    'mcp>=1.28.1',
+    # Capped, unlike its neighbours, because it is the one dependency convoy imports a
+    # module PATH from (interface/mcp/server.py) and mcp 2.0 moved that path. Not for the
+    # red-PR signal: a checked-in lock plus the uv dependabot ecosystem already produces
+    # that on a major, which is how the 2.x break was caught. It is for the routes that
+    # resolve WITHOUT the lock -- README's `uv tool install git+...` -- where an uncapped
+    # floor silently takes an mcp whose API convoy has not been migrated to yet.
+    'mcp>=2.2.0,<3',
 ]
 
 [project.urls]

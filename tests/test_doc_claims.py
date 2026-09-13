@@ -46,7 +46,7 @@ def _mcp_tool_names() -> set[str]:
 
 def _mcp_run_parameters() -> set[str]:
     tools = {tool.name: tool for tool in asyncio.run(build_server().list_tools())}
-    return set(tools['convoy_run'].inputSchema['properties'])
+    return set(tools['convoy_run'].input_schema['properties'])
 
 
 def _cli_verbs() -> set[str]:

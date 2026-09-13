@@ -13,6 +13,65 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-13
+
+**Minor**, by the install-requirement rule this release adds to
+`docs/design/02-formats.md`. Nothing in the *emitted* surface moves — no new event,
+field, `outcome`, `error_kind`, exit code or series.toml key, so nothing here is marked
+**(consumer-affecting)** — but what convoy requires of the environment it is installed
+into does move, and the version number is a contract with installers too. mcp 2.x is a
+different major; `httpx` becomes `httpx2`, `pydantic-settings` and `python-dotenv` leave
+the runtime closure, and `opentelemetry-api` and `truststore` join it. A patch should be
+safe to take without thinking, and this is not one.
+
+mcp 2.0 deleted `mcp.server.fastmcp`, so a fresh resolve of the old `mcp>=1.28.1` floor
+built a convoy whose serving surface could not import. The four tools themselves are
+unchanged, and that was measured rather than assumed: the tool descriptors an agent
+discovers (name, description, input and output schema) and the envelopes `convoy_init` /
+`convoy_run --dry-run` / `convoy_gate` / `convoy_status` answer with are byte-identical
+under 1.28.1 and 2.2.0, compared by dumping both.
+
+### Added
+
+- **The versioning discipline covers the install requirement**
+  (`docs/design/02-formats.md`). The rule tested only the emitted surface, so a change
+  that leaves every envelope identical while forcing a dependency major or reshaping the
+  transitive runtime closure read as a patch. It is a minor. This release is the worked
+  example, and the inverse of the `outcome="budget"` one already there: additive-looking
+  by the old test, consequential to whoever installs it.
+
+### Changed
+
+- **`mcp>=2.2.0,<3`** (was `>=1.28.1`). `FastMCP` was renamed `MCPServer` in mcp 2.0 and
+  its module removed, so `build_server` now constructs `MCPServer` from
+  `mcp.server.mcpserver`. Tool registration (`server.tool()` over the annotated
+  coroutines), the stdio transport, and `list_tools()` keep the shape 1.x had, so nothing
+  else in `interface/mcp/server.py` moves. The floor is a real floor now rather than a
+  formality: convoy cannot run under an mcp 1.x, and the old specifier let a resolver
+  choose one.
+- **The upper cap is a deliberate exception to this repository's uncapped-floor idiom**,
+  and the reason is on the dependency line so it is not re-opened. It is not there for the
+  red-PR signal — a checked-in `uv.lock` plus the `uv` dependabot ecosystem produces that
+  on a major either way, which is how this break surfaced. It is there for the install
+  routes that resolve without reading the lock: the plugin route is safe (`plugin.json`
+  launches the server through `uv run --project`), but README's
+  `uv tool install git+…` resolves fresh from `pyproject.toml`, and uncapped it would
+  silently take an mcp whose API convoy has not been migrated to yet. `mcp` is also the
+  only dependency convoy imports a module *path* from, so it is the only one where a
+  major relocating a symbol breaks an import rather than a call.
+- **The SDK's own models name their fields in snake_case in 2.x**, camelCase surviving
+  only as the wire alias — `Tool.input_schema`, `CallToolResult.structured_content`. The
+  tests that read a descriptor or a tool result off the SDK were renamed with it. No key
+  convoy itself emits changed; this is how the tests reach the SDK's objects, not what
+  those objects carry.
+- **`tests/test_mcp_stdio_integration.py` drives all four tools, not two.** The module
+  exists because the unit tests call the tool coroutines directly and so exercise neither
+  the transport nor the registration — precisely the halves an SDK major bump moves. It
+  now discovers the advertised tool names over the wire, calls every tool, and reads
+  `convoy_version` and `convoy_status`'s `state` back off the transport. `convoy_gate`
+  joins `convoy_init` as a second shell-out under the stdio server, which is the hang
+  class the module was written for.
+
 ## [0.14.0] - 2026-09-13
 
 **Minor**, by the test in `docs/design/02-formats.md`: two entries below carry

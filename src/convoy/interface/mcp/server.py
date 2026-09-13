@@ -10,13 +10,16 @@ with an authenticated ``claude`` CLI seat. The tools offload their blocking work
 ``asyncio.to_thread`` and write nothing to stdout — the stdio server owns stdout for the
 JSON-RPC stream, and all convoy progress narration goes to stderr.
 
-Pinned ``mcp`` SDK API:
+Pinned ``mcp`` SDK API (2.x):
 
-- ``from mcp.server.fastmcp import FastMCP``; ``FastMCP(name)``.
+- ``from mcp.server.mcpserver import MCPServer``; ``MCPServer(name)``. This is 1.x's
+  ``FastMCP``, renamed in mcp 2.0 — ``mcp.server.fastmcp`` is gone.
 - ``@server.tool()`` registers a tool; the function's ``Annotated[T, Field(description=...)]``
   hints become the input schema each parameter's description reaches the agent through.
 - ``server.run(transport='stdio')`` serves over stdio.
-- ``await server.list_tools()`` is the tool-introspection API used by the schema tests.
+- ``await server.list_tools()`` is the tool-introspection API used by the schema tests; the
+  ``Tool`` it returns names its fields in snake_case (``input_schema``), camelCase being the
+  wire alias only.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from convoy import __version__
@@ -568,9 +571,9 @@ async def convoy_status(
     return await asyncio.to_thread(_status_impl, series_file, run_id, workspace)
 
 
-def build_server() -> FastMCP:
+def build_server() -> MCPServer:
     """Construct the server with the ``run`` / ``gate`` / ``init`` / ``status`` tools registered."""
-    server = FastMCP(_SERVER_NAME)
+    server = MCPServer(_SERVER_NAME)
     server.tool()(convoy_run)
     server.tool()(convoy_gate)
     server.tool()(convoy_init)
