@@ -51,18 +51,33 @@ class IsolatedConfig:
     credential_copied: bool
 
 
+def credential_file(config_dir: Path) -> Path | None:
+    """The credential file under ``config_dir``, if one is there; ``None`` otherwise.
+
+    ``None`` covers both "keychain-backed auth, which keeps nothing here" and "this
+    directory does not exist" — a caller that only wants to know whether a file is
+    available to read (the seat probe's pre-spawn credential check, for one) needs
+    neither distinguished. Named once here so a reader never re-derives the filename
+    this module already knows (``_CREDENTIAL_BASENAMES``).
+    """
+    for name in _CREDENTIAL_BASENAMES:
+        candidate = config_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _copy_credential(source_dir: Path, dest_dir: Path) -> bool:
     """Copy the first present credential file from ``source_dir`` into ``dest_dir``.
 
     Returns ``True`` when a credential file was found and copied, ``False`` when none
     exists (a keychain-backed host keeps no credential file here).
     """
-    for name in _CREDENTIAL_BASENAMES:
-        src = source_dir / name
-        if src.is_file():
-            shutil.copy2(src, dest_dir / name)
-            return True
-    return False
+    found = credential_file(source_dir)
+    if found is None:
+        return False
+    shutil.copy2(found, dest_dir / found.name)
+    return True
 
 
 @contextmanager

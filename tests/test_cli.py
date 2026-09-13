@@ -22,6 +22,7 @@ import pytest
 from typer.testing import CliRunner
 
 import convoy.interface.cli as cli
+from convoy import __version__
 from convoy.core.governance import GovernanceError
 from convoy.interface.drivers.headless import (
     EXIT_BLOCKED,
@@ -864,6 +865,7 @@ def test_a_run_closed_by_clean_reads_finished_and_abandoned(tmp_path: Path) -> N
     assert payload['ok'] is False
     # Same exit code an infrastructure halt carries: outside the work, and re-runnable.
     assert payload['exit_code'] == EXIT_INFRASTRUCTURE
+    assert payload['convoy_version'] == __version__
 
 
 def test_clean_records_nothing_when_the_latest_run_already_finished(tmp_path: Path) -> None:
@@ -962,6 +964,97 @@ def test_clean_on_a_non_repo_is_a_usage_error(tmp_path: Path) -> None:
     not_a_repo.mkdir()
     result = runner.invoke(cli.app, ['clean', str(series_file), '--workspace', str(not_a_repo)])
     assert result.exit_code == EXIT_USAGE
+
+
+def test_unlock_removes_a_stale_run_lock(tmp_path: Path) -> None:
+    """The surgical half `dead` should recommend: releases the workspace, touches nothing else."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    stale = lock_path(workspace)
+    stale.write_text('99999')
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+    assert result.exit_code == EXIT_OK
+    assert not stale.exists()
+    assert 'removed the run lock' in result.output
+
+
+def test_unlock_leaves_the_tree_and_branches_untouched(tmp_path: Path) -> None:
+    """Unlike `clean`, this is not the destructive path -- --resume needs what it leaves."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    git = Git(workspace)
+    git.checkout('integration', create=True)
+    git.checkout('pr-1', create=True)
+    (workspace / 'debris.txt').write_text('left by a killed run\n')
+    lock_path(workspace).write_text('99999')
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+
+    assert result.exit_code == EXIT_OK
+    assert git.current_branch() == 'pr-1'
+    assert git.branch_exists('integration')
+    assert git.branch_exists('pr-1')
+    assert (workspace / 'debris.txt').exists()
+
+
+def test_unlock_closes_the_killed_runs_ledger_entry(tmp_path: Path) -> None:
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    outputs = tmp_path / 'outputs'
+    _unfinished_ledger(outputs)
+    lock_path(workspace).write_text('99999')
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+    assert result.exit_code == EXIT_OK
+    assert 'recorded run r1 as abandoned' in result.output
+
+    written = [json.loads(line) for line in (outputs / 'spawns.jsonl').read_text().splitlines()]
+    assert written[-1]['event'] == 'run_abandoned'
+    assert written[-1]['run_id'] == 'r1'
+    assert 'unlock' in written[-1]['reason']
+
+
+def test_unlock_without_a_stale_lock_says_so_and_writes_nothing(tmp_path: Path) -> None:
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    outputs = tmp_path / 'outputs'
+    _unfinished_ledger(outputs)
+    before = (outputs / 'spawns.jsonl').read_text()
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+
+    assert result.exit_code == EXIT_OK
+    assert 'no run lock' in result.output
+    assert (outputs / 'spawns.jsonl').read_text() == before
+
+
+def test_unlock_refuses_while_the_lock_owner_is_alive(tmp_path: Path) -> None:
+    """`unlock` says `stale`; unlike `clean`, it must not act on a lock that is not.
+
+    A live owner means a run is still going. Removing its lock anyway opens the
+    workspace to a second `convoy run` -- two agents racing one tree, exactly the
+    invariant the lock exists to enforce -- and stamps a run in progress as abandoned.
+    """
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    lock_path(workspace).write_text(str(os.getpid()))
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+
+    assert result.exit_code == EXIT_USAGE
+    assert lock_path(workspace).exists()  # untouched
+    assert str(os.getpid()) in result.output
+    assert '--force' in result.output
+
+
+def test_unlock_force_overrides_a_live_owner(tmp_path: Path) -> None:
+    """The operator's explicit override, for a reused pid or a probe the operator
+    trusts less than their own knowledge of the workspace."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    lock_path(workspace).write_text(str(os.getpid()))
+
+    result = runner.invoke(
+        cli.app, ['unlock', str(series_file), '--workspace', str(workspace), '--force']
+    )
+
+    assert result.exit_code == EXIT_OK
+    assert not lock_path(workspace).exists()
 
 
 def test_clean_takes_no_lock_and_runs_no_seat_probe(
@@ -1068,6 +1161,8 @@ def test_json_emits_the_run_envelope_on_stdout(
     assert payload['telemetry_path'].endswith('spawns.jsonl')
     assert [pr['pr_id'] for pr in payload['prs']] == ['pr-1']
     assert payload['prs'][0]['effective_model'] == 'claude-haiku-4-5'
+    # Reconstructible from its own artefact -- the gate envelope's existing pattern.
+    assert payload['convoy_version'] == __version__
 
 
 def test_json_failure_is_the_same_shape_the_mcp_tool_returns(
@@ -1333,6 +1428,7 @@ def test_status_on_an_empty_ledger_is_unknown_not_an_error(tmp_path: Path) -> No
     assert payload['state'] == 'unknown'
     assert payload['ok'] is False
     assert 'no run recorded' in payload['message']
+    assert payload['convoy_version'] == __version__
 
 
 def test_status_human_output_names_the_halt(tmp_path: Path) -> None:
@@ -1513,7 +1609,11 @@ def test_status_human_output_says_how_to_recover_a_dead_run(tmp_path: Path) -> N
     result = runner.invoke(cli.app, ['status', str(series_file), '-w', str(workspace)])
 
     assert 'dead' in result.stdout
-    assert 'convoy clean' in result.stdout
+    # Not `convoy clean`: that message would recommend the command that deletes the
+    # integration and PR branches `--resume` needs. `unlock` releases the workspace
+    # without touching either.
+    assert 'convoy unlock' in result.stdout
+    assert 'convoy clean' not in result.stdout
 
 
 # --- status of a detached run that never reached the ledger -------------------------------

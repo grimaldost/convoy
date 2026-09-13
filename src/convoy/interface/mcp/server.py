@@ -30,6 +30,7 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from convoy import __version__
 from convoy.core.gate import GateUsageError
 from convoy.core.governance import GovernanceError
 from convoy.core.spec import Series, SpecError, load_series
@@ -119,6 +120,10 @@ def _detached_impl(
             f'poll convoy_status with series_file={series_file} and '
             f'run_id={launch.run_id} until state is "finished"'
         ),
+        # This handshake has no summarize_run/status_of fold to inherit the field from
+        # (the run itself has not written a line yet) and no CLI twin either, so it is
+        # named here directly -- same pattern as the gate envelope (gate_service.py).
+        'convoy_version': __version__,
     }
 
 

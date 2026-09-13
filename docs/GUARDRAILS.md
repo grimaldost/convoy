@@ -56,6 +56,43 @@ a test that exercises the subprocess path points the spawn at a stub executable,
 which the guard passes through. The guard's own red proof lives in
 `tests/test_headless_spawn.py`.
 
+### A test that proves a boundary sits on the hard side of it
+
+A fail-closed guard states the question it protects, not a proxy for it, and its
+tests assert the wrong-answer case — not only the degenerate one. A test whose
+subject is "these two surfaces agree" invokes both surfaces; it never recomputes
+one from the other. A fixture cited as proof of a boundary is built from the case
+that sits *just across* it, not comfortably inside it.
+
+*Why:* four defects reached a green, pushed, CI-passing PR on the gate-only surface
+because each guard tested cardinality (is the selection empty?) instead of the
+question the caller actually asked, and the tests — sharing an author with the
+guard — asserted the intended semantics rather than the adversarial ones: a typo'd
+`--phase` silently selected nothing and reported green; an uncaught `OSError`
+exited `1`, which is `EXIT_BLOCKED`; the MCP tool raised instead of returning an
+envelope; an unbacked isolation asset carried `independent_red: true` for a spec
+defect no repair can fix. `test_convoy_gate_matches_the_cli_envelope` was named and
+docstring'd as the CLI/MCP parity check and recomputed its expectation from the
+same `gate_service` layer the MCP tool calls, so it could never fail on the
+CLI-side divergence it existed to catch. And `scripts/changelog_gate.py` shipped
+three behavioural claims in three review rounds running — whitespace edits do not
+record, a merge commit is charged with its own resolution, an octopus charge is
+sound — each proved by a fixture built from the easy side of its own boundary (an
+all-whitespace blob instead of a trailing space on an existing line; a clean merge
+of two *different* files instead of the same one; two different files again for
+the octopus case), and each caught only by a reviewer, after it shipped. Three
+independent failure modes, one root: a green suite certifying the semantics its
+own author assumed rather than the ones an adversary, or a boundary, would
+actually probe.
+
+*Enforced by:* review — no instance of this class has yet proven itself reachable
+by a general mechanism, the way `test_the_names_being_pinned_are_actually_discovered`
+does for `test_doc_claims.py` (mechanization candidate). Worked examples, so none
+of the above is re-derived: the four `run_gate` refusals fixed in
+`interface/gate_service.py`, `test_convoy_gate_matches_the_cli_envelope`
+(`tests/test_mcp_server.py`), and the three `scripts/changelog_gate.py` rounds
+(`tests/test_changelog_gate.py`).
+
 ### Every subprocess is hermetic
 
 No child inherits the caller's stdin — `stdin=DEVNULL` at every subprocess site

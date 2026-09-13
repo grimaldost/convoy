@@ -13,6 +13,73 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-13
+
+**Minor**, by the test in `docs/design/02-formats.md`: two entries below carry
+**(consumer-affecting)** — a new CLI recovery verb and a new field on the run/status
+envelope.
+
+A triage-delta round. None of its four source reports found a bad PR reaching
+integration; what had drifted was everything convoy says about itself. The clearest
+instance: a dead run's own recovery message recommended the one command that deletes
+the branches `--resume` needs, which would have destroyed five gate-green PRs
+($52.09 of metered spend) had it been followed literally. The rest is the same class
+at smaller scale — a session that could not name its own engine version, a seat's
+failure state that cost a spawn to learn when two fields on disk already say it for
+free, and a fact (`changelog_gate.py`'s watched prefixes) that lived in code with a
+hand-maintained description next to it, comparable but never compared.
+
+### Added
+
+- **`convoy unlock <series.toml>`** (consumer-affecting: new verb). Releases a stale
+  workspace lock and nothing else — no discarded changes, no deleted untracked files,
+  no deleted branches. The surgical half of `clean`, wired to `remove_stale_lock`
+  (`interface/workspace_lock.py`), which existed with exactly one caller before this:
+  `clean` itself. Also closes the killed run's ledger entry with a terminal
+  `run_abandoned` line, exactly as `clean` does. **Refuses when the lock's owner
+  process is still alive**, naming the pid, unless `--force` is given: a verb named
+  for the *stale* case must confirm that before it acts, or it reproduces exactly the
+  defect this release exists to fix, one command over. Checked with the new
+  `workspace_lock.lock_ownership`, which composes `lock_owner_pid` with
+  `process_is_alive` — the same predicate `convoy_status`'s `dead`/`running` split
+  now derives from, so the two surfaces can never silently disagree about what
+  "stale" means.
+- **`convoy_run` and `convoy_status` envelopes carry `convoy_version`**
+  (consumer-affecting), reusing the pattern the gate envelope has carried since
+  0.11.0. Covers a finished, running or dead run under both surfaces
+  (`summarize_run`, `status_of`'s unknown-state shape) and the MCP `detach` handshake,
+  which has no CLI twin to inherit the field from.
+- **The seat probe reads the on-disk credential's expiry before spending a spawn.** A
+  failed refresh leaves `~/.claude/.credentials.json` with `claudeAiOauth.expiresAt`
+  in the past and `refreshTokenExpiresAt` still valid, and no spawn can authenticate
+  from it until a human logs in again. `seat_problem` now reads those two fields
+  (never the token) and names the state directly — re-authenticate, or log in again —
+  at zero spawn cost, instead of learning it from an `infrastructure` classification
+  after paying for the probe.
+- **`scripts/changelog_gate.py --explain`** prints the watched prefixes, the trailer
+  opt-out and the merge policy from the constants themselves, so a porting author (or
+  a reviewer) reads the policy instead of a hand-written paraphrase of it.
+  `tests/test_changelog_gate.py` checks the prefixes half against this repository's
+  own `CONTRIBUTING.md` in both directions.
+- **`docs/GUARDRAILS.md` gains a test-doctrine rule**: a fail-closed guard's tests
+  assert the wrong-answer case rather than the degenerate one, a "these two surfaces
+  agree" test invokes both surfaces, and a fixture cited as proof of a boundary sits
+  on the hard side of it. One rule absorbing three independent, previously-shipped
+  failure modes (four `run_gate` refusals, a vacuous CLI/MCP parity test, three
+  `changelog_gate.py` docstring claims), not one append per finding.
+
+### Changed
+
+- **The `dead` state's recovery message names `convoy unlock`, not `convoy clean`.**
+  The two clauses of the old message — "run `convoy clean`" then "re-run with
+  `--resume`" — could not both hold, since `clean` force-deletes the integration and
+  PR branches `--resume` continues from. `clean` is unchanged and still available
+  for when a wipe is actually wanted.
+- **`skills/convoy/SKILL.md` states its own version** in its opening lines, locked to
+  `.claude-plugin/plugin.json` as a fourth site by
+  `tests/test_manifest.py::test_versions_are_locked`. A served-versus-installed skew
+  now costs a glance at the skill body rather than a walk through the plugin cache.
+
 ## [0.13.0] - 2026-09-05
 
 **Minor**, by the test in `docs/design/02-formats.md`: three `[Unreleased]` entries

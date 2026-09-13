@@ -58,6 +58,7 @@ recording discipline, not a consumer's. Stdlib only; ``tests/test_changelog_gate
 holds the red proofs.
 
     python scripts/changelog_gate.py origin/main
+    python scripts/changelog_gate.py --explain   # print the policy from the constants
 """
 
 import os
@@ -200,6 +201,42 @@ def evaluate(
     return errors, warnings
 
 
+def _explain() -> str:
+    """Render the gate's own policy from its constants, for a human — a porting author
+    updating a sibling repository's ``CONTRIBUTING.md``, or a reviewer checking this one.
+
+    ``ENGINE_PREFIXES`` drifted from its own description once inside this repository (three
+    ``changelog_gate.py`` docstring claims, each proven by a fixture on the easy side of its
+    own boundary — see ``docs/GUARDRAILS.md``) and once across a port, where a sibling
+    repository's ``CONTRIBUTING.md`` named three watched directories while this module named
+    one. Printing the constants instead of hand-paraphrasing them turns that drift into a
+    stale doc a reader can diff against real output, and ``tests/test_changelog_gate.py``
+    turns the prefixes half into a red test against this repository's own
+    ``CONTRIBUTING.md``.
+    """
+    lines = [
+        'watched prefixes (a commit whose own diff touches one of these must be recorded',
+        'in CHANGELOG.md or declare the exemption below):',
+        *(f'  {prefix}' for prefix in ENGINE_PREFIXES),
+        '',
+        'trailer opt-out (exempts the commit that carries it, never the whole range):',
+        '  Changelog: none (<reason>)',
+        '',
+        'merge policy:',
+        '  a merge commit is charged only with its own resolution -- the content an',
+        '  automatic merge of its parents would not have produced (git merge-tree',
+        '  --write-tree, diffed against the merge commit itself). Unrelated histories',
+        '  fall back to the combined diff (no automatic merge exists to compare against);',
+        '  an octopus merge keeps the combined diff too, which over-charges rather than',
+        '  under-charges.',
+        '',
+        'contract surfaces (a diff touching one should mark its CHANGELOG entry',
+        f'{MARKER}):',
+        *(f'  {surface}' for surface in CONTRACT_SURFACES),
+    ]
+    return '\n'.join(lines)
+
+
 def _dotted(version: Version) -> str:
     return '.'.join(str(part) for part in version)
 
@@ -301,6 +338,10 @@ def _version_of(pyproject: str) -> Version | None:
 
 
 def main(argv: list[str]) -> int:
+    if argv and argv[0] == '--explain':
+        print(_explain())
+        return 0
+
     base_ref = argv[0] if argv else 'origin/main'
     merge_base = _git('merge-base', base_ref, 'HEAD').strip()
 

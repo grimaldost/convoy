@@ -48,10 +48,21 @@ from convoy.interface.run_service import (
     abandon_orphaned_run,
     run_series_headless,
 )
-from convoy.interface.run_summary import error_kind, orphaned_run_id, status_of, summarize_run
+from convoy.interface.run_summary import (
+    ABANDONED_BY_UNLOCK_REASON,
+    error_kind,
+    orphaned_run_id,
+    status_of,
+    summarize_run,
+)
 from convoy.interface.scaffold import ScaffoldError, scaffold
 from convoy.interface.streams import harden_std_streams
-from convoy.interface.workspace_lock import WorkspaceBusyError, lock_path, remove_stale_lock
+from convoy.interface.workspace_lock import (
+    WorkspaceBusyError,
+    lock_ownership,
+    lock_path,
+    remove_stale_lock,
+)
 
 app = typer.Typer(
     help='Governed, measurable multi-PR execution engine.',
@@ -685,6 +696,8 @@ def clean(
     files, delete untracked files and directories (ignored files are kept), check out
     the base branch, delete the series' integration and PR branches, and remove a stale
     run lock. Use ``--dry-run`` first to see exactly what that means for this workspace.
+    For a ``dead`` run you mean to ``--resume``, use ``convoy unlock`` instead — it
+    releases the lock without deleting the branches ``--resume`` needs.
 
     This is the recovery path, deliberately separate from ``run --fresh``: it starts no
     run, so it takes no workspace lock and pays for no seat probe — which is precisely
@@ -732,6 +745,71 @@ def clean(
     if abandoned is not None:
         typer.echo(f'recorded run {abandoned} as abandoned')
     typer.echo(f'clean: {target} is on {series.branches.base!r}')
+
+
+@app.command()
+def unlock(
+    series_file: Path,
+    workspace: Annotated[
+        Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            '--force',
+            help=(
+                'Remove the lock even though its owner process appears to be alive '
+                '(a reused pid, or a liveness check you trust less than your own '
+                'knowledge of the workspace). Without it, a live owner is refused.'
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Release a stale workspace lock, and nothing else — the safe half of ``clean``.
+
+    Removes the run lock (``.git/convoy-run.lock``) if one is there; touches nothing
+    else. No discarded changes, no deleted untracked files, no deleted branches — in
+    particular, the integration and PR branches ``--resume`` needs stay exactly as a
+    killed run left them. This is the recovery a ``dead`` run (``convoy status``) should
+    name: ``clean``'s tree-wiping steps and ``--resume``'s continuation cannot both hold,
+    since ``--resume`` needs the branches ``clean`` deletes.
+
+    **Refuses when the lock's owner is still alive**, unless ``--force`` is given: a
+    verb named for the *stale* case must not act on a lock that is not, or it opens the
+    workspace to a second concurrent ``convoy run`` — two agents racing one tree, the
+    exact invariant the lock exists to enforce — while also stamping a run still in
+    progress as abandoned. Checked with :func:`~convoy.interface.workspace_lock.lock_ownership`,
+    the same predicate ``convoy status`` reads its ``dead``/``running`` split from, so the
+    two can never disagree about what "stale" means.
+
+    Also **closes the killed run's ledger entry** with a terminal ``run_abandoned`` line,
+    exactly as ``clean`` does and for the same reason: the lock names the process that
+    owned the run, and a pid is reusable once it is gone, so this is the last moment the
+    abandonment is establishable. ``clean`` remains available for when a wipe is actually
+    wanted.
+
+    Idempotent: a workspace with no lock is reported and nothing is written.
+    """
+    series = _load_or_exit(series_file)
+    target = _workspace_or_exit(workspace)
+    ownership = lock_ownership(target)
+    if ownership.pid is not None and not ownership.stale and not force:
+        typer.echo(
+            f'the run lock at {lock_path(target)} is held by pid {ownership.pid}, which '
+            'is still running: this looks like a live run, not a dead one. unlock refuses '
+            'to release a live lock. If that pid has been reused by an unrelated process, '
+            'or you have reason to distrust this check, pass --force.',
+            err=True,
+        )
+        raise typer.Exit(EXIT_USAGE)
+    removed = remove_stale_lock(target)
+    if not removed:
+        typer.echo(f'{target} has no run lock; nothing to do')
+        return
+    typer.echo(f'removed the run lock ({lock_path(target)})')
+    abandoned = abandon_orphaned_run(series, reason=ABANDONED_BY_UNLOCK_REASON)
+    if abandoned is not None:
+        typer.echo(f'recorded run {abandoned} as abandoned')
 
 
 @app.command()

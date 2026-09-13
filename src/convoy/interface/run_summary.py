@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from convoy import __version__
 from convoy.core.gate import GateUsageError
 from convoy.core.governance import GovernanceError
 from convoy.core.spec import Series, SpecError
@@ -25,8 +26,7 @@ from convoy.interface.drivers.headless import (
     RunOutcome,
 )
 from convoy.interface.git import GitError
-from convoy.interface.proc import process_is_alive
-from convoy.interface.workspace_lock import WorkspaceBusyError, lock_owner_pid
+from convoy.interface.workspace_lock import WorkspaceBusyError, lock_ownership
 
 # Cap the per-PR list projected inline; the full trace always stays on disk (§ telemetry_path).
 _PR_CAP = 50
@@ -49,6 +49,11 @@ _EXIT_BY_OUTCOME: dict[str, int] = {
 
 # The reason recorded on a ``run_abandoned`` line written by the recovery path.
 ABANDONED_BY_CLEAN_REASON = 'workspace lock cleared by convoy clean; the run never returned'
+
+# Same, for the surgical recovery path (``convoy unlock``) that clears a lock without
+# touching the tree — a distinct reason so the ledger says which verb actually ran, not
+# just that the lock was cleared.
+ABANDONED_BY_UNLOCK_REASON = 'workspace lock cleared by convoy unlock; the run never returned'
 
 
 def _run_lines(telemetry_path: Path, run_id: str | None = None) -> list[dict[str, Any]]:
@@ -156,10 +161,10 @@ def unfinished_state(workspace: Path | None) -> str:
     """
     if workspace is None:
         return 'running'
-    pid = lock_owner_pid(workspace)
-    if pid is None:
+    ownership = lock_ownership(workspace)
+    if ownership.pid is None:
         return 'running'
-    return 'running' if process_is_alive(pid) else 'dead'
+    return 'dead' if ownership.stale else 'running'
 
 
 def summarize_run(
@@ -300,6 +305,10 @@ def summarize_run(
         'advisories': advisories,
         'telemetry_path': str(telemetry_path),
         'truncated': {'any': len(pr_list) > pr_cap, 'prs': max(0, len(pr_list) - pr_cap)},
+        # Names the engine that folded this envelope, exactly as the gate envelope already
+        # does (`gate_service.gate_envelope`) — so a run's artefact is reconstructible on
+        # its own, without a harness having echoed the version from somewhere else first.
+        'convoy_version': __version__,
     }
     if state == 'dead':
         # Same shape as the ``unknown`` envelope's message: the state is the thing to branch
@@ -307,7 +316,7 @@ def summarize_run(
         # reader because "dead" is the one state whose recovery is not obvious.
         envelope['message'] = (
             f'the process that was running {run_id} is gone and it recorded no outcome; '
-            'run `convoy clean` to release the workspace, then re-run with --resume to '
+            'run `convoy unlock` to release the workspace, then re-run with --resume to '
             'continue from the PRs that already integrated'
         )
     return envelope
@@ -358,6 +367,7 @@ def status_of(
             'series_id': series.id,
             'telemetry_path': str(telemetry_path),
             'message': f'no run recorded in {telemetry_path}',
+            'convoy_version': __version__,
         }
     return summarize_run(
         telemetry_path,

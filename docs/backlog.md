@@ -503,7 +503,10 @@ at detach pre-flight too, so an operator learns the seat is dead before designin
 around it rather than after. The fail-closed behaviour is correct and stays; what changes is
 when it speaks and what it says.
 
-**Effort** M · **Source** [triage] · **Rows** T42a
+**Effort** M · **Source** [triage] · **Rows** T42a · **Status** partially shipped in
+0.14.0 — the pre-spawn credential-expiry read and its located message (`interface/seat_probe.py`,
+T60a in the 2026-09-13 delta triage) ship; refreshing the credential before copying it, and
+running the probe at `dry_run` and detach pre-flight, remain open.
 
 ## Next
 
@@ -919,7 +922,17 @@ message, with `clean` kept for the case where a wipe is what the operator wants.
 zero-unique-commit case with a logged note, which is the state that already cannot lose
 work. **(consumer-affecting: a new recovery verb or flag)**
 
-**Effort** M · **Source** [triage] · **Rows** T43a, T43b
+**Effort** M · **Source** [triage] · **Rows** T43a, T43b · **Status** shipped in full in
+0.14.0. T43a (the lock half — `convoy unlock`, `interface/cli.py`; the `dead` message now
+names it instead of `clean`; T56a/T56b in the 2026-09-13 delta triage) confirms the owner
+process is gone before it acts: `workspace_lock.lock_ownership` composes `lock_owner_pid`
+with `process_is_alive` — the same predicate `convoy status` derives its `dead`/`running`
+split from — and `unlock` refuses, naming the pid, when the owner is still alive;
+`--force` overrides for a reused pid or a distrusted check. (An initial build of this row
+called `remove_stale_lock` unconditionally, exactly as `clean` does, and shipped without
+that confirmation; caught in review before merge and closed in the same PR.) T43b (`resume`
+pre-flight self-clearing a zero-unique-commit PR branch) shipped earlier and was
+field-confirmed 2026-09-13 (five branches skipped, $0 re-spent).
 
 ### CONV-B43 — A run can be over while `convoy_status` still says `running`, and the result file exists from launch, so neither the state nor the file answers "is it finished?".
 
