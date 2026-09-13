@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from convoy import __version__
 from convoy.interface.detached import Launch
 from convoy.interface.drivers.headless import EXIT_OK, RunOutcome
 from convoy.interface.git import GitError
@@ -649,6 +650,9 @@ def test_convoy_run_detach_returns_a_handle_not_a_result(
     assert result['log_path'].endswith(f'{result["run_id"]}.log')
     assert result['telemetry_path'].endswith('spawns.jsonl')
     assert result['run_id'] in result['next']
+    # Reconstructible from its own artefact, same as the gate envelope already is -- this
+    # handshake has no CLI twin and no summarize_run/status_of fold to inherit it from.
+    assert result['convoy_version'] == __version__
 
 
 def test_convoy_run_detach_passes_its_options_to_the_child(
@@ -828,6 +832,7 @@ def test_status_reports_dead_when_the_given_workspace_lock_owner_is_gone(tmp_pat
     )
 
     assert envelope['state'] == 'dead'
+    assert envelope['convoy_version'] == __version__
 
 
 def test_status_without_a_workspace_answers_exactly_as_before(tmp_path: Path) -> None:

@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from convoy import __version__
 from convoy.core.gate import GateUsageError
 from convoy.core.governance import GovernanceError
 from convoy.core.spec import Series, SpecError
@@ -305,6 +306,10 @@ def summarize_run(
         'advisories': advisories,
         'telemetry_path': str(telemetry_path),
         'truncated': {'any': len(pr_list) > pr_cap, 'prs': max(0, len(pr_list) - pr_cap)},
+        # Names the engine that folded this envelope, exactly as the gate envelope already
+        # does (`gate_service.gate_envelope`) — so a run's artefact is reconstructible on
+        # its own, without a harness having echoed the version from somewhere else first.
+        'convoy_version': __version__,
     }
     if state == 'dead':
         # Same shape as the ``unknown`` envelope's message: the state is the thing to branch
@@ -363,6 +368,7 @@ def status_of(
             'series_id': series.id,
             'telemetry_path': str(telemetry_path),
             'message': f'no run recorded in {telemetry_path}',
+            'convoy_version': __version__,
         }
     return summarize_run(
         telemetry_path,

@@ -22,6 +22,7 @@ import pytest
 from typer.testing import CliRunner
 
 import convoy.interface.cli as cli
+from convoy import __version__
 from convoy.core.governance import GovernanceError
 from convoy.interface.drivers.headless import (
     EXIT_BLOCKED,
@@ -864,6 +865,7 @@ def test_a_run_closed_by_clean_reads_finished_and_abandoned(tmp_path: Path) -> N
     assert payload['ok'] is False
     # Same exit code an infrastructure halt carries: outside the work, and re-runnable.
     assert payload['exit_code'] == EXIT_INFRASTRUCTURE
+    assert payload['convoy_version'] == __version__
 
 
 def test_clean_records_nothing_when_the_latest_run_already_finished(tmp_path: Path) -> None:
@@ -1127,6 +1129,8 @@ def test_json_emits_the_run_envelope_on_stdout(
     assert payload['telemetry_path'].endswith('spawns.jsonl')
     assert [pr['pr_id'] for pr in payload['prs']] == ['pr-1']
     assert payload['prs'][0]['effective_model'] == 'claude-haiku-4-5'
+    # Reconstructible from its own artefact -- the gate envelope's existing pattern.
+    assert payload['convoy_version'] == __version__
 
 
 def test_json_failure_is_the_same_shape_the_mcp_tool_returns(
@@ -1392,6 +1396,7 @@ def test_status_on_an_empty_ledger_is_unknown_not_an_error(tmp_path: Path) -> No
     assert payload['state'] == 'unknown'
     assert payload['ok'] is False
     assert 'no run recorded' in payload['message']
+    assert payload['convoy_version'] == __version__
 
 
 def test_status_human_output_names_the_halt(tmp_path: Path) -> None:
