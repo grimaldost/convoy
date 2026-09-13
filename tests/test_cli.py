@@ -1025,6 +1025,38 @@ def test_unlock_without_a_stale_lock_says_so_and_writes_nothing(tmp_path: Path) 
     assert (outputs / 'spawns.jsonl').read_text() == before
 
 
+def test_unlock_refuses_while_the_lock_owner_is_alive(tmp_path: Path) -> None:
+    """`unlock` says `stale`; unlike `clean`, it must not act on a lock that is not.
+
+    A live owner means a run is still going. Removing its lock anyway opens the
+    workspace to a second `convoy run` -- two agents racing one tree, exactly the
+    invariant the lock exists to enforce -- and stamps a run in progress as abandoned.
+    """
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    lock_path(workspace).write_text(str(os.getpid()))
+
+    result = runner.invoke(cli.app, ['unlock', str(series_file), '--workspace', str(workspace)])
+
+    assert result.exit_code == EXIT_USAGE
+    assert lock_path(workspace).exists()  # untouched
+    assert str(os.getpid()) in result.output
+    assert '--force' in result.output
+
+
+def test_unlock_force_overrides_a_live_owner(tmp_path: Path) -> None:
+    """The operator's explicit override, for a reused pid or a probe the operator
+    trusts less than their own knowledge of the workspace."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    lock_path(workspace).write_text(str(os.getpid()))
+
+    result = runner.invoke(
+        cli.app, ['unlock', str(series_file), '--workspace', str(workspace), '--force']
+    )
+
+    assert result.exit_code == EXIT_OK
+    assert not lock_path(workspace).exists()
+
+
 def test_clean_takes_no_lock_and_runs_no_seat_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

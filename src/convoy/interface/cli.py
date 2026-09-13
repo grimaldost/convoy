@@ -57,7 +57,12 @@ from convoy.interface.run_summary import (
 )
 from convoy.interface.scaffold import ScaffoldError, scaffold
 from convoy.interface.streams import harden_std_streams
-from convoy.interface.workspace_lock import WorkspaceBusyError, lock_path, remove_stale_lock
+from convoy.interface.workspace_lock import (
+    WorkspaceBusyError,
+    lock_ownership,
+    lock_path,
+    remove_stale_lock,
+)
 
 app = typer.Typer(
     help='Governed, measurable multi-PR execution engine.',
@@ -748,6 +753,17 @@ def unlock(
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            '--force',
+            help=(
+                'Remove the lock even though its owner process appears to be alive '
+                '(a reused pid, or a liveness check you trust less than your own '
+                'knowledge of the workspace). Without it, a live owner is refused.'
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Release a stale workspace lock, and nothing else — the safe half of ``clean``.
 
@@ -757,6 +773,14 @@ def unlock(
     killed run left them. This is the recovery a ``dead`` run (``convoy status``) should
     name: ``clean``'s tree-wiping steps and ``--resume``'s continuation cannot both hold,
     since ``--resume`` needs the branches ``clean`` deletes.
+
+    **Refuses when the lock's owner is still alive**, unless ``--force`` is given: a
+    verb named for the *stale* case must not act on a lock that is not, or it opens the
+    workspace to a second concurrent ``convoy run`` — two agents racing one tree, the
+    exact invariant the lock exists to enforce — while also stamping a run still in
+    progress as abandoned. Checked with :func:`~convoy.interface.workspace_lock.lock_ownership`,
+    the same predicate ``convoy status`` reads its ``dead``/``running`` split from, so the
+    two can never disagree about what "stale" means.
 
     Also **closes the killed run's ledger entry** with a terminal ``run_abandoned`` line,
     exactly as ``clean`` does and for the same reason: the lock names the process that
@@ -768,6 +792,16 @@ def unlock(
     """
     series = _load_or_exit(series_file)
     target = _workspace_or_exit(workspace)
+    ownership = lock_ownership(target)
+    if ownership.pid is not None and not ownership.stale and not force:
+        typer.echo(
+            f'the run lock at {lock_path(target)} is held by pid {ownership.pid}, which '
+            'is still running: this looks like a live run, not a dead one. unlock refuses '
+            'to release a live lock. If that pid has been reused by an unrelated process, '
+            'or you have reason to distrust this check, pass --force.',
+            err=True,
+        )
+        raise typer.Exit(EXIT_USAGE)
     removed = remove_stale_lock(target)
     if not removed:
         typer.echo(f'{target} has no run lock; nothing to do')

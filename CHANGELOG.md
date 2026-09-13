@@ -36,7 +36,14 @@ hand-maintained description next to it, comparable but never compared.
   no deleted branches. The surgical half of `clean`, wired to `remove_stale_lock`
   (`interface/workspace_lock.py`), which existed with exactly one caller before this:
   `clean` itself. Also closes the killed run's ledger entry with a terminal
-  `run_abandoned` line, exactly as `clean` does.
+  `run_abandoned` line, exactly as `clean` does. **Refuses when the lock's owner
+  process is still alive**, naming the pid, unless `--force` is given: a verb named
+  for the *stale* case must confirm that before it acts, or it reproduces exactly the
+  defect this release exists to fix, one command over. Checked with the new
+  `workspace_lock.lock_ownership`, which composes `lock_owner_pid` with
+  `process_is_alive` — the same predicate `convoy_status`'s `dead`/`running` split
+  now derives from, so the two surfaces can never silently disagree about what
+  "stale" means.
 - **`convoy_run` and `convoy_status` envelopes carry `convoy_version`**
   (consumer-affecting), reusing the pattern the gate envelope has carried since
   0.11.0. Covers a finished, running or dead run under both surfaces

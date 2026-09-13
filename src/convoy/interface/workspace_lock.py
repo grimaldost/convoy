@@ -9,7 +9,10 @@ working tree.
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+
+from convoy.interface.proc import process_is_alive
 
 _LOCK_NAME = 'convoy-run.lock'
 
@@ -42,15 +45,48 @@ def lock_owner_pid(workspace: Path) -> int | None:
         return None
 
 
+@dataclass(frozen=True)
+class LockOwnership:
+    """What ``workspace``'s run lock currently says about who holds it.
+
+    ``pid`` is ``None`` when there is no lock file at all — nothing to report an owner
+    for, and nothing for ``stale`` to mean anything about. ``stale`` is ``True`` only
+    on positive evidence: a lock naming a process that ``process_is_alive`` says is
+    gone. A lock naming a live process is not stale, and neither is one this cannot
+    read — the conservative direction throughout this module, since a false "stale"
+    is what lets two runs race one workspace.
+    """
+
+    pid: int | None
+    stale: bool
+
+
+def lock_ownership(workspace: Path) -> LockOwnership:
+    """Whether ``workspace``'s run lock is stale, and whose it is either way.
+
+    The one place this judgement is made — composing :func:`lock_owner_pid` with
+    :func:`~convoy.interface.proc.process_is_alive` — so a reader (``convoy status``'s
+    ``dead``/``running`` split) and a writer (``convoy unlock``'s refusal) can never
+    silently disagree about what "stale" means, the way two inline copies of the same
+    two-line check eventually would.
+    """
+    pid = lock_owner_pid(workspace)
+    if pid is None:
+        return LockOwnership(pid=None, stale=False)
+    return LockOwnership(pid=pid, stale=not process_is_alive(pid))
+
+
 def remove_stale_lock(workspace: Path) -> bool:
     """Remove ``workspace``'s run lock if present; return whether one was there.
 
-    For the recovery path only (``convoy clean``). A lock survives a hard-killed run
-    because no ``finally`` ever ran, and it then blocks every later run with
-    :class:`WorkspaceBusyError` until someone deletes the file by hand. This does that
-    deletion. It deliberately does NOT check whether a run is still live — the caller is
-    stating that it is not, which is why removing a lock is a distinct, explicit verb
-    rather than something a run does for itself.
+    For the recovery verbs only (``convoy clean``, ``convoy unlock``). A lock survives
+    a hard-killed run because no ``finally`` ever ran, and it then blocks every later
+    run with :class:`WorkspaceBusyError` until someone deletes the file by hand. This
+    does that deletion. It deliberately does NOT check whether a run is still live
+    itself — this function only ever removes what it is told to, and a caller that
+    needs to know first uses :func:`lock_ownership` before calling it. ``unlock`` does;
+    ``clean`` does not, because it already discards uncommitted work unconditionally,
+    documented as destructive either way.
     """
     path = lock_path(workspace)
     existed = path.exists()

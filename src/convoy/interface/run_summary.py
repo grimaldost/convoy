@@ -26,8 +26,7 @@ from convoy.interface.drivers.headless import (
     RunOutcome,
 )
 from convoy.interface.git import GitError
-from convoy.interface.proc import process_is_alive
-from convoy.interface.workspace_lock import WorkspaceBusyError, lock_owner_pid
+from convoy.interface.workspace_lock import WorkspaceBusyError, lock_ownership
 
 # Cap the per-PR list projected inline; the full trace always stays on disk (§ telemetry_path).
 _PR_CAP = 50
@@ -162,10 +161,10 @@ def unfinished_state(workspace: Path | None) -> str:
     """
     if workspace is None:
         return 'running'
-    pid = lock_owner_pid(workspace)
-    if pid is None:
+    ownership = lock_ownership(workspace)
+    if ownership.pid is None:
         return 'running'
-    return 'running' if process_is_alive(pid) else 'dead'
+    return 'dead' if ownership.stale else 'running'
 
 
 def summarize_run(
