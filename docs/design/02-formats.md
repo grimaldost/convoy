@@ -357,6 +357,19 @@ engines, not a silent superset they must notice on their own. The `outcome="budg
 / exit `4` addition is the worked example: additive here, yet a driving consumer that
 only knew codes 0–3 had to learn code 4 before it could classify a spend-cap halt.
 
+**The install requirement is versioned too.** The emitted surface is not the only
+contract the version number carries. A change to what convoy requires of the
+environment it is installed into — a dependency's major version, or a swap in the
+transitive runtime closure — is a **minor** even when every envelope, tool descriptor
+and telemetry line is provably unchanged. A patch should be safe to take without
+thinking; an installer who takes one and gets a forced major upgrade has been misled
+by the number. The `mcp` 1.x → 2.x migration in 0.15.0 is the worked example, and it
+is the inverse of the one above: it left all four MCP tool descriptors and their
+envelopes byte-identical (established by dumping both and comparing), so by the
+preceding paragraph alone it was a patch — and it still forced a major SDK bump,
+replaced `httpx` with `httpx2`, dropped `pydantic-settings`, and added
+`opentelemetry-api` to what the plugin process loads.
+
 ## Open decisions
 
 1. **`model` vs `tier` — resolved: accept either, resolved during governance.**
