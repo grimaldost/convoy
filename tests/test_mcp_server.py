@@ -120,15 +120,15 @@ def test_every_tool_schema_documents_every_parameter() -> None:
         'convoy_status': {'series_file', 'run_id', 'workspace'},
     }
     for name, params in expected.items():
-        props = tools[name].inputSchema['properties']
+        props = tools[name].input_schema['properties']
         assert set(props) == params, name
         for param in params:
             assert props[param].get('description', '').strip(), f'{name}.{param} has no description'
-    assert set(tools['convoy_run'].inputSchema['required']) == {'series_file', 'workspace'}
-    assert set(tools['convoy_gate'].inputSchema['required']) == {'workspace'}
+    assert set(tools['convoy_run'].input_schema['required']) == {'series_file', 'workspace'}
+    assert set(tools['convoy_gate'].input_schema['required']) == {'workspace'}
     # run_id defaults to the latest run, so only the series file is required.
-    assert set(tools['convoy_status'].inputSchema['required']) == {'series_file'}
-    assert tools['convoy_init'].inputSchema['required'] == ['directory']
+    assert set(tools['convoy_status'].input_schema['required']) == {'series_file'}
+    assert tools['convoy_init'].input_schema['required'] == ['directory']
 
 
 # --- convoy_run: dry_run (no spend) -------------------------------------------------------
