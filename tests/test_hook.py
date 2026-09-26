@@ -8,6 +8,7 @@ touches the real home directory.
 """
 
 import json
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -748,3 +749,12 @@ def test_every_record_carries_the_attestation_fields(tmp_path: Path) -> None:
         'detail',
     }
     assert record['ts'].endswith('+00:00') and '.' in record['ts']
+
+
+def test_no_recorded_fixture_carries_a_user_profile_path() -> None:
+    # The recorded hook fixtures are real captures; a profile path would publish the
+    # capturing machine's account name.
+    profile = re.compile(r'[A-Za-z]:[\\/]+Users[\\/]+|/Users/|/home/', re.IGNORECASE)
+    for path in sorted(FIXTURES.iterdir()):
+        text = path.read_text(encoding='utf-8')
+        assert not profile.search(text), f'{path.name} carries a user profile path'
