@@ -13,6 +13,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The fallback tier table names Opus 5.5 for `strong`.** `DEFAULT_TIER_MODELS['strong']`
+  moves from `claude-opus-5` to `claude-opus-5-5`, the successor in the same line, and
+  `LINEUP_RECONCILED` moves to 2026-09-26. The table stays a floor: a series that resolves its
+  own tier or names a `model` never reaches it, and a tier that falls through still raises the
+  pre-flight advisory naming this date.
+
 ## [0.15.0] - 2026-09-13
 
 **Minor**, by the install-requirement rule this release adds to
