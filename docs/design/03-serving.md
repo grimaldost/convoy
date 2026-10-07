@@ -111,6 +111,19 @@ unlinked first so the plaintext token is gone even if the directory removal
 fails. The seat probe runs through the same isolated dir, so it proves the
 credential the scored run will actually use.
 
+The config dir is not the only route for memory. The CLI also reads
+`CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` in its working directory and
+in every directory above it, whatever `CLAUDE_CONFIG_DIR` says. A spawn working in a
+repository under the operator's home would read the operator's own
+`~/.claude/CLAUDE.md` as an ancestor's memory. So each isolated spawn also gets a
+settings layer, passed with `--settings`, whose `claudeMdExcludes` lists the
+instruction files above its working directory (`write_isolation_settings`). The
+repository's own instruction files are left alone, since they are the project's
+conventions. The layer lives in the isolated dir and is named after the working
+directory, so spawns in different worktrees never share one. The isolated spawn's
+env also turns off the account's claude.ai connectors
+(`ENABLE_CLAUDEAI_MCP_SERVERS=false`), which reach a session whatever its config dir.
+
 Alongside the config dir, the spawn env strips billing and routing overrides
 (API keys, auth tokens, base-URL and alternate-backend variables — the C5
 invariant, `interface/headless_spawn.py`).

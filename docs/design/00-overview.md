@@ -189,7 +189,8 @@ safeguards — postdates this founding doc and has its own doc:
   `claude -p` under an isolated `CLAUDE_CONFIG_DIR` — is
   `interface/headless_spawn.py`. That impl is
   **reimplemented from scratch** but to a set of named, non-optional invariants
-  (see §6 note): credential-only config isolation, env-strip of billing/routing
+  (see §6 note): credential-only config isolation (with the instruction files above
+  the spawn's working directory excluded through `--settings`), env-strip of billing/routing
   vars, **whole-process-tree kill** on timeout on both Windows (`taskkill /F /T`)
   and POSIX (`killpg`) — using `Popen` not a naive `run`, whose timeout orphans
   the CLI's tool grandchildren into the scored tree — partial-stream economy

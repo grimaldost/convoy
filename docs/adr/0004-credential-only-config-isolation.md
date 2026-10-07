@@ -30,3 +30,14 @@ Disabling isolation is an explicit per-run choice (`--no-config-isolation` /
   where a repo's own guardrails belong anyway.
 - An operator who needs local tooling inside spawns opts out loudly, and the
   telemetry of such runs is understood to be non-comparable.
+
+## Amendment: instruction files above the working directory
+
+A credential-only `CLAUDE_CONFIG_DIR` keeps the operator's config dir out, but the CLI
+also reads `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` in every directory
+above its working directory. A spawn working in a repository under the operator's home
+therefore read the operator's `~/.claude/CLAUDE.md`. Under isolation each spawn now also
+gets a `--settings` layer whose `claudeMdExcludes` lists those files. The repository's
+own files still reach it, since the workspace stays the single channel for project
+conventions. The account's claude.ai connectors are turned off in the isolated spawn's
+environment.

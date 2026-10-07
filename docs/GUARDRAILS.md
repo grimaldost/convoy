@@ -112,12 +112,16 @@ server subprocess and asserts they return.
 ### Scored spawns run under config isolation
 
 A spawned agent runs with a credential-only configuration by default — the
-operator's hooks, memory, and skills must not leak into a scored run.
+operator's hooks, memory, and skills must not leak into a scored run. Memory has a
+second route: the CLI reads `CLAUDE.md` in every directory above its working directory,
+whatever the config dir says. So under isolation each spawn also gets a `--settings`
+layer whose `claudeMdExcludes` lists those files, and the claude.ai connectors are off.
 
 *Why:* the run's economy and gate outcomes are measurements; an operator-local
 config contaminates them and makes runs non-reproducible across machines.
 
-*Enforced by:* `interface/config_isolation.py` + `tests/test_config_isolation.py`;
+*Enforced by:* `interface/config_isolation.py` + `tests/test_config_isolation.py`, and
+`interface/headless_spawn.py` + `tests/test_headless_spawn.py` for the settings layer;
 disabling it is an explicit, per-run flag (`--no-config-isolation` /
 `config_isolation=false`).
 

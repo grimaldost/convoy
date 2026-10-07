@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from convoy.interface.config_isolation import write_isolation_settings
 from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS, kill_process_tree
 from convoy.interface.spawn import SpawnEconomy, SpawnRequest, SpawnResult
 
@@ -316,13 +317,14 @@ class HeadlessSpawn:
         self._claude_bin = claude_bin
         self._config_dir = config_dir
 
-    def _build_argv(self, request: SpawnRequest) -> list[str]:
+    def _build_argv(self, request: SpawnRequest, settings_layer: Path | None = None) -> list[str]:
         """Assemble the ``claude`` argv from ``request``. Pure — no I/O.
 
         The budget bound is ``--max-budget-usd`` (the installed CLI's spend cap). ``--verbose``
         is required for ``stream-json`` to emit its per-event stream. There is no
         auto-approve flag: the pinned ``--permission-mode`` plus the explicit
-        ``--allowed-tools`` allowlist is the boundary.
+        ``--allowed-tools`` allowlist is the boundary. ``settings_layer``, when given, is the
+        isolation layer passed with ``--settings``.
         """
         argv = [
             self._claude_bin,
@@ -343,16 +345,24 @@ class HeadlessSpawn:
             argv += ['--allowed-tools', ','.join(request.tools)]
         if request.budget_usd:
             argv += ['--max-budget-usd', str(request.budget_usd)]
+        if settings_layer is not None:
+            argv += ['--settings', str(settings_layer)]
         return argv
 
     def _build_env(self) -> dict[str, str]:
         """The child environment: the host env minus billing/routing diverters, with
-        ``CLAUDE_CONFIG_DIR`` pinned to the credential-only directory when one was given."""
+        ``CLAUDE_CONFIG_DIR`` pinned to the credential-only directory when one was given.
+
+        Under isolation the account's claude.ai connectors are turned off too: they reach a
+        session whatever its config dir, and whether they arrive before the first turn
+        varies from spawn to spawn.
+        """
         env = os.environ.copy()
         for name in _ENV_STRIP:
             env.pop(name, None)
         if self._config_dir is not None:
             env['CLAUDE_CONFIG_DIR'] = str(self._config_dir)
+            env['ENABLE_CLAUDEAI_MCP_SERVERS'] = 'false'
         return env
 
     def _economy(
@@ -384,7 +394,12 @@ class HeadlessSpawn:
         stream is parsed and the run is classified ``'infrastructure'`` on an
         auth / usage-limit / retry-exhausted signature, or ``'ok'`` on any real task result.
         """
-        argv = self._build_argv(request)
+        layer = (
+            write_isolation_settings(self._config_dir, cwd)
+            if self._config_dir is not None
+            else None
+        )
+        argv = self._build_argv(request, layer)
         env = self._build_env()
 
         # Launch detached from convoy's own group/session so the whole tree can be killed on
