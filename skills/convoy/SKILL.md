@@ -354,6 +354,10 @@ gates nothing, and the orchestrator hears of a residual red only through the
 subagent's own final message and the log. **An orchestrator that wants the feedback
 dispatches with `run_in_background: false`.**
 
+A payload that is not a hook event — empty, malformed, or not a JSON object on stdin — exits
+2 with a one-line reason on stderr, the same code as a gate that could not run; it is never
+read as silence.
+
 Three switches, all before anything executes. The project spec is the per-project
 switch — `$CONVOY_GATE_SPEC`, then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then
 `.convoy/gate.toml` from the event's `cwd` upward — and with none found the hook exits 0
