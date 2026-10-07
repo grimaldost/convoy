@@ -7,11 +7,23 @@ import pytest
 from typer.testing import CliRunner
 
 import convoy.interface.cli as cli
-from convoy.core.spec import load_gate_spec
+import convoy.interface.gate_scaffold as gate_scaffold
+from convoy.core.spec import Check, load_gate_spec
 from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK, EXIT_USAGE
 from convoy.interface.fs_probe import isolation_result
-from convoy.interface.gate_scaffold import GateScaffoldError, detect_toolchain, scaffold_gate
-from convoy.interface.gate_service import find_gate_spec, load_gate_spec_file
+from convoy.interface.gate_scaffold import (
+    GateScaffoldError,
+    Toolchain,
+    detect_toolchain,
+    scaffold_gate,
+)
+from convoy.interface.gate_service import (
+    GATE_BUDGET_SECONDS,
+    JUDGE_MIN_WAIT_SECONDS,
+    find_gate_spec,
+    load_gate_spec_file,
+)
+from convoy.interface.hook import judge_wait_seconds
 
 runner = CliRunner()
 
@@ -99,11 +111,58 @@ def test_scaffold_writes_a_loadable_project_spec_and_the_gitignore(tmp_path: Pat
     written = scaffold_gate(root, {})
     spec_path = root / '.convoy' / 'gate.toml'
     assert set(written) == {spec_path, root / '.convoy' / '.gitignore'}
-    assert (root / '.convoy' / '.gitignore').read_text(encoding='utf-8') == 'hook.log\n'
+    # Everything the hook writes in .convoy/: its log, the log's append lock, the judge lock,
+    # and the `.break` file either lock takes while it removes a stale holder.
+    gitignore = (root / '.convoy' / '.gitignore').read_text(encoding='utf-8')
+    assert gitignore == 'hook.log*\njudge.lock*\n'
     spec = load_gate_spec(_spec_text(root))
     assert spec.id == 'proj'
     assert [check.name for check in spec.checks] == ['lock', 'lint', 'format', 'types', 'tests']
     assert find_gate_spec(root / 'tests', {}) == spec_path
+
+
+def test_scaffold_of_a_default_project_keeps_the_default_timeout(tmp_path: Path) -> None:
+    root = _python_project(tmp_path / 'proj')
+    scaffold_gate(root, {})
+    assert 'timeout_seconds' not in _spec_text(root)
+    assert load_gate_spec(_spec_text(root)).timeout_seconds == 300
+
+
+def test_scaffold_fits_a_wide_gate_inside_the_hook_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """n checks at the default 300 s would outlast the hook: 7 x 300 = 2100 > 1800.
+
+    The bound is the gate budget, not the whole hook timeout, so a firing that finds
+    another firing's gate running still has room to wait for it.
+    """
+    root = tmp_path / 'proj'
+    root.mkdir()
+    wide = Toolchain(
+        'python',
+        tuple(Check(name=f'c{i}', run='exit 0', blocking=True) for i in range(7)),
+    )
+    monkeypatch.setattr(gate_scaffold, 'detect_toolchain', lambda _root: wide)
+    scaffold_gate(root, {})
+    spec = load_gate_spec(_spec_text(root))
+    assert len(spec.checks) == 7
+    assert len(spec.checks) * spec.timeout_seconds <= GATE_BUDGET_SECONDS
+
+
+def test_the_oracle_scaffold_leaves_a_waiting_firing_its_minimum_wait(tmp_path: Path) -> None:
+    """Six checks, a Python project's five plus the oracle, at 300 s each made 1800 s.
+
+    That filled the hook timeout, so a firing that found another firing's gate running in
+    the tree could not wait for it at all.
+    """
+    root = _python_project(tmp_path / 'proj')
+    env = {'CONVOY_ORACLES': str(tmp_path / 'oracles')}
+    scaffold_gate(root, env, independent='oracle')
+    spec = load_gate_spec_file(root / '.convoy' / 'gate.toml', env)
+    worst_case = len(spec.checks) * spec.timeout_seconds
+    assert len(spec.checks) == 6
+    assert worst_case <= GATE_BUDGET_SECONDS
+    assert judge_wait_seconds(worst_case) >= JUDGE_MIN_WAIT_SECONDS > 0
 
 
 def test_scaffold_header_names_the_next_step(tmp_path: Path) -> None:

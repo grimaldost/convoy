@@ -17,7 +17,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from convoy.core.spec import DEFAULT_GATE_TIMEOUT_SECONDS, Check, GateSpec, dump_gate_spec
-from convoy.interface.gate_service import GATE_SPEC_RELPATH, ORACLES_ENV, oracles_dir_for
+from convoy.interface.gate_service import (
+    GATE_BUDGET_SECONDS,
+    GATE_SPEC_RELPATH,
+    ORACLES_ENV,
+    oracles_dir_for,
+)
 from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS
 
 
@@ -47,6 +52,11 @@ _PLACEHOLDER = Check(
 )
 
 _ORACLE_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_-]*$')
+
+# What the hook writes in .convoy/: hook.log, the hook.log.lock each append holds, the
+# judge.lock a gating firing holds, and the <lock>.break file taken while a stale lock is
+# removed. The two locks exist only while held, but a gate runs while judge.lock does.
+_HOOK_IGNORE = 'hook.log*\njudge.lock*\n'
 
 _ORACLE_TEMPLATE = '''"""Held-out oracle `{name}` for {project}.
 
@@ -206,7 +216,7 @@ def scaffold_gate(
     """Write the project gate spec under *root* and return the paths created.
 
     ``.convoy/gate.toml`` from :func:`detect_toolchain`, plus ``.convoy/.gitignore``
-    (ignoring the hook's ``hook.log``) when none exists. With *independent*, also a
+    (ignoring the files the hook writes there) when none exists. With *independent*, also a
     placeholder oracle ``<name>.py`` under the project's oracles directory
     (``CONVOY_ORACLES`` from *env*, else the default) and a blocking independent check
     naming it through ``${CONVOY_ORACLES}``, so the spec stays portable. Refuses to
@@ -239,16 +249,19 @@ def scaffold_gate(
         if path.exists():
             raise GateScaffoldError(f'refusing to overwrite existing path: {path}')
 
-    spec = GateSpec(
-        id=root.name, checks=tuple(checks), timeout_seconds=DEFAULT_GATE_TIMEOUT_SECONDS
-    )
+    # The hook runs the checks one after another under one timeout, and a firing that finds
+    # another firing's gate running in the tree waits out of the same timeout. So the
+    # per-check bound is lowered until n checks fit the gate budget: a Python project's five
+    # checks keep the default 300 s; with --independent's oracle, six get 250 s.
+    timeout = min(DEFAULT_GATE_TIMEOUT_SECONDS, GATE_BUDGET_SECONDS // len(checks))
+    spec = GateSpec(id=root.name, checks=tuple(checks), timeout_seconds=timeout)
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(
         _header(root, toolchain, oracle_path) + dump_gate_spec(spec), encoding='utf-8'
     )
     written = [spec_path]
     if not ignore_path.exists():
-        ignore_path.write_text('hook.log\n', encoding='utf-8')
+        ignore_path.write_text(_HOOK_IGNORE, encoding='utf-8')
         written.append(ignore_path)
     if oracle_path is not None:
         oracle_path.parent.mkdir(parents=True, exist_ok=True)

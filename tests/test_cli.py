@@ -32,10 +32,11 @@ from convoy.interface.drivers.headless import (
     EXIT_USAGE,
     RunOutcome,
 )
+from convoy.interface.gate_service import GATE_BUDGET_SECONDS
 from convoy.interface.git import Git, GitError
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.reporter import NullReporter, StderrReporter
-from convoy.interface.run_summary import summarize_run
+from convoy.interface.run_summary import TREE_ONLY_CLEANUP, summarize_run
 from convoy.interface.workspace_lock import lock_path
 
 runner = CliRunner()
@@ -239,6 +240,67 @@ def test_validate_accepts_a_gate_only_file(tmp_path: Path, monkeypatch: pytest.M
     result = runner.invoke(cli.app, ['validate', str(series_file)])
     assert result.exit_code == EXIT_OK
     assert 'ok (gate-only)' in result.output
+
+
+def _wide_gate_toml(checks: int, timeout_seconds: int) -> str:
+    check = '[[checks]]\nname = "c{i}"\nrun = "python -c pass"\nblocking = true\n\n'
+    return (
+        '[series]\nid = "gate-only"\n\n'
+        f'[governance]\ntimeout_seconds = {timeout_seconds}\n\n'
+        + ''.join(check.format(i=i) for i in range(checks))
+    )
+
+
+def test_validate_warns_when_a_gate_can_outlast_the_hook_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """7 checks x 300 s = 2100 s: Claude Code would kill the hook silently at 1800 s."""
+    workspace, _, _ = _layout(tmp_path)
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_wide_gate_toml(7, 300))
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert result.stdout.strip() == 'ok (gate-only)'
+    assert '1800' in result.stderr
+    assert '2100' in result.stderr
+
+
+def test_validate_warns_when_a_gate_leaves_a_waiting_firing_no_room(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """6 checks x 300 s = 1800 s fits the hook timeout but leaves nothing to wait with.
+
+    A firing that finds another firing's gate running in the tree waits only as long as
+    its own gate's worst case leaves, so this one would give up at once. The threshold is
+    the one the scaffold fits its checks into and the hook plans its wait against.
+    """
+    workspace, _, _ = _layout(tmp_path)
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_wide_gate_toml(6, 300))
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert result.stdout.strip() == 'ok (gate-only)'
+    assert f'{GATE_BUDGET_SECONDS} s' in result.stderr
+    assert '1800' in result.stderr
+    assert 'wait' in result.stderr
+
+
+def test_validate_stays_quiet_when_a_gate_fits_the_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, _, _ = _layout(tmp_path)
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_wide_gate_toml(5, 300))  # exactly 1500: at the budget, not over
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert result.stdout.strip() == 'ok (gate-only)'
+    assert result.stderr == ''
 
 
 def test_validate_gate_only_refuses_a_selection_with_no_blocking_check(
@@ -736,6 +798,22 @@ def test_run_without_the_flag_still_uses_cwd(
 
     assert runner.invoke(cli.app, ['run', str(series_file)]).exit_code == EXIT_OK
     assert seen == [Path.cwd()]
+
+
+def test_run_on_a_dirty_tree_exits_usage_and_names_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run stages with `git add -A`, so a stray file would ride into the first PR's commit."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    (workspace / 'private-notes.json').write_text('{}\n', encoding='utf-8')
+    ran: list[object] = []
+    monkeypatch.setattr('convoy.interface.run_service.run_series', lambda *a, **k: ran.append(1))
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '-w', str(workspace)])
+
+    assert result.exit_code == EXIT_USAGE
+    assert 'private-notes.json' in result.output
+    assert ran == []
 
 
 # --- clean --------------------------------------------------------------------------------
@@ -1614,6 +1692,9 @@ def test_status_human_output_says_how_to_recover_a_dead_run(tmp_path: Path) -> N
     # without touching either.
     assert 'convoy unlock' in result.stdout
     assert 'convoy clean' not in result.stdout
+    # The killed spawn's uncommitted debris would make --resume refuse, so the message
+    # names the cleanup that clears it without touching a branch.
+    assert TREE_ONLY_CLEANUP in result.stdout
 
 
 # --- status of a detached run that never reached the ledger -------------------------------
@@ -1998,3 +2079,44 @@ def test_gate_brief_usage_paths_still_emit_one_object(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_USAGE
     envelope = json.loads(result.stdout)
     assert envelope['outcome'] == 'usage'
+
+
+_SERIES_VERBS = ['validate', 'run', 'clean', 'unlock', 'status', 'gate']
+
+
+@pytest.mark.parametrize('with_positional', [False, True], ids=['no-positional', 'positional'])
+@pytest.mark.parametrize('spelling', ['--series', '--series-file'])
+@pytest.mark.parametrize('verb', _SERIES_VERBS)
+def test_series_flag_spelling_is_rejected_naming_the_positional(
+    verb: str,
+    spelling: str,
+    with_positional: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The MCP surface takes ``series_file=``; the CLI takes the file positionally. A caller
+    who types the flag form must be told the positional form, not Click's bare 'No such option'.
+    """
+    ran: list[object] = []
+    monkeypatch.setattr(cli, 'run_series_headless', lambda *a, **k: ran.append((a, k)))
+    monkeypatch.chdir(tmp_path)
+    args = [verb]
+    if with_positional:
+        args.append('series.toml')
+    args += [spelling, 'x.toml']
+
+    result = runner.invoke(cli.app, args)
+
+    # CI forces colour, and Rich then splits the message with escape codes.
+    plain = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+    assert result.exit_code == 2
+    assert f'convoy {verb} <series.toml>' in plain
+    assert 'No such option' not in plain
+    assert ran == []
+
+
+@pytest.mark.parametrize('verb', _SERIES_VERBS)
+def test_series_flag_spelling_is_hidden_from_help(verb: str) -> None:
+    result = runner.invoke(cli.app, [verb, '--help'])
+    assert result.exit_code == EXIT_OK
+    assert '--series' not in result.output

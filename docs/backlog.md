@@ -6,7 +6,26 @@ feedback reports and the triage documents themselves are session artifacts and s
 local-only in [docs/feedback/](feedback/) (see the `.gitignore` there). A row here is
 written so a maintainer can build it without the source reports.
 
-**Last reconciled: 2026-09-01.** Three inputs were merged in this pass:
+**Last reconciled: 2026-10-06.** The ledger had stopped at the 0.12.0 hook round
+(2026-09-02). Three releases (0.13.0, 0.14.0, 0.15.0) and one triage pass landed after it
+without reaching this file, so its header, CONV-B14, CONV-B29 and the row-ID map had gone
+false. Four inputs were merged in this pass:
+
+1. The 2026-10-06 triage delta, over one feedback report (a three-PR run on 2026-09-26)
+   and a re-reading, against the source, of every row the earlier triage documents left
+   open: 69 rows, of which 35 had shipped, 2 were declined, 2 were superseded, 13 were
+   carried `proposed` and 17 `watch`. Its statuses supersede every earlier triage
+   document's.
+2. The 2026-09-13 triage delta, over 13 reports from 2026-09-01..09-13, which minted the
+   clusters T56–T65 and was never reconciled into this file.
+3. The `CHANGELOG.md` sections for 0.13.0, 0.14.0 and 0.15.0.
+4. The rows built on the 2026-10-06 maintenance branch. They are recorded as built and
+   unreleased, because a row is done only when a tagged release serves it.
+
+The pass mints CONV-B65 through CONV-B71 and records where every row went under
+[Shipped](#shipped), in the watch table and in the [row-ID map](#row-id-map).
+
+**The 2026-08-11 reconciliation** merged three inputs:
 
 1. A full triage over the 21 feedback reports spanning 2026-07-09..08-02 — the
    campaign window, covering roughly 90 governed PRs.
@@ -128,6 +147,13 @@ nights produced. Four rows were built in the pass itself and are recorded under 
 pass appended nothing to `SKILL.md` as advice: the documentation findings that would have
 are folded into CONV-B08, which exists to shorten that file, and the two items that shipped
 there instead are descriptions of engine behaviour the manual owes a reader.
+
+**What the 2026-10-06 reconciliation added, and where.** Two open rows: CONV-B68 at the end
+of **Next** (the skill's description names concurrent writers as a dispatch case; cheap, and
+the hazard it points away from was priced) and CONV-B65 in **Later** (per-PR changelog
+fragments, which need an ADR). Everything else it minted was built on the maintenance branch
+and is recorded under Shipped as unreleased. The watch rows of the 2026-09-13 and 2026-10-06
+passes join the watch table.
 
 **Retire / fold** is the review's sentence on surfaces that no longer earn their place;
 each names its replacement, and the two that are conditional name the measurement that
@@ -559,6 +585,12 @@ the same reports did **not** come here: describing mid-series gate repair and th
 driven-workspace hazard is documenting engine behaviour the manual owes a reader, not advice,
 and both shipped in `[Unreleased]`.
 
+**2026-10-06.** The guide gained one section ahead of this fold, by relocation rather than
+addition: the smallest-unit gate doctrine (CONV-B69) moved out of CONV-B53's Status with its
+limits, and the header's scope line names it. T31a and T31c are not built alone: alone, each
+is a prose append to a budgeted file with nothing displaced, so they land with this row, in
+the change that shortens SKILL.md and rewrites the guide's scope line.
+
 **Effort** L · **Source** [triage] + [review] + [cross-review] · **Row** T38a (absorbs
 T31a, T31c, and three 2026-08-28 documentation findings)
 
@@ -584,7 +616,20 @@ asserts the sites *agree*, not that the label *moved* when consumer-affecting co
 A green build, a shipped build and a correctly-labelled build are three claims and only the
 first is checked today (T34b).
 
-**Effort** S for (a), M for (b) · **Source** [triage] · **Rows** T34a, T34b
+**Status.** (a) is built on the 2026-10-06 maintenance branch, unreleased, as T71a, which
+re-grounds this row's cause instead of repeating it. The July measurement and the old
+rationale each saw one path of two: an install takes the default branch's tip, and an
+existing install refreshes only when the manifest version changes. On 2026-10-06 an existing
+install still ran the v0.15.0 tag's commit while the marketplace's checkout of the default
+branch had moved past it. That is one observation, consistent with this reading rather than
+proof of it. So unreleased consumer-affecting work reaches new installs under the old label,
+and reaches existing installs not at all until the cut. `CONTRIBUTING.md` §Release
+discipline now states both paths in place of the one-path sentences; the practice, the
+cadence and the `release-tag` workflow's rationale are unchanged. T71a supersedes T34a's
+wording. (b), T34b, is open: no check compares the version sites against a
+`(consumer-affecting)` entry.
+
+**Effort** S for (a), M for (b) · **Source** [triage] · **Rows** T34a (superseded by T71a), T34b
 
 ### CONV-B10 — `convoy_run` blocks by default on a transport that cannot hold it, and pays schema in every session that installs the plugin.
 
@@ -717,20 +762,31 @@ it does not mean convoy is invisible to the walk that has to visit it. A mirror 
 knows to visit is precisely the stale-lineup failure this row exists to prevent, and the
 registration costs one line in a file outside this repository. [cross-review]
 
-**Status.** **Partly settled; the row is unbuilt.** Cross-review point (a) — the
-contradiction between "all four mirrors are correct today" and the sibling collection's
-claim that the canonical lineup they copy from is stale — is resolved: the canonical lineup
-was reconciled on 2026-08-11 and convoy's mirrors were re-synced against it, which shipped
-in 0.9.0 as the `strong` tier resolving to `claude-opus-5` (`DEFAULT_TIER_MODELS` and the
-skill's tier map; family-keyed pricing needed no change). The lineup was in fact behind, so
-the ordering warning in (a) held — and it holds for the *next* pass too: the sync date to
-stamp is the reconciliation's, not this row's build date. Everything the row actually asks
-for remains unbuilt: no sync-date stamp, no age tripwire, no `[governance.tier_models]`
-override, no maintainer note (T39a), and no registration in the collection's bindings file
-(point (b)). This cycle's fix was manual, which is exactly the state the row exists to end.
+**Status.** **Settled by [ADR-0010](adr/0010-the-artefact-carries-the-lineup.md) in
+0.13.0, by a different shape from the age tripwire this row asked for.** The row's problem —
+a stale lineup that stays invisible until a run fails — is closed by making the lineup travel
+in the run's own artefact. `[governance.tier_models]` lets the series file carry its
+resolved tier table; `DEFAULT_TIER_MODELS` is documented as the floor it always was and
+stamped `LINEUP_RECONCILED` with the date the upstream lineup was reconciled, not the date
+the file was edited, as cross-review point (a) warned; and any tier resolved through the
+floor raises an `Advisory(kind='lineup')` naming the model and that date. ADR-0010 records
+why a dated copy with an age test was not enough: a date measures maintenance, not drift, and
+on 2026-09-05 both freshness tripwires upstream were green while the lineup was stale.
+CONV-B29 removed the price-table mirror in the same release.
+
+Against the row's own asks: the `[governance.tier_models]` override shipped; the sync stamp
+shipped as `LINEUP_RECONCILED`, feeding the advisory rather than a failing age test; the
+maintainer note (T39a) is declined as superseded (see Declined); and point (b) is settled
+outside this repository — the three mirror sites that remain (`core/governance.py`,
+`skills/convoy/SKILL.md`, `interface/scaffold.py`) are registered with the lineup-refresh
+walk. The 2026-09-26 lineup change (`strong` → `claude-opus-5-5`, in `[Unreleased]`) touched
+the floor table, its stamp, its test and the CHANGELOG, and missed no site. Earlier history:
+point (a) was resolved on 2026-08-11, when the canonical lineup was reconciled and convoy's
+mirrors re-synced against it, shipping in 0.9.0 as the `strong` tier resolving to
+`claude-opus-5`.
 
 **Effort** S–M · **Source** [triage] + [review] + [cross-review] · **Row** T39a, escalated
-from `watch` by the review
+from `watch` by the review (declined as superseded, 2026-10-06)
 
 ### CONV-B15 — The four gate commands run in CI and by hand, never at commit time.
 
@@ -788,6 +844,14 @@ wave A, 2026-07-08 baseline, 2026-07-09 v1; review]
 **Change.** Accept `--series` as an alias for the positional argument, or at minimum name
 the positional in the usage error ("pass the series file positionally"). The error-text
 half is cheaper and probably sufficient. `interface/cli.py`.
+
+**Status.** Built on the 2026-10-06 maintenance branch, unreleased (T37a), as the error-text
+half, widened to every verb that takes the series file positionally — `validate`, `gate`,
+`run`, `clean`, `unlock` and `status` — since this row's evidence is the recovery verbs.
+Each declares `--series` and `--series-file` (the MCP tools teach `series_file=`) as a
+hidden option that exits 2, the code it exited with before, with
+`the series file is positional, not a flag: convoy <verb> <series.toml>`. No alias; the
+flags stay out of `--help`.
 
 **Effort** S · **Source** [triage] + [review] · **Row** T37a
 
@@ -967,6 +1031,12 @@ contract change through the exact gap another row in this pass describes would b
 to learn the lesson. **(consumer-affecting: a `state` reachable by a new route, a new
 `prs[]` field, and for (b) a change to the result file's contract)**
 
+**Second report for (b) (2026-10-06 triage).** A three-PR run on 2026-09-26 met the same
+contract: the result file is created empty at launch and filled at the end, so a background
+waiter that tested for existence fired at once and had to test for a non-empty file instead,
+and a reader of the outputs directory cannot tell started from finished by the file alone.
+(b) stays gated on CONV-B46. [triage: 2026-09-26 three-PR run, §Friction]
+
 **Effort** S for (a) and (c) · S for (b), gated · **Source** [triage] · **Gate** CONV-B46 for (b) · **Rows** T44a, T44b, T44c
 
 ### CONV-B44 — After a halt caused by a mis-authored check, `resume` deletes a branch that the corrected checks pass on.
@@ -1021,6 +1091,19 @@ checks stays under the shipped hook timeout, and `convoy validate` warns when a 
 spec's sum exceeds it; the hook's own record could carry the budget it ran under so a killed
 firing is at least reconstructible from the previous one.
 
+**Status.** Built on the 2026-10-06 maintenance branch, unreleased. A gate spec carries one
+`timeout_seconds` applied to each check, so the sum is the check count times that value.
+`HOOK_TIMEOUT_SECONDS` (1800) is a package constant, pinned to `hooks/hooks.json` by
+CONV-B64's test. A gate's worst case may use `GATE_BUDGET_SECONDS` (1500) of it, which keeps
+30 s for the hook itself and at least 270 s for a firing waiting on CONV-B62's judge lock;
+the bare timeout was the first threshold, and a blind review measured what it left: the
+six-check scaffold filled it, so a second firing could not wait at all. `convoy gate --init`
+lowers `timeout_seconds` until the scaffolded checks fit the budget (five checks keep the
+default 300 s, the six-check `--independent` scaffold gets 250 s), and `convoy validate` on a
+gate-only file warns on stderr when checks × `timeout_seconds` exceeds the budget, with the
+exit code and stdout unchanged. The third clause — the hook's record carrying the budget it
+ran under — is not built.
+
 **Effort** S · **Source** [review]
 
 ### CONV-B62 — Concurrent judge firings run the suite concurrently in one tree and append to one log without a lock.
@@ -1032,11 +1115,61 @@ is not atomic across processes on Windows; an interleaved line degrades to a re-
 a false green. Review S12, second half; the first half (refuse a workspace a `convoy run`
 holds the lock on) shipped in 0.12.0.
 
-**Change.** An advisory lock around the gate run and the log append — `workspace_lock`
-already has the primitive — with a bounded wait and a loud exit 2 on contention, so two
-judges never grade one tree at once and the messenger never reads a torn line.
+**Change.** Two cases, two remedies. Concurrent *judges* reading one tree: an advisory lock
+of the hook's own around the gate run and the log append, with a bounded wait and a loud
+exit 2 on contention, so two judges never grade one tree at once and no two log lines
+interleave. It is not `workspace_lock`, which has no wait loop, is the run lock that
+`status`, `unlock` and `clean` read, and lives in `.git`, which a tree outside a repository
+lacks and a worktree has as a file. Concurrent *writers* in one tree are a different case,
+and no lock fixes it: each subagent's gate judges whatever the others have half-written,
+so a green can belong to a neighbour's edit. Writers need separation, a worktree per agent,
+which the operator arranges; the lock only orders the judging.
 
-**Effort** S · **Source** [review]
+**Status.** Built on the 2026-10-06 maintenance branch, unreleased (T61c). A firing that
+runs a gate holds `.convoy/judge.lock` until its log line is written, and every append
+holds `.convoy/hook.log.lock`. One that waits out its bound exits 2 like a gate that could
+not run, recorded with the new outcome `busy`. The bound is at most 600 s and shrinks so that
+the wait plus the gate's worst case fits the 1800 s hook timeout with a 30 s margin; a gate
+inside CONV-B61's 1500 s budget waits at least 270 s, and a gate whose worst case fills the
+timeout does not wait. On the judge's retry a lock still held lets the subagent stop, as for
+any gate that could not run, recorded as `busy` with its own reason, so the stops that
+carried no verdict are counted rather than read as `usage`. Blocking that retry again was
+weighed and not built: it would break the one-repair-round bound, and under a gate that
+leaves no time to wait it would spin. A lock naming a process that is gone is taken over,
+and so is one naming no pid after ten seconds, or a leftover `judge.lock.break` file. The
+busy error advises removing a lock by hand only when its holder is gone; for one that may
+still run it says another firing is at work and, on a first stop, that stopping again
+retries. The scaffold's `.convoy/.gitignore` covers both locks. The writers case is documented in the
+skill, not built.
+
+**Effort** S · **Source** [review] · **Row** T61c
+
+### CONV-B68 — The skill's description names two dispatch cases, and the case where isolation is the whole need — several agents writing to one checkout — is not one of them.
+
+**Cause / evidence.** A hand-rolled fan-out launched write-capable agents in parallel into
+shared checkouts: one ran `git stash -u` over another's in-flight edits, another checked out
+a branch under a third, and a commit landed on a branch an agent was rewriting. About an
+hour of recovery and one change redone, and nothing saw it, because each agent's own commands
+succeeded. convoy's runner never lets two writers share a checkout — it drives one spawn at a
+time, each on its own branch, under a run lock — yet the skill's description, where the
+dispatch decision is made, names a settled plan and the standalone gate, never concurrent
+writers. A second report, from the hook build, met the same cause on
+the judge side, which is CONV-B62. [triage: 2026-09-05 hand-rolled fan-out (three findings
+and a HIGH dispatch miss), 2026-09-02 hook build #4]
+
+**Change.** A third dispatch case in the description, in the sentence structure the two
+capabilities already use: two or more agents that will write to the same checkout, whatever
+the plan looks like — with the boundary in the same breath (not for concurrent readers, which
+need no isolation). It extends the description's existing enumeration rather than adding a
+section. The sibling row T61b (watch) would document the worktree-per-agent pattern for a
+hand-rolled fan-out to copy.
+
+**Status.** Proposed. The description in `skills/convoy/SKILL.md` still names two
+capabilities and no concurrent-writers case. Since CONV-B62's change the skill's hook section
+says that subagents editing at the same time need a tree each, which reaches a reader only
+after the dispatch decision.
+
+**Effort** S · **Source** [triage] · **Row** T61a
 
 ## Later
 
@@ -1059,6 +1192,15 @@ exercised. [review; triage row T5a]
 resolved model differs from `[governance]`, and compare realised spend against a
 same-series all-strong counterfactual. If the count stays near zero, keep the parser
 support and retire the fan-out — see CONV-B33.
+
+**A data point (2026-10-06 triage).** The 2026-09-26 three-PR run set `tier` and `effort` on
+every PR under a series `[governance]` of `strong` / `high`: one PR ran the mid-tier model at
+`low`, one the strong model at `xhigh`, and one at the series values. One PR of three
+resolved to a model other than `[governance]`'s, and it cost $0.32 of the run's $18.60; the
+two strong-tier PRs carried 98.26% of the spend. By the count this row names, the override
+is in use. The other half — realised spend against an all-strong run of the same series — is
+still unmeasured, and one run is not a campaign, so CONV-B33 stays gated. [triage:
+2026-09-26 three-PR run; economy re-derived from its ledger]
 
 **Effort** S to measure · **Source** [review]
 
@@ -1354,11 +1496,10 @@ rule through a repair brief consumed by a fresh subagent, not benefit on work in
 the rule it teaches; the placebo does not match the repair actor or the brief's content; four
 counted trials reached the task directory before a harness repair and are retained with the
 sensitivity. The findings, the typed record and the pre-registration with its dated
-corrections live with the instrument. Doctrine this row now carries: run the gate at the
-smallest unit the workflow has (per PR, per subagent — the hook's `SubagentStop` judge has
-that shape); a repair brief that names one PR's reds beats one that names five. Iteration 2
-measures the 0.12.0 hook on the same bank and needs a held-out group with a second defect
-class before it can claim more.
+corrections live with the instrument. Iteration 2 measures the 0.12.0 hook on the same
+bank and needs a held-out group with a second defect class before it can claim more. The
+doctrine this measurement supports is stated, with these limits, in
+`docs/authoring-series.md` §Gate granularity (CONV-B69); this row keeps the measurement.
 
 **Effort** M (the arms exist; the cost is wall-clock and analysis) · **Source** [triage] ·
 **Rows** T53a
@@ -1382,6 +1523,17 @@ the promotion gate.
 | T34c | An ADR-template line naming the surfaces on which a rationale's named reader actually meets it — ADR-0008 promised an operator an advisory and delivered it on the dry-run envelope only, which cost three releases. Singleton. | `docs/adr/` template |
 | T54a | A declared **red window** — a check that must be red until a later PR, by design, with going green early or staying red late as the failure. `phases` displaces which PR a check gates and `blocking = false` makes it permanently advisory; neither expresses "red now, green from PR04". Design-only, no priced instance. **(consumer-affecting)** if built. | `core/spec.py`, `core/gate.py` |
 | T54b | Halt for human adjudication and resume with the conversation preserved, rather than a fresh spawn. `resume` re-reads the series file but restarts the spawn. Design-only, singleton. | `interface/drivers/headless.py` |
+| T58c | When `docs/design/02-formats.md` documents a telemetry or schema field, it names what reads it, so the next removal costs a read rather than a grep. Folds into each field's entry, not a new section. Pending a second report outside the authoring and build pair that raised it. | `docs/design/02-formats.md` |
+| T59c | A best-effort "a newer release exists" advisory on `--version` and at MCP startup, compared against the newest reachable tag. Never blocks. No incident since it was raised. | `interface/cli.py`, `interface/mcp/__main__.py` |
+| T60b | One sentence in the skill's setup section: the seat probe is a point-in-time check, not a lease, so a paid run's seat can expire between a green pre-flight and the first spawn. Displaces the part of §Cost & latency's seat-probe bullet that implies the probe covers the run. Pending a second report from another operator or machine. | `skills/convoy/SKILL.md` §Setup |
+| T61b | Document, for a hand-rolled fan-out, the one thing it needs to copy: a worktree per writing agent, with reviewers read-only in a scratch worktree. Displaces part of the separability preamble in a guide under a word budget. Sibling of CONV-B68; pending a second instance. | `docs/authoring-series.md` |
+| T62b | The per-correct-trial framing in §Cost & latency: the gate costs +20% to +25% per trial and a third (weak tier) to a sixth (mid tier) of control's cost per correct trial (CONV-B53). Displaces the stale per-spawn figure. One measured wave; waits on CONV-B53's iteration 2, a paid run. | `skills/convoy/SKILL.md` §Cost & latency |
+| T64a | A declared-absent `[branches].base` — nullable with a note, or a documented sentinel — so a series generated for a workspace that does not exist yet is valid and unrunnable rather than valid and wrong. `base` is a required string today. **(consumer-affecting)** if built. Pending a second report or a priced instance. | `core/spec.py` |
+| T64b | A schema stamp in `[series]` (for example `schema = "convoy/1"`), written and checked. An engine older than 0.13.0 reading a file that carries `[governance.tier_models]` drops it in silence; 0.13.0's allow-list stops unknown keys from then on, but nothing stamps a file's schema generation. Makes the next skew loud, not the shipped ones. **(consumer-affecting)** if built. A hazard, not an incident. | `core/spec.py` |
+| T65a | The schema documentation for `[governance] effort` says the knob is inert for models with no effort dimension, naming the weak tier's floor model as the case a default lineup produces. Singleton, LOW. | `docs/design/02-formats.md`, `skills/convoy/SKILL.md` schema table |
+| T66b | An `--allow-dirty` override that records the paths already dirty before the first spawn and keeps them out of every commit the run makes, so a deliberate dirty start never sweeps them. Only if a legitimate dirty-start case appears; CONV-B70 ships the refusal with no override, the smaller shape. | `interface/git.py::commit_all`, `interface/drivers/headless.py` |
+| T67a | The run result records every remote ref and PR a spawn created outside the workspace — scanned from the stream's shell tool calls (`git push`, `gh pr create`, `gh ... -R`) — and raises an advisory naming them, so the operator reviews them with the run. Report, not enforce. In the 2026-09-26 run an implementer opened a branch and a PR in a repository the workspace depends on, unreviewed and ungated, and the orchestrator learned of it from a commit body. Singleton (MED); the fix shape is open. | `interface/drivers/headless.py`, `interface/run_summary.py` |
+| T68a | Each `prs[]` entry carries `cost_usd`, `num_turns`, `input_tokens` and `output_tokens`, summed over its spawns in the fold that already computes the run totals; co-lands with CONV-B43(c). Today a per-PR economy table needs a second parse of `spawns.jsonl`. **(consumer-affecting)** if built. Singleton, LOW. | `interface/run_summary.py` |
 
 ---
 
@@ -1411,7 +1563,40 @@ fixture, before a line of the mechanism is designed — the fixtures directory i
 the rule was followed. `tests/test_manifest.py` asserts `hooks/hooks.json` parses and names
 the shipped command, so the plugin's hook wiring is locked the way its version is.
 
+**Status.** Test half built on the 2026-10-06 maintenance branch, unreleased:
+`tests/test_manifest.py` asserts that `hooks/hooks.json` parses, wires `convoy hook` on both
+`SubagentStop` and `PostToolUse`, and gives every hook the timeout `HOOK_TIMEOUT_SECONDS`
+names — the number CONV-B61 compares against. The doctrine line is held. It is maintainer
+doctrine, not series-author doctrine, so it stays out of the budgeted authoring guide; if it
+is wanted, it folds into `docs/GUARDRAILS.md` and names what it displaces.
+
 **Effort** S · **Source** [review] + [report]
+
+### CONV-B65 — Every PR in a build round writes under the same `[Unreleased]` heading, so PRs built in parallel collide in `CHANGELOG.md`, and the workaround moves the cost into merge order.
+
+**Cause / evidence.** Every notable change adds its entry under the one `## [Unreleased]`
+heading, and the changelog gate makes an entry certain for any PR touching `src/`, so the
+PRs of a build round all edit the same lines. The 2026-09-01 pass held this at `watch` until
+the next multi-PR build round. Two have landed since — the gate-only build round and the
+hook round (#72–#80) — and the first priced the workaround: avoiding the conflicts meant
+stacking one PR on another and fixing the merge order of the whole round, which makes the
+stacked PR unreviewable alone and works against one concern per PR. The cost moved from
+conflict resolution to merge order; it did not go away. The 2026-09-13 pass moved the row
+from `watch` to `proposed` on that replication. [triage: 2026-09-01 gate-only build #4 and
+§Friction]
+
+**Change.** Per-PR changelog fragments — `changelog.d/<pr>.md` — assembled into the release
+section at the cut, which removes the shared heading. Needs an ADR: it changes where every
+contributor records a change, adds an assembly step to the release checklist, and has to
+settle what `scripts/changelog_gate.py` accepts as a record, since today it reads the
+`CHANGELOG.md` diff. The documentation-only alternative — record that build-round conflicts
+in `CHANGELOG.md` are expected and additive — prices the conflict without removing it, and
+is a prose append with nothing displaced.
+
+**Status.** Proposed. No `changelog.d/` exists. This row was listed under CONV-B54's
+lineage at `watch` until this reconciliation.
+
+**Effort** M, with an ADR · **Source** [triage] · **Row** T55a
 
 ## Retire / fold candidates
 
@@ -1434,6 +1619,12 @@ the telemetry schema as permanently false — the schema is a public contract an
 key a consumer reads is worse than leaving it. If a zero-cost provider ever reappears, the
 right answer is `cost_usd: null` and let the consumer decide, not a price table convoy has
 to maintain. Removes two of the four model-mirror sites in one change, with CONV-B14.
+
+**Status.** **Shipped** in 0.13.0, as the row asks. `core/pricing.py` and
+`apply_cost_fallback` are deleted and `cost_usd` is always the provider's number;
+`cost_estimated` stays in the telemetry schema, permanently `false`
+**(consumer-affecting)**. A re-count on 2026-09-05 found it true for 0 of 22 further spawns.
+It shipped with ADR-0010, which settled CONV-B14.
 
 **Effort** S · **Source** [review]
 
@@ -1550,6 +1741,95 @@ the one thing not to do is discover the answer from a broken scored arm. [cross-
 ---
 
 ## Shipped
+
+### Built in the 2026-10-06 maintenance round (unreleased; served by the next tag)
+
+Built on the 2026-10-06 maintenance branch from the open rows of the 2026-10-06 triage. None
+of it reaches an install until a tag serves it, so every row here reads *built, unreleased*
+until the cut retargets this heading at that tag. CONV-B70 is **(consumer-affecting)**, so by
+release step 0 in `CONTRIBUTING.md` the next cut is a minor. The same tag serves the
+`strong`-tier floor moving to `claude-opus-5-5`, which is not a row (see CONV-B14).
+
+| Row | Promotion | Shipped by |
+|---|---|---|
+| CONV-B70 (T66a) | A run refuses to start on a working tree with uncommitted changes. A run commits each PR with `git add -A`, so a modified tracked file, a staged file or an untracked file the repository does not ignore went into the first PR's commit. The start pre-flight now reads `git status --porcelain` and raises a `workspace` problem naming up to three paths and counting the rest: `convoy run` exits 3 and `convoy_run` answers `outcome: "usage"`. `reset` / `--fresh` skips it, since it discards those changes; a workspace that is not a repository is not read; there is no override flag (T66b, watch). Under `resume` the message names the tree-only cleanup `git reset --hard` and then `git clean -fd` (two commands: PowerShell 5.1 does not parse `&&`), which keeps every branch and every ignored file — never `convoy clean`, which deletes the integration branch the resume continues from — and the `dead` message gains that step between `convoy unlock` and `--resume`. `convoy_run` with `dry_run: true` now runs the same start pre-flight, so it also reports the problems of the `reset` / `resume` options as passed. **(consumer-affecting: runs that used to start now refuse; a new problem kind; a changed `dead` message)** | unreleased |
+| CONV-B17 (T37a) | All six verbs that take the series file positionally answer `--series` and `--series-file` with a usage error (exit 2, unchanged) naming `convoy <verb> <series.toml>`, instead of Click's bare "No such option". | unreleased |
+| CONV-B62 (T61c) | Hook firings that gate one tree take turns on `.convoy/judge.lock`, and every log append holds `.convoy/hook.log.lock`; a firing that waits out its bound (at most 600 s, and short enough that the wait plus its gate's worst case fits the hook timeout; at least 270 s for a gate inside CONV-B61's budget) exits 2 like a gate that could not run, recorded as `busy`, and a lock naming a process that is gone, or none for ten seconds, is taken over. A lock still held on the judge's retry lets the subagent stop, recorded as `busy` with its own reason. **(consumer-affecting: a new `hook.log` outcome, `busy`)** The row's Change now names the second remedy: concurrent writers need a worktree each, which no lock gives. | unreleased |
+| CONV-B61 | `HOOK_TIMEOUT_SECONDS` (1800) is a package constant, and a gate's worst case may use `GATE_BUDGET_SECONDS` (1500) of it, leaving 30 s for the hook and at least 270 s for a firing waiting on the judge lock; `convoy gate --init` lowers `timeout_seconds` until the scaffolded checks fit the budget, and `convoy validate` on a gate-only file warns on stderr when checks × `timeout_seconds` exceeds it. | unreleased |
+| CONV-B64 (test half) | `tests/test_manifest.py` pins `hooks/hooks.json`: it parses, wires `convoy hook` on both events, and carries the timeout `HOOK_TIMEOUT_SECONDS` names. The doctrine line is held. | unreleased |
+| CONV-B09 (a) (T71a) | `CONTRIBUTING.md` §Release discipline states both install paths — an install takes the default branch's tip, an existing install refreshes only on a version change — in place of the one-path rationale. Supersedes T34a's wording. | unreleased |
+| CONV-B66 (T57b) | `docs/GUARDRAILS.md`'s hook-trust rule names the autouse fixture `_no_real_convoy_home` in its *Enforced by:* line. The fixture existed; its attestation did not, and the failure it prevents was real: three `--init` tests had written live trust entries into a developer's real `~/.convoy/hook-trust.toml`. | unreleased |
+| CONV-B67 (T58b) | Release checklist step 1a: the release section's framing paragraph is written at cut time, once its contents are final, and is never carried under `[Unreleased]`. Removes the class (a framing sentence that went false as later entries landed under it) where a gate on one phrase would catch one instance. | unreleased |
+| CONV-B69 (T62a) | The smallest-unit gate doctrine — run the gate at the smallest unit the workflow has; a repair brief that names one PR's reds beats one that names several — moves out of CONV-B53's Status into `docs/authoring-series.md` §Gate granularity with its limits (one measured wave, one defect class, iteration 2 pending). A relocation that asserts nothing the repository did not already assert; the figures stay in CONV-B53. | unreleased |
+| CONV-B71 (T70a) | This reconciliation: the ledger re-read against the 2026-10-06 and 2026-09-13 triage passes and the 0.13.0–0.15.0 CHANGELOG sections. CONV-B14 and CONV-B29 re-statused, the 0.13.0 and 0.14.0 sections added, CONV-B65 to CONV-B71 minted, the watch table and the row-ID map extended. Docs only. | unreleased |
+
+**Why CONV-B70 was built on one report.** In the 2026-09-26 run an untracked file of
+private strings sat in the workspace root and would have entered the first PR's commit; a
+reviewer's chance `git status` caught it. One report, rated HIGH, promoted as a stated
+singleton so a later pass can overturn it: the near-miss was on private data, nothing but
+chance stood between the file and the commit, the cause is reachable at the pre-flight layer
+that already refuses the run's own writes (`check_outputs` refuses an outputs directory
+inside the workspace), and the change is a refusal, not new behaviour inside a run. The
+resume half is what keeps it safe to ship: a `budget` or `infrastructure` halt returns before
+the truncated spawn's work is committed, so a tree is dirty after the common halt, and a
+refusal that pointed at `convoy clean` would have destroyed the branch `--resume` needs.
+
+**What CONV-B70 leaves open.** Two things, both recorded here so neither is lost. First,
+`convoy_run` with `dry_run: true` is the only rehearsal of the refusal. The CLI has no
+`run --dry-run`, and `convoy validate` stays tree-blind on purpose: it takes no `--fresh` or
+`--resume`, so it cannot know whether the run it precedes reads the tree at all (`--fresh`
+skips the check) or which remedy applies (`--resume` names a different one), and its answer
+is about the series file and the paths it names. A CLI user who gets `ok` from validate can
+still get exit 3 from `convoy run` on a dirty tree; `git status --porcelain` in the workspace
+is the rehearsal. Second, `docs/design/03-serving.md` still says that `convoy validate` and
+the tool's `dry_run` both call `preflight`, and its verb table calls them the same pre-flight;
+since this row, `dry_run` calls `start_report`, which adds the tree read and the option
+checks. That file belongs to the open isolation change (PR #109), so the sentence, the
+pre-flight stage of its run lifecycle and the verb table row are corrected once that merges.
+
+### Served by 0.15.0 (2026-09-13): no row, and the install requirement versioned
+
+0.15.0 built no ledger row. It moved the MCP server to mcp 2.x (`mcp>=2.2.0,<3`): mcp 2.0
+removed the module `FastMCP` lived in, so a fresh resolve of the old `>=1.28.1` floor built a
+convoy whose serving surface could not import. The four tools' descriptors and envelopes,
+dumped under mcp 1.28.1 and 2.2.0, are byte-identical, so by the emitted-surface test alone
+the release was a patch. It was cut as a minor under a rule it added to
+`docs/design/02-formats.md`: what convoy requires of the environment it is installed into is
+versioned too, and a dependency's major version or a swap in the runtime closure is a minor
+even when every envelope is unchanged. Release step 0 in `CONTRIBUTING.md` states only the
+`(consumer-affecting)` test; the install-requirement test lives in `02-formats.md`, which
+step 0 cites.
+
+### Built in the 2026-09-13 delta pass (served by 0.14.0)
+
+The 2026-09-13 triage pass read 13 reports. The four that sourced this round found no bad PR
+reaching integration; what had drifted was what convoy says about itself. The clearest
+instance: a dead run's recovery
+message recommended `convoy clean`, the one command that deletes the branches `--resume`
+needs. The rows it promoted and built in the same round:
+
+| Row | Promotion | Shipped by |
+|---|---|---|
+| CONV-B42 (T56a, T56b) | `convoy unlock <series.toml>` releases a stale run lock and nothing else, closes the killed run's ledger entry with `run_abandoned`, and refuses while the lock's owner is alive unless `--force`; the `dead` message names it instead of `clean`, whose two clauses could not both hold. **(consumer-affecting: a new verb)** | 0.14.0 |
+| T59a | `convoy_run` and `convoy_status` envelopes carry `convoy_version`, as the gate envelope already did, so a run's engine is reconstructible from its own artefact. **(consumer-affecting)** | 0.14.0 |
+| T59b | `skills/convoy/SKILL.md` states its own version, locked to `.claude-plugin/plugin.json` by `test_versions_are_locked`, so a served-versus-installed skew costs a glance. | 0.14.0 |
+| CONV-B41 (T60a, in part) | The seat probe reads the on-disk credential's `expiresAt` and `refreshTokenExpiresAt` (never the token) before spending a spawn, and names the state: re-authenticate, or log in again. The rest of CONV-B41 is open. | 0.14.0 |
+| T58a | `scripts/changelog_gate.py --explain` prints the watched prefixes, the trailer opt-out and the merge policy from the constants, and a test checks the prefixes against `CONTRIBUTING.md` in both directions. | 0.14.0 |
+| T57a | `docs/GUARDRAILS.md`'s test-doctrine rule: a fail-closed guard's tests assert the wrong-answer case rather than the degenerate one, a "these two surfaces agree" test invokes both, and a fixture cited as proof of a boundary sits on the hard side of it. One rule for three failure modes, not one append per finding. | 0.14.0 |
+
+### Built in the 2026-09-05 lineup round (served by 0.13.0)
+
+Not a triage pass: a design and build round over convoy's dependency on a model lineup it
+does not own, recorded as ADR-0010. It settled CONV-B14 by a different shape from the one
+the row asked for, and shipped CONV-B29 with it. The 2026-09-13 pass confirmed both against
+the source.
+
+| Row | Promotion | Shipped by |
+|---|---|---|
+| CONV-B14 | Settled by ADR-0010. `[governance.tier_models]` lets a series carry its own tier table **(consumer-affecting)**; `DEFAULT_TIER_MODELS` is the documented floor, stamped `LINEUP_RECONCILED`; a tier resolved through the floor raises `Advisory(kind='lineup')`; `implementation_model_sources` reports an origin (`explicit` / `series-table` / `floor`). No age tripwire. | 0.13.0 |
+| CONV-B29 | `core/pricing.py` and `apply_cost_fallback` deleted; `cost_estimated` kept in the schema, permanently `false`. **(consumer-affecting)** | 0.13.0 |
+| — | `[governance]` rejects an unknown key and names the near-miss, so a series written for a newer convoy fails at load instead of running every PR on the floor — ADR-0010's precondition. **(consumer-affecting)** | 0.13.0 |
+| — | The changelog gate judges record-or-declare per commit rather than per range, refuses a `CHANGELOG.md` diff that adds no real line, and charges a merge commit with its conflict resolution only. | 0.13.0 |
 
 ### Built in the 2026-09-02 hook round (served by 0.12.0)
 
@@ -1712,6 +1992,13 @@ Recorded with reasons so they are not relitigated.
   own gate is the weaker instrument at twice the price. And a standing rule appended to the
   per-prompt brief is exactly the carrier problem CONV-B12 exists to fix, so if it is ever
   wanted it is a CONV-B12 directive, not prose bolted onto the fix prompt.
+- **A maintainer note listing convoy's model-mirror sites (T39a)** (2026-10-06). Declined as
+  superseded, not for want of a home. The age tripwire it complemented gave way to
+  ADR-0010's floor stamp and lineup advisory in 0.13.0, CONV-B29 removed the price table, and
+  the three sites that remain (`core/governance.py`, `skills/convoy/SKILL.md`,
+  `interface/scaffold.py`) are registered with the lineup-refresh walk outside this
+  repository, which is where a lineup change starts. The 2026-09-26 lineup change touched the
+  floor table, its test and the CHANGELOG, and missed no site.
 
 ### Routed out — the fix lands outside convoy
 
@@ -1748,13 +2035,13 @@ shipped (see above) or carried forward unchanged in the watch table.
 | T32a | CONV-B01 |
 | T32b | CONV-B22 |
 | T33a | CONV-B11 |
-| T34a, T34b | CONV-B09 |
+| T34a, T34b | CONV-B09 (T34a superseded by T71a; T34b open) |
 | T35a | CONV-B12 |
 | T35b | CONV-B06 |
 | T36a | CONV-B13 |
-| T37a | CONV-B17 |
+| T37a | CONV-B17 (built 2026-10-06, unreleased) |
 | T38a | CONV-B08 |
-| T39a | CONV-B14 |
+| T39a | declined, superseded (CONV-B14 settled by ADR-0010) |
 | T15b | CONV-B16 |
 | T19b | CONV-B21 |
 | T22a | CONV-B23 |
@@ -1778,7 +2065,21 @@ shipped (see above) or carried forward unchanged in the watch table.
 | T53a | CONV-B53 (measured 2026-09-03) |
 | T54a, T54b | watch table (declared red windows; halt-for-adjudication resume) |
 | T55b, T55c | CONV-B54 (shipped 0.10.0) |
-| T55a | CONV-B54, held at `watch` — per-PR changelog fragments |
+| T55a | CONV-B65, `proposed` since the 2026-09-13 pass — per-PR changelog fragments (listed under CONV-B54 at `watch` until 2026-10-06) |
+| T56a, T56b | CONV-B42 (shipped 0.14.0) |
+| T57a | shipped 0.14.0 (the `docs/GUARDRAILS.md` test-doctrine rule) |
+| T57b | CONV-B66 (built 2026-10-06, unreleased) |
+| T58a | shipped 0.14.0 (`changelog_gate.py --explain`) |
+| T58b | CONV-B67 (built 2026-10-06, unreleased) |
+| T59a, T59b | shipped 0.14.0 (`convoy_version` on the run and status envelopes; the skill states its version) |
+| T60a | CONV-B41 (partially shipped 0.14.0) |
+| T61a | CONV-B68 (proposed) |
+| T61c | CONV-B62 (built 2026-10-06, unreleased) |
+| T62a | CONV-B69 (built 2026-10-06, unreleased; relocates CONV-B53's doctrine sentence) |
+| T66a | CONV-B70 (built 2026-10-06, unreleased) |
+| T70a | CONV-B71 (this reconciliation) |
+| T71a | CONV-B09 (a) (built 2026-10-06, unreleased; supersedes T34a's wording) |
+| T58c, T59c, T60b, T61b, T62b, T64a, T64b, T65a, T66b, T67a, T68a | watch table |
 
 Rows received from the 2026-08-11 cross-project pass resolve as **KEEL-B16 → CONV-B36**
 (the spec pin). CONV-B37 was routed here from the collection's review with no foreign row

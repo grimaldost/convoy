@@ -65,8 +65,9 @@ with the `run_id` it returns.
   duration, so a commit made from another session lands on whichever branch is checked
   out at that instant rather than the one you meant.
 - `dry_run` (default `false`) — when `true`, only pre-flight the series (structure,
-  model resolution, paths, gate isolation) and return `{ok, outcome, problems,
-  advisories}`. No git mutation, no agent spawn, no spend. Do this before every real run.
+  model resolution, paths, gate isolation, a clean working tree, and the `reset` /
+  `resume` options as passed) and return `{ok, outcome, problems, advisories}`. No git
+  mutation, no agent spawn, no spend. Do this before every real run.
 - `config_isolation` (default `true`) — run the scored agent under a credential-only
   `CLAUDE_CONFIG_DIR` so the operator's settings, hooks, plugins, and memory never
   leak into the run. Internally convoy makes a fresh temp config dir per run, copies
@@ -91,7 +92,11 @@ with the `run_id` it returns.
   before this resume` — distinct from the halt reasons on purpose, since "done" and "never
   ran" are opposite outcomes. Mutually exclusive with `reset`, and resuming when no
   `integration` branch exists is a pre-flight problem rather than a silent full run (a
-  first run takes neither flag). CLI equivalent: `convoy run --resume`.
+  first run takes neither flag). Resuming also refuses a working tree with uncommitted
+  changes, which after a halt is the truncated spawn's debris; the problem names the
+  cleanup that touches only the tree, `git reset --hard` and then `git clean -fd`, which keeps
+  every branch. Not `convoy clean`: it deletes the `integration` branch this continues
+  from. CLI equivalent: `convoy run --resume`.
 - `detach` (default `false`) — **start the run and return at once** instead of blocking
   for the whole series. The result is a handle, not a result: `{ok: true, outcome:
   "started", state: "running", run_id, pid, telemetry_path, result_path, log_path,
@@ -135,10 +140,12 @@ Traps the pre-flight catches (so `dry_run` reports them instead of a half-run):
 files (note: absoluteness itself is not checked — a relative path resolves against the
 engine's working directory, so use absolute paths); an `outputs` dir
 **inside** the workspace (telemetry writes would dirty the git tree and abort a
-checkout — keep it out-of-tree); a blocking independent check whose `asset` is
-in-tree (isolation fails closed); a `[[checks]].phases` tag that no PR declares (the
-check would gate nothing); and a governance block that resolves to neither a
-`model` nor a known `tier`.
+checkout — keep it out-of-tree); a working tree with uncommitted changes — modified,
+staged, or untracked and not ignored — which a run's `git add -A` would commit into the
+first PR (`reset` skips this check, since it discards them); a blocking independent
+check whose `asset` is in-tree (isolation fails closed); a `[[checks]].phases` tag that
+no PR declares (the check would gate nothing); and a governance block that resolves to
+neither a `model` nor a known `tier`.
 
 The dry run also returns **`advisories`** — located `{kind, where, message}` remarks
 that do **not** make the series invalid, so they never change `ok` or `outcome` (and on
@@ -219,13 +226,13 @@ Every tool returns a single JSON object.
 where `outcome` is `validated` (clean, `ok: true`) or `usage` (problems found, `ok:
 false`), and `problems` is a list of `{ kind, where, message }` (empty when clean; `kind`
 is one of `governance`, `dag`, `paths`, `prompt`, `isolation`, `phases`, `resume`,
-`run_id`, `seat`, and `where`
-locates the offending section or entry, e.g. `[[prs]] 'pr-2'`). `advisories` is a list of
-the same shape, always present and often empty; it is **non-blocking** and never affects
-`ok` or `outcome` (`kind` is `gate` today). Two producers: a PR that phase scoping leaves
-with no blocking check, and a check declaring an `asset` while not being both `blocking`
-and `independent` — the isolation guard is that field's only consumer, so anywhere else it
-is accepted and read by nothing.
+`run_id`, `seat`, `workspace`, and `where` locates the offending section or entry, e.g.
+`[[prs]] 'pr-2'`; a `workspace` problem — uncommitted changes in the tree — is located at
+the workspace path). `advisories` is a list of the same shape, always present and often
+empty; it is **non-blocking** and never affects `ok` or `outcome` (`kind` is `gate`
+today). Two producers: a PR that phase scoping leaves with no blocking check, and a check
+declaring an `asset` while not being both `blocking` and `independent` — the isolation
+guard is that field's only consumer, so anywhere else it is accepted and read by nothing.
 
 **`convoy_run`, could-not-start** — a real run returns this same `outcome: "usage"`
 (`ok: false`) shape if it cannot start, never a raised exception. It carries `problems` (a
@@ -377,11 +384,25 @@ the messenger reuses that verdict and runs the gate itself only when no judge re
 exists for that agent and session, or the record is older than an hour. The hook's
 timeout is 1800 s; each check is bounded by the spec's `timeout_seconds`, and a gate
 whose checks together exceed the hook timeout is killed by Claude Code — the one path on
-which nothing is said, so keep the sum under the timeout. Plugin hooks live under the
-config directory, and convoy's own spawns run under config isolation, so the plugin's
+which nothing is said. Keep the sum within 1500 s, the gate budget, which leaves 30 s for
+the hook itself and at least 270 s for a firing to wait its turn (below); `convoy validate`
+warns past it, and `convoy gate --init` scaffolds inside it. Plugin hooks live under the config directory, and convoy's own spawns run under config isolation, so the plugin's
 hooks never fire inside a governed run; a hook a project wires in its own
 `.claude/settings.json` survives isolation and would fire inside one — the lock
 refusal above is what keeps it from gating a driven tree.
+
+Firings that gate one tree take turns: each holds `.convoy/judge.lock` from just before
+its gate until its log line is written, and one that waits out its bound exits 2 like a
+gate that could not run, recorded as `busy`. The bound is at most 600 s and less when the
+firing's own gate needs the time: the wait and the gate's worst case (checks x
+`timeout_seconds`) must fit the 1800 s hook timeout with a 30 s margin, so a gate inside the
+1500 s budget waits at least 270 s and a gate whose worst case fills the timeout does not
+wait. On the judge's retry a lock still held lets the subagent stop without a verdict,
+recorded as `busy` with its own reason; count those lines to see how often a busy tree let a
+subagent through ungated. A lock left by a killed firing is taken over once the
+process it names is gone, or, when it names none, once it is ten seconds old. The lock orders judges. It does not make
+concurrent writers safe: subagents that edit at the same time need a tree each (a worktree
+per agent), because each gate judges whatever the others have half-written.
 
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared
@@ -476,9 +497,11 @@ least one entry.
   the repair, not with the implementation estimate — a legitimate fix (e.g. updating a
   contract or fingerprint test the change invalidates) can cost more than the
   implementation spawn did. An under-set `fix` cap halts the whole series (outcome
-  `budget`; the truncated work is not integrated); the recovery is to raise the cap,
-  restore a clean tree (a budget halt leaves the truncated spawn's work uncommitted —
-  see "Limits and re-runs"), and re-run (`reset` / `--fresh`).
+  `budget`; the truncated work is not integrated); the recovery is to raise the cap and
+  re-run. A budget halt leaves the truncated spawn's work uncommitted, and a run refuses
+  a dirty tree: to keep the PRs already integrated, clear it with
+  `git reset --hard` and then `git clean -fd` (every branch kept) and `resume` (`--resume`); to
+  start over, `reset` (`--fresh`) clears it itself. See "Limits and re-runs".
 - **`[governance.tools]`** entries are host Claude Code tool names (e.g. `Read`, `Edit`,
   `Write`, `Bash`, `Grep`, `Glob`); convoy passes the per-role allow-list through to the
   spawn unchanged.
@@ -591,9 +614,10 @@ depends_on = []
 ## Limits and re-runs
 
 v1 is headless and sequential: PRs run one at a time in dependency order. Start each run
-from a clean `base` branch in the workspace (a leftover `integration` or PR branch from a
-prior run can collide). The prompts named in `[[prs]].prompt` must exist under
-`[paths].prompts` before the run; `dry_run` reports any that are missing.
+from a clean `base` branch in the workspace: a run refuses a tree with uncommitted
+changes (a `workspace` pre-flight problem naming them), and a leftover `integration` or
+PR branch from a prior run can collide. The prompts named in `[[prs]].prompt` must exist
+under `[paths].prompts` before the run; `dry_run` reports any that are missing.
 
 After a halt there are two ways forward, and they are not interchangeable.
 
@@ -602,7 +626,12 @@ After a halt there are two ways forward, and they are not interchangeable.
 that gated green are not paid for twice. A PR branch that exists but never merged is a
 partial or gate-failed attempt: it is **deleted** and re-attempted from the current
 integration state rather than built on. Resuming when no `integration` branch exists is a
-pre-flight problem, not a silent full run.
+pre-flight problem, not a silent full run. So is resuming on a dirty tree: a halt returns
+before the truncated spawn's work is committed, and the resumed run would commit that
+debris into the next PR. The problem names the cleanup,
+`git reset --hard` and then `git clean -fd`: it restores tracked and staged files to `HEAD` and
+removes untracked ones, and keeps every branch and every ignored file. After a killed
+run, `convoy unlock` comes first.
 
 **A stop at a PR boundary plus an edited series file is how a gate is repaired mid-run.**
 `resume` re-reads the series file, so `[[checks]]` added, widened, or re-`phases`-scoped
@@ -624,8 +653,10 @@ work is committed: branch deletion alone cannot clear that debris, and the debri
 reset's own checkout. So one destructive path, one mental model. `convoy clean` remains the
 verb for restoring a workspace **without** starting a run (it takes no lock, pays for no seat
 probe, and closes the killed run's ledger entry); run `convoy clean --dry-run` first to see
-exactly what either will remove. Deleting a halted PR's branch by hand is not necessary;
-`--resume` already does it.
+exactly what either will remove. It is the cleanup before starting over, never before a
+resume: it deletes the `integration` branch `--resume` continues from, so a resume's
+cleanup is the tree-only `git reset --hard` and then `git clean -fd` above. Deleting a halted PR's
+branch by hand is not necessary; `--resume` already does it.
 
 `outputs/spawns.jsonl` is
 append-only **across** runs — each run's lines carry a unique `run_id` (a sortable

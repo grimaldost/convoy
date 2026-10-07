@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 
 import convoy
+from convoy.interface.gate_service import HOOK_TIMEOUT_SECONDS
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SKILL_MD = _ROOT / 'skills' / 'convoy' / 'SKILL.md'
@@ -72,3 +73,22 @@ def test_marketplace_lists_the_convoy_plugin_from_this_repo() -> None:
     plugins = marketplace['plugins']
     assert any(p['name'] == 'convoy' for p in plugins)
     assert plugins[0]['source'] == '.'  # the repo is its own plugin
+
+
+def test_hooks_json_pins_the_hook_timeout() -> None:
+    """``hooks/hooks.json`` sits outside the package, so the package constant is pinned to it.
+
+    The gate scaffold and ``convoy validate`` compare a spec against ``HOOK_TIMEOUT_SECONDS``;
+    this is the test that keeps that number the one Claude Code actually enforces.
+    """
+    data = json.loads((_ROOT / 'hooks' / 'hooks.json').read_text(encoding='utf-8'))
+    events = data['hooks']
+    assert {'SubagentStop', 'PostToolUse'} <= events.keys()
+    for event in ('SubagentStop', 'PostToolUse'):
+        commands = [hook for entry in events[event] for hook in entry['hooks']]
+        assert commands, event
+        assert all(' convoy hook' in hook['command'] for hook in commands), event
+    timeouts = {
+        hook['timeout'] for entries in events.values() for e in entries for hook in e['hooks']
+    }
+    assert timeouts == {HOOK_TIMEOUT_SECONDS}

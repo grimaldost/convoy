@@ -76,6 +76,27 @@ TRUST_FILE = 'hook-trust.toml'
 TRUSTED_ROOTS_ENV = 'CONVOY_TRUSTED_ROOTS'
 
 
+# The timeout ``hooks/hooks.json`` declares for both hook events, in seconds. Claude Code kills a
+# hook that outlasts it without a word, and a gate runs its checks one after another, each
+# bounded by the spec's ``timeout_seconds`` — so ``len(checks) * timeout_seconds`` must stay
+# under this. The JSON file sits outside the package, so the number lives here and
+# ``tests/test_manifest.py`` pins the two together.
+HOOK_TIMEOUT_SECONDS = 1800
+
+# Held back from the hook timeout for the hook's own start-up (uv resolving the environment)
+# and its log append, which are not part of the gate's worst case.
+HOOK_MARGIN_SECONDS = 30
+
+# How much of the hook timeout a gate's worst case (checks x ``timeout_seconds``) may take:
+# five checks at the default 300 s, what ``convoy gate --init`` scaffolds for a Python
+# project. The rest holds the margin and :data:`JUDGE_MIN_WAIT_SECONDS`, the least a firing
+# that finds another firing's gate running in the same tree waits for it (``convoy hook``
+# runs one gate per tree at a time). One threshold for three places: the scaffold fits its
+# checks inside it, ``convoy validate`` warns past it, and the hook plans its wait from it.
+GATE_BUDGET_SECONDS = 1500
+JUDGE_MIN_WAIT_SECONDS = HOOK_TIMEOUT_SECONDS - HOOK_MARGIN_SECONDS - GATE_BUDGET_SECONDS
+
+
 class GateSpecNotFoundError(SpecError):
     """No series file was given and no project gate spec could be found."""
 

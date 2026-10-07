@@ -55,6 +55,20 @@ ABANDONED_BY_CLEAN_REASON = 'workspace lock cleared by convoy clean; the run nev
 # just that the lock was cleared.
 ABANDONED_BY_UNLOCK_REASON = 'workspace lock cleared by convoy unlock; the run never returned'
 
+# The cleanup a resume needs after a killed or halted run: restore the working tree to HEAD
+# and touch nothing else. A halt returns before the truncated spawn's work is committed, so
+# the tree holds its modified, staged and untracked files, and a resume refuses a dirty tree
+# (they would be committed into the next PR). ``git reset --hard`` discards tracked and
+# staged changes without moving HEAD; ``git clean -fd`` removes untracked files and keeps
+# ignored ones. Every branch survives, the integration branch included. ``git checkout -- .``
+# is not enough: it leaves a staged file staged. ``convoy clean`` is the wrong tool here,
+# because it also deletes the integration branch the resume continues from.
+TREE_ONLY_CLEANUP_STEPS = ('git reset --hard', 'git clean -fd')
+
+# The same two commands as prose for a message, with no `&&`: Windows PowerShell 5.1 does
+# not parse it, and Windows is a target.
+TREE_ONLY_CLEANUP = '`git reset --hard` and then `git clean -fd` (two commands, in this order)'
+
 
 def _run_lines(telemetry_path: Path, run_id: str | None = None) -> list[dict[str, Any]]:
     """Every parsed ledger line, optionally narrowed to one ``run_id``.
@@ -316,8 +330,9 @@ def summarize_run(
         # reader because "dead" is the one state whose recovery is not obvious.
         envelope['message'] = (
             f'the process that was running {run_id} is gone and it recorded no outcome; '
-            'run `convoy unlock` to release the workspace, then re-run with --resume to '
-            'continue from the PRs that already integrated'
+            'run `convoy unlock` to release the workspace, then discard the uncommitted '
+            f'work it left in the tree with {TREE_ONLY_CLEANUP} (every branch is kept), '
+            'then re-run with --resume to continue from the PRs that already integrated'
         )
     return envelope
 

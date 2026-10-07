@@ -13,6 +13,22 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **A gate's checks are compared with the hook timeout.** `hooks/hooks.json` gives both hook events
+  1800 s, and a gate runs its checks one after another, each bounded by `timeout_seconds`, so a
+  gate whose checks can together outlast 1800 s is killed by Claude Code without a word. A
+  gate's worst case (`checks x timeout_seconds`) may now use 1500 s of the 1800 s: the rest
+  holds 30 s for the hook's own start-up and at least 270 s for a firing to wait while another
+  firing gates the same tree (see the judge lock under Fixed). `convoy gate --init` lowers
+  `timeout_seconds` until the scaffolded checks fit that budget: a Python project's five
+  checks keep the default 300 s, and the six that `--independent` writes get 250 s (they got
+  300 s, which filled the timeout and left no time to wait). `convoy validate` on a gate-only
+  file prints a warning on stderr when the worst case exceeds the budget, naming the kill when
+  it also exceeds the timeout. The exit code stays 0 and stdout stays `ok (gate-only)`. The
+  numbers are the package constants `HOOK_TIMEOUT_SECONDS` and `GATE_BUDGET_SECONDS`, and a
+  manifest test pins the first to `hooks/hooks.json`.
+
 ### Changed
 
 - **The fallback tier table names Opus 5.5 for `strong`.** `DEFAULT_TIER_MODELS['strong']`
@@ -20,6 +36,66 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   `LINEUP_RECONCILED` moves to 2026-09-26. The table stays a floor: a series that resolves its
   own tier or names a `model` never reaches it, and a tier that falls through still raises the
   pre-flight advisory naming this date.
+- **A run refuses to start on a working tree with uncommitted changes.**
+  **(consumer-affecting)** A run commits each PR with `git add -A`, and its checkouts carry
+  uncommitted changes along, so a modified tracked file, a staged file, or an untracked file
+  the repository does not ignore was committed into the first PR and reached the integration
+  branch. One untracked JSON file in a workspace root came close. The start pre-flight now reads
+  `git status --porcelain` and refuses with a new problem kind, `workspace`, located at the
+  workspace path, naming up to three paths and counting the rest: `convoy run` exits 3, and
+  `convoy_run` answers `outcome: "usage"` with the problem. `reset` / `--fresh` skips the
+  check, since it discards those changes, and a workspace that is not a git repository is not
+  read. Runs that used to start on a dirty tree now refuse, and there is no override flag.
+  Without `resume` the message offers to commit, ignore or remove the files, and says that
+  `--fresh` also clears the tree but deletes every untracked file without listing it, and the
+  series' branches with them. Under `resume` the message names a cleanup that touches only the
+  tree, `git reset --hard` and then `git clean -fd`, two commands run in that order (Windows
+  PowerShell 5.1 does not parse `&&`), which keep every branch and every ignored file; never
+  `convoy clean`, which deletes the integration branch the resume continues from, and not
+  `git checkout -- .`, which leaves a staged file staged. The `dead` status message gains the
+  same step between `convoy unlock` and `--resume`. `convoy_run` with `dry_run: true` now runs
+  the start pre-flight a real run and a detached launch already gate on, so it also reports
+  the `workspace` problem and the problems of the `reset` / `resume` options as passed
+  (`resume` with no integration branch, `resume` with `reset`), which it used to ignore. Its
+  envelope keys are unchanged. `convoy validate` does not read the tree: it takes no
+  `--fresh` or `--resume`, so it cannot tell whether the run would read it, and the MCP
+  `dry_run` is the one rehearsal of this refusal.
+
+### Fixed
+
+- **The CLI names the positional series file when given `--series` or `--series-file`.** All six
+  verbs that take a series file (`validate`, `run`, `clean`, `unlock`, `status`, `gate`) take it
+  positionally, but the MCP tools call it `series_file=`, so a caller carrying that name over to
+  the command line typed a flag that does not exist and got Click's bare "No such option". Each
+  verb now declares both spellings as a hidden, eager option that exits 2, the same code as before,
+  with `the series file is positional, not a flag: convoy <verb> <series.toml>`. The exit-code
+  table is unchanged and the flags stay out of `--help`.
+- **Hook firings that gate one tree take turns.** Several subagents stopping at once each ran the
+  whole gate in the same tree, sharing its caches and build output, and appended to
+  `.convoy/hook.log` with a plain `open('a')`, which is not atomic across processes on Windows. A
+  firing that runs a gate now holds `.convoy/judge.lock` from just before the gate until its log
+  line is written, and every append holds `.convoy/hook.log.lock`. A firing waits at most 600 s
+  (a third of the hook timeout), and less when its own gate needs the time: it waits only as long
+  as leaves the gate's worst case (checks x `timeout_seconds`) and a 30 s margin inside the 1800 s
+  hook timeout. A gate inside the 1500 s budget (see the timeout entry under Added) waits at
+  least 270 s; a gate whose worst case fills the timeout does not wait at all. A firing that
+  waits out its bound exits 2 with a one-line reason, as a gate that could not run does, and
+  is recorded in `.convoy/hook.log` with a new outcome, `busy`. **(consumer-affecting)** On the
+  judge's retry a lock still held lets the subagent stop, as for any gate that could not run,
+  recorded as `busy` with the reason `judge lock still held on the retry; the subagent stops
+  ungated`: the one stop the judge lets through without a verdict, kept apart from `usage` so
+  the log counts it. A lock that names a process that is gone, left by a firing
+  Claude Code killed, is taken over, and so is a lock that names no pid and is older than ten
+  seconds, or a `judge.lock.break` file left by a waiter killed mid-takeover; the error for a lock
+  that cannot be taken over names both files. The error for a lock whose holder may still run
+  says that another firing is at work in the tree and gives no advice to remove the lock, since
+  the subagent reading it cannot tell whether the holder runs, and deleting a live lock would
+  let two gates run in one tree; on the subagent's first stop it adds that stopping again
+  retries. The run lock is unchanged: `convoy status`,
+  `convoy unlock` and `convoy clean` never read the judge lock. `convoy gate --init` now writes a
+  `.convoy/.gitignore` that also ignores the locks; in a project scaffolded earlier,
+  `.convoy/judge.lock` shows as untracked while a gate runs. The lock orders judges and does not
+  make concurrent writers safe: subagents that edit at the same time need a tree each.
 
 ## [0.15.0] - 2026-09-13
 

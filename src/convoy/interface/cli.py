@@ -26,6 +26,10 @@ from convoy.interface.drivers.headless import (
 from convoy.interface.fs_probe import isolation_result
 from convoy.interface.gate_scaffold import GateScaffoldError, scaffold_gate
 from convoy.interface.gate_service import (
+    GATE_BUDGET_SECONDS,
+    HOOK_MARGIN_SECONDS,
+    HOOK_TIMEOUT_SECONDS,
+    JUDGE_MIN_WAIT_SECONDS,
     advisory_only_detail,
     find_gate_spec,
     gate_brief_envelope,
@@ -205,12 +209,82 @@ def _validate_gate_only_or_exit(
         ]
         typer.echo(format_problems(problems), err=True)
         raise typer.Exit(EXIT_USAGE)
+    warning = _gate_budget_warning(len(spec.checks), spec.timeout_seconds)
+    if warning:
+        typer.echo(warning, err=True)
     typer.echo('ok (gate-only)')
+
+
+def _gate_budget_warning(checks: int, timeout_seconds: int) -> str:
+    """The advisory for a gate whose worst case passes the budget, or ``''``.
+
+    The threshold is ``GATE_BUDGET_SECONDS``, the one the scaffold fits its checks into
+    and the hook plans its wait against, not the bare hook timeout: a gate between the two
+    fits the timeout but leaves a firing that finds the tree busy too little time to wait.
+    """
+    worst_case = checks * timeout_seconds
+    if worst_case <= GATE_BUDGET_SECONDS:
+        return ''
+    found = (
+        f'warning: {checks} checks x timeout_seconds = {timeout_seconds} is {worst_case} s, '
+        f'over the {GATE_BUDGET_SECONDS} s a gate may use of the {HOOK_TIMEOUT_SECONDS} s '
+        'hook timeout'
+    )
+    if worst_case > HOOK_TIMEOUT_SECONDS:
+        consequence = 'Claude Code kills a hook that outlasts the timeout without a word'
+    else:
+        consequence = (
+            f'the rest holds {HOOK_MARGIN_SECONDS} s for the hook itself and at least '
+            f'{JUDGE_MIN_WAIT_SECONDS} s for a firing to wait while another firing gates the '
+            'same tree, so with this gate such a firing waits less, or not at all, and gives up'
+        )
+    return f'{found}: {consequence}. Lower timeout_seconds or split the checks.'
+
+
+class _SeriesFlagRejected(typer.BadParameter):
+    """A usage error (exit 2) that shows its message as written.
+
+    Typer's own ``BadParameter`` is the one public usage-error class that survives typer
+    vendoring Click (from 0.27 on, a raw ``click.UsageError`` escapes as a traceback); the
+    override drops its "Invalid value for ..." prefix.
+    """
+
+    def format_message(self) -> str:
+        return self.message
+
+
+def _named_series_rejected(ctx: typer.Context, _param: object, value: str | None) -> None:
+    """Reject ``--series`` / ``--series-file`` by naming the positional form.
+
+    The MCP surface takes ``series_file=``, so a caller who carries that name over to the
+    command line types a flag the CLI does not have. Click would answer with a bare "No such
+    option"; this answers with the form that works. It raises ``UsageError``, which exits 2
+    exactly as Click's own unknown-option error does, so the exit taxonomy does not change.
+    The option is declared eager so this runs before Click reports a missing positional.
+    """
+    if value is not None:
+        raise _SeriesFlagRejected(
+            f'the series file is positional, not a flag: convoy {ctx.info_name} <series.toml>',
+            ctx=ctx,
+        )
+
+
+_RejectedSeriesFlag = Annotated[
+    str | None,
+    typer.Option(
+        '--series',
+        '--series-file',
+        hidden=True,
+        is_eager=True,
+        callback=_named_series_rejected,
+    ),
+]
 
 
 @app.command()
 def validate(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -286,6 +360,7 @@ def gate(
             show_default=False,
         ),
     ] = None,
+    _series_flag: _RejectedSeriesFlag = None,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -330,8 +405,8 @@ def gate(
             '--init',
             help=(
                 'Scaffold the project gate spec at .convoy/gate.toml (plus a .gitignore for '
-                "the hook log) from the toolchain found in the workspace — the project's "
-                'own suite as blocking, non-independent checks — and exit. Refuses to '
+                "the hook's log and locks) from the toolchain found in the workspace — the "
+                "project's own suite as blocking, non-independent checks — and exit. Refuses to "
                 'overwrite. Nothing detected writes a placeholder check that stays red '
                 'until you declare the checks.'
             ),
@@ -527,6 +602,7 @@ def _isolation_disabled(environ: Mapping[str, str], flag: bool) -> bool:
 @app.command()
 def run(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     quiet: bool = typer.Option(
         False, '--quiet', '-q', help='Silence progress narration (which is written to stderr).'
     ),
@@ -678,6 +754,7 @@ def _clean_plan(git: Git, series: Series, workspace: Path) -> list[str]:
 @app.command()
 def clean(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -750,6 +827,7 @@ def clean(
 @app.command()
 def unlock(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -815,6 +893,7 @@ def unlock(
 @app.command()
 def status(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     run_id: Annotated[
         str,
         typer.Option(
@@ -882,10 +961,12 @@ def hook() -> None:
     unless the project has a gate spec — ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml``, then
     ``.convoy/gate.toml`` from the event's ``cwd`` upward — and this machine trusts the
     project (``convoy gate --init`` / ``--trust``). Green: exit 0 and no output. A gate
-    that cannot run is exit 2 with a one-line reason. A ``[convoy-phase: <tag>]`` marker
-    in the subagent's brief scopes the gate. Every firing appends one JSON line to
-    ``.convoy/hook.log``. Exit codes are the hook protocol's (0 silent, 2 feedback),
-    not convoy's.
+    that cannot run is exit 2 with a one-line reason, and so is a firing that waits out
+    its bound for another firing gating the same tree (``.convoy/judge.lock``): up to
+    600 s, less when its own gate's worst case needs the time. A
+    ``[convoy-phase: <tag>]`` marker in the subagent's brief scopes the gate. Every firing
+    appends one JSON line to ``.convoy/hook.log``. Exit codes are the hook protocol's (0
+    silent, 2 feedback), not convoy's.
     """
     raise typer.Exit(run_hook(sys.stdin.buffer.read(), os.environ))
 
