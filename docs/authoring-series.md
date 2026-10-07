@@ -4,7 +4,7 @@
 only acquires a cap while someone still remembers what it is for. A promotion into
 this file that would breach the budget names what it displaces — a clause folded,
 tightened, or retired — and the budget itself moves only by a deliberate edit to this
-header, not by drift. Current scope: gate separability and the one-PR-series pattern.
+header, not by drift. Current scope: gate granularity, separability, and the one-PR-series pattern.
 The full authoring-doctrine fold (gate-scope rules, budget sizing, prompt hygiene)
 lands here when it is built; until then the skill and the design docs carry it. -->
 
@@ -84,6 +84,19 @@ What the gate framework adds over running the same commands by hand:
 - **Refusals instead of vacuous greens.** A typo'd phase tag, a selection with no
   blocking check, or an unbacked oracle each come back as `usage`, never as a green
   that looks like assurance.
+
+## Gate granularity
+
+Run the gate at the smallest unit the workflow has. The possibilities are per-PR,
+per-subagent, or per-phase deployment, depending on how your work is organized; the
+hook's `SubagentStop` judge embodies the per-subagent shape. A repair brief that names
+a single PR's failures outperforms one that names several.
+
+This doctrine stems from measurement of one scenario: CONV-B53 (docs/backlog.md)
+tested a per-PR gate against a single defect class with a bounded repair loop. A
+second wave is pending, with a second defect class measured. The per-PR results and
+per-session comparisons are recorded in CONV-B53; this section states only the
+gate-choice principle, not the measurement endpoints.
 
 ## The one-PR-series pattern
 

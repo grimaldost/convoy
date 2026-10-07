@@ -1367,11 +1367,8 @@ rule through a repair brief consumed by a fresh subagent, not benefit on work in
 the rule it teaches; the placebo does not match the repair actor or the brief's content; four
 counted trials reached the task directory before a harness repair and are retained with the
 sensitivity. The findings, the typed record and the pre-registration with its dated
-corrections live with the instrument. Doctrine this row now carries: run the gate at the
-smallest unit the workflow has (per PR, per subagent — the hook's `SubagentStop` judge has
-that shape); a repair brief that names one PR's reds beats one that names five. Iteration 2
-measures the 0.12.0 hook on the same bank and needs a held-out group with a second defect
-class before it can claim more.
+corrections live with the instrument. Iteration 2 measures the 0.12.0 hook on the same
+bank and needs a held-out group with a second defect class before it can claim more.
 
 **Effort** M (the arms exist; the cost is wall-clock and analysis) · **Source** [triage] ·
 **Rows** T53a
