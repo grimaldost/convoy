@@ -13,6 +13,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-07
+
+**Minor**, by the test in `docs/design/02-formats.md`: two entries below carry
+**(consumer-affecting)** — a dirty-tree refusal and a new `busy` outcome in `.convoy/hook.log`.
+Main now holds two merged PRs since 0.15.0: #110 (feedback maintenance) and #109 (a scored
+spawn no longer reads the operator's own CLAUDE.md from above its working directory, which
+restores convoy's C5 guarantee).
+
 ### Added
 
 - **A gate's checks are compared with the hook timeout.** `hooks/hooks.json` gives both hook events
@@ -96,8 +104,6 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   `.convoy/.gitignore` that also ignores the locks; in a project scaffolded earlier,
   `.convoy/judge.lock` shows as untracked while a gate runs. The lock orders judges and does not
   make concurrent writers safe: subagents that edit at the same time need a tree each.
-
-### Fixed
 
 - **A scored spawn no longer reads the operator's own CLAUDE.md from above its working
   directory.** Claude Code reads `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` in every
