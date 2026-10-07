@@ -19,8 +19,8 @@ false. Four inputs were merged in this pass:
 2. The 2026-09-13 triage delta, over 13 reports from 2026-09-01..09-13, which minted the
    clusters T56–T65 and was never reconciled into this file.
 3. The `CHANGELOG.md` sections for 0.13.0, 0.14.0 and 0.15.0.
-4. The rows built on the 2026-10-06 maintenance branch. They are recorded as built and
-   unreleased, because a row is done only when a tagged release serves it.
+4. The rows built on the 2026-10-06 maintenance branch. They are recorded as shipped 0.16.0,
+   because a row is done only when a tagged release serves it.
 
 The pass mints CONV-B65 through CONV-B71 and records where every row went under
 [Shipped](#shipped), in the watch table and in the [row-ID map](#row-id-map).
@@ -152,7 +152,7 @@ there instead are descriptions of engine behaviour the manual owes a reader.
 of **Next** (the skill's description names concurrent writers as a dispatch case; cheap, and
 the hazard it points away from was priced) and CONV-B65 in **Later** (per-PR changelog
 fragments, which need an ADR). Everything else it minted was built on the maintenance branch
-and is recorded under Shipped as unreleased. The watch rows of the 2026-09-13 and 2026-10-06
+and is recorded under Shipped in 0.16.0. The watch rows of the 2026-09-13 and 2026-10-06
 passes join the watch table.
 
 **Retire / fold** is the review's sentence on surfaces that no longer earn their place;
@@ -616,13 +616,13 @@ asserts the sites *agree*, not that the label *moved* when consumer-affecting co
 A green build, a shipped build and a correctly-labelled build are three claims and only the
 first is checked today (T34b).
 
-**Status.** (a) is built on the 2026-10-06 maintenance branch, unreleased, as T71a, which
-re-grounds this row's cause instead of repeating it. The July measurement and the old
-rationale each saw one path of two: an install takes the default branch's tip, and an
-existing install refreshes only when the manifest version changes. On 2026-10-06 an existing
-install still ran the v0.15.0 tag's commit while the marketplace's checkout of the default
-branch had moved past it. That is one observation, consistent with this reading rather than
-proof of it. So unreleased consumer-affecting work reaches new installs under the old label,
+**Status.** (a) Shipped in 0.16.0, as T71a, which re-grounds this row's cause instead of
+repeating it. The July measurement and the old rationale each saw one path of two: an install
+takes the default branch's tip, and an existing install refreshes only when the manifest
+version changes. On 2026-10-06 an existing install still ran the v0.15.0 tag's commit while
+the marketplace's checkout of the default branch had moved past it. That is one observation,
+consistent with this reading rather than proof of it. So unreleased consumer-affecting work
+reaches new installs under the old label,
 and reaches existing installs not at all until the cut. `CONTRIBUTING.md` §Release
 discipline now states both paths in place of the one-path sentences; the practice, the
 cadence and the `release-tag` workflow's rationale are unchanged. T71a supersedes T34a's
@@ -779,7 +779,7 @@ shipped as `LINEUP_RECONCILED`, feeding the advisory rather than a failing age t
 maintainer note (T39a) is declined as superseded (see Declined); and point (b) is settled
 outside this repository — the three mirror sites that remain (`core/governance.py`,
 `skills/convoy/SKILL.md`, `interface/scaffold.py`) are registered with the lineup-refresh
-walk. The 2026-09-26 lineup change (`strong` → `claude-opus-5-5`, in `[Unreleased]`) touched
+walk. The 2026-09-26 lineup change (`strong` → `claude-opus-5-5`, served by 0.16.0) touched
 the floor table, its stamp, its test and the CHANGELOG, and missed no site. Earlier history:
 point (a) was resolved on 2026-08-11, when the canonical lineup was reconciled and convoy's
 mirrors re-synced against it, shipping in 0.9.0 as the `strong` tier resolving to
@@ -845,13 +845,12 @@ wave A, 2026-07-08 baseline, 2026-07-09 v1; review]
 the positional in the usage error ("pass the series file positionally"). The error-text
 half is cheaper and probably sufficient. `interface/cli.py`.
 
-**Status.** Built on the 2026-10-06 maintenance branch, unreleased (T37a), as the error-text
-half, widened to every verb that takes the series file positionally — `validate`, `gate`,
-`run`, `clean`, `unlock` and `status` — since this row's evidence is the recovery verbs.
-Each declares `--series` and `--series-file` (the MCP tools teach `series_file=`) as a
-hidden option that exits 2, the code it exited with before, with
-`the series file is positional, not a flag: convoy <verb> <series.toml>`. No alias; the
-flags stay out of `--help`.
+**Status.** Shipped in 0.16.0 (T37a), as the error-text half, widened to every verb that
+takes the series file positionally — `validate`, `gate`, `run`, `clean`, `unlock` and
+`status` — since this row's evidence is the recovery verbs. Each declares `--series` and
+`--series-file` (the MCP tools teach `series_file=`) as a hidden option that exits 2, the
+code it exited with before, with `the series file is positional, not a flag: convoy <verb>
+<series.toml>`. No alias; the flags stay out of `--help`.
 
 **Effort** S · **Source** [triage] + [review] · **Row** T37a
 
@@ -1091,13 +1090,13 @@ checks stays under the shipped hook timeout, and `convoy validate` warns when a 
 spec's sum exceeds it; the hook's own record could carry the budget it ran under so a killed
 firing is at least reconstructible from the previous one.
 
-**Status.** Built on the 2026-10-06 maintenance branch, unreleased. A gate spec carries one
-`timeout_seconds` applied to each check, so the sum is the check count times that value.
-`HOOK_TIMEOUT_SECONDS` (1800) is a package constant, pinned to `hooks/hooks.json` by
-CONV-B64's test. A gate's worst case may use `GATE_BUDGET_SECONDS` (1500) of it, which keeps
-30 s for the hook itself and at least 270 s for a firing waiting on CONV-B62's judge lock;
-the bare timeout was the first threshold, and a blind review measured what it left: the
-six-check scaffold filled it, so a second firing could not wait at all. `convoy gate --init`
+**Status.** Shipped in 0.16.0. A gate spec carries one `timeout_seconds` applied to each
+check, so the sum is the check count times that value. `HOOK_TIMEOUT_SECONDS` (1800) is a
+package constant, pinned to `hooks/hooks.json` by CONV-B64's test. A gate's worst case may
+use `GATE_BUDGET_SECONDS` (1500) of it, which keeps 30 s for the hook itself and at least
+270 s for a firing waiting on CONV-B62's judge lock; the bare timeout was the first
+threshold, and a blind review measured what it left: the six-check scaffold filled it, so a
+second firing could not wait at all. `convoy gate --init`
 lowers `timeout_seconds` until the scaffolded checks fit the budget (five checks keep the
 default 300 s, the six-check `--independent` scaffold gets 250 s), and `convoy validate` on a
 gate-only file warns on stderr when checks × `timeout_seconds` exceeds the budget, with the
@@ -1125,14 +1124,14 @@ and no lock fixes it: each subagent's gate judges whatever the others have half-
 so a green can belong to a neighbour's edit. Writers need separation, a worktree per agent,
 which the operator arranges; the lock only orders the judging.
 
-**Status.** Built on the 2026-10-06 maintenance branch, unreleased (T61c). A firing that
-runs a gate holds `.convoy/judge.lock` until its log line is written, and every append
-holds `.convoy/hook.log.lock`. One that waits out its bound exits 2 like a gate that could
-not run, recorded with the new outcome `busy`. The bound is at most 600 s and shrinks so that
-the wait plus the gate's worst case fits the 1800 s hook timeout with a 30 s margin; a gate
-inside CONV-B61's 1500 s budget waits at least 270 s, and a gate whose worst case fills the
-timeout does not wait. On the judge's retry a lock still held lets the subagent stop, as for
-any gate that could not run, recorded as `busy` with its own reason, so the stops that
+**Status.** Shipped in 0.16.0 (T61c). A firing that runs a gate holds `.convoy/judge.lock`
+until its log line is written, and every append holds `.convoy/hook.log.lock`. One that
+waits out its bound exits 2 like a gate that could not run, recorded with the new outcome
+`busy`. The bound is at most 600 s and shrinks so that the wait plus the gate's worst case
+fits the 1800 s hook timeout with a 30 s margin; a gate inside CONV-B61's 1500 s budget
+waits at least 270 s, and a gate whose worst case fills the timeout does not wait. On the
+judge's retry a lock still held lets the subagent stop, as for any gate that could not run,
+recorded as `busy` with its own reason, so the stops that
 carried no verdict are counted rather than read as `usage`. Blocking that retry again was
 weighed and not built: it would break the one-repair-round bound, and under a gate that
 leaves no time to wait it would spin. A lock naming a process that is gone is taken over,
@@ -1563,11 +1562,11 @@ fixture, before a line of the mechanism is designed — the fixtures directory i
 the rule was followed. `tests/test_manifest.py` asserts `hooks/hooks.json` parses and names
 the shipped command, so the plugin's hook wiring is locked the way its version is.
 
-**Status.** Test half built on the 2026-10-06 maintenance branch, unreleased:
-`tests/test_manifest.py` asserts that `hooks/hooks.json` parses, wires `convoy hook` on both
-`SubagentStop` and `PostToolUse`, and gives every hook the timeout `HOOK_TIMEOUT_SECONDS`
-names — the number CONV-B61 compares against. The doctrine line is held. It is maintainer
-doctrine, not series-author doctrine, so it stays out of the budgeted authoring guide; if it
+**Status.** Test half shipped in 0.16.0: `tests/test_manifest.py` asserts that
+`hooks/hooks.json` parses, wires `convoy hook` on both `SubagentStop` and `PostToolUse`,
+and gives every hook the timeout `HOOK_TIMEOUT_SECONDS` names — the number CONV-B61
+compares against. The doctrine line is held. It is maintainer doctrine, not series-author
+doctrine, so it stays out of the budgeted authoring guide; if it
 is wanted, it folds into `docs/GUARDRAILS.md` and names what it displaces.
 
 **Effort** S · **Source** [review] + [report]
@@ -1742,26 +1741,27 @@ the one thing not to do is discover the answer from a broken scored arm. [cross-
 
 ## Shipped
 
-### Built in the 2026-10-06 maintenance round (unreleased; served by the next tag)
+### Built in the 2026-10-06 maintenance round (served by 0.16.0)
 
-Built on the 2026-10-06 maintenance branch from the open rows of the 2026-10-06 triage. None
-of it reaches an install until a tag serves it, so every row here reads *built, unreleased*
-until the cut retargets this heading at that tag. CONV-B70 is **(consumer-affecting)**, so by
-release step 0 in `CONTRIBUTING.md` the next cut is a minor. The same tag serves the
-`strong`-tier floor moving to `claude-opus-5-5`, which is not a row (see CONV-B14).
+Built on the 2026-10-06 maintenance branch from the open rows of the 2026-10-06 triage and
+served by the 0.16.0 release tagged v0.16.0. CONV-B70 is **(consumer-affecting)**, so by
+release step 0 in `CONTRIBUTING.md` the cut to 0.16.0 is a minor. The same tag serves the
+`strong`-tier floor moving to `claude-opus-5-5` (see CONV-B14) and the isolation fix of PR #109
+(a scored spawn no longer reads the operator's own CLAUDE.md from above its working
+directory), not rows.
 
 | Row | Promotion | Shipped by |
 |---|---|---|
-| CONV-B70 (T66a) | A run refuses to start on a working tree with uncommitted changes. A run commits each PR with `git add -A`, so a modified tracked file, a staged file or an untracked file the repository does not ignore went into the first PR's commit. The start pre-flight now reads `git status --porcelain` and raises a `workspace` problem naming up to three paths and counting the rest: `convoy run` exits 3 and `convoy_run` answers `outcome: "usage"`. `reset` / `--fresh` skips it, since it discards those changes; a workspace that is not a repository is not read; there is no override flag (T66b, watch). Under `resume` the message names the tree-only cleanup `git reset --hard` and then `git clean -fd` (two commands: PowerShell 5.1 does not parse `&&`), which keeps every branch and every ignored file — never `convoy clean`, which deletes the integration branch the resume continues from — and the `dead` message gains that step between `convoy unlock` and `--resume`. `convoy_run` with `dry_run: true` now runs the same start pre-flight, so it also reports the problems of the `reset` / `resume` options as passed. **(consumer-affecting: runs that used to start now refuse; a new problem kind; a changed `dead` message)** | unreleased |
-| CONV-B17 (T37a) | All six verbs that take the series file positionally answer `--series` and `--series-file` with a usage error (exit 2, unchanged) naming `convoy <verb> <series.toml>`, instead of Click's bare "No such option". | unreleased |
-| CONV-B62 (T61c) | Hook firings that gate one tree take turns on `.convoy/judge.lock`, and every log append holds `.convoy/hook.log.lock`; a firing that waits out its bound (at most 600 s, and short enough that the wait plus its gate's worst case fits the hook timeout; at least 270 s for a gate inside CONV-B61's budget) exits 2 like a gate that could not run, recorded as `busy`, and a lock naming a process that is gone, or none for ten seconds, is taken over. A lock still held on the judge's retry lets the subagent stop, recorded as `busy` with its own reason. **(consumer-affecting: a new `hook.log` outcome, `busy`)** The row's Change now names the second remedy: concurrent writers need a worktree each, which no lock gives. | unreleased |
-| CONV-B61 | `HOOK_TIMEOUT_SECONDS` (1800) is a package constant, and a gate's worst case may use `GATE_BUDGET_SECONDS` (1500) of it, leaving 30 s for the hook and at least 270 s for a firing waiting on the judge lock; `convoy gate --init` lowers `timeout_seconds` until the scaffolded checks fit the budget, and `convoy validate` on a gate-only file warns on stderr when checks × `timeout_seconds` exceeds it. | unreleased |
-| CONV-B64 (test half) | `tests/test_manifest.py` pins `hooks/hooks.json`: it parses, wires `convoy hook` on both events, and carries the timeout `HOOK_TIMEOUT_SECONDS` names. The doctrine line is held. | unreleased |
-| CONV-B09 (a) (T71a) | `CONTRIBUTING.md` §Release discipline states both install paths — an install takes the default branch's tip, an existing install refreshes only on a version change — in place of the one-path rationale. Supersedes T34a's wording. | unreleased |
-| CONV-B66 (T57b) | `docs/GUARDRAILS.md`'s hook-trust rule names the autouse fixture `_no_real_convoy_home` in its *Enforced by:* line. The fixture existed; its attestation did not, and the failure it prevents was real: three `--init` tests had written live trust entries into a developer's real `~/.convoy/hook-trust.toml`. | unreleased |
-| CONV-B67 (T58b) | Release checklist step 1a: the release section's framing paragraph is written at cut time, once its contents are final, and is never carried under `[Unreleased]`. Removes the class (a framing sentence that went false as later entries landed under it) where a gate on one phrase would catch one instance. | unreleased |
-| CONV-B69 (T62a) | The smallest-unit gate doctrine — run the gate at the smallest unit the workflow has; a repair brief that names one PR's reds beats one that names several — moves out of CONV-B53's Status into `docs/authoring-series.md` §Gate granularity with its limits (one measured wave, one defect class, iteration 2 pending). A relocation that asserts nothing the repository did not already assert; the figures stay in CONV-B53. | unreleased |
-| CONV-B71 (T70a) | This reconciliation: the ledger re-read against the 2026-10-06 and 2026-09-13 triage passes and the 0.13.0–0.15.0 CHANGELOG sections. CONV-B14 and CONV-B29 re-statused, the 0.13.0 and 0.14.0 sections added, CONV-B65 to CONV-B71 minted, the watch table and the row-ID map extended. Docs only. | unreleased |
+| CONV-B70 (T66a) | A run refuses to start on a working tree with uncommitted changes. A run commits each PR with `git add -A`, so a modified tracked file, a staged file or an untracked file the repository does not ignore went into the first PR's commit. The start pre-flight now reads `git status --porcelain` and raises a `workspace` problem naming up to three paths and counting the rest: `convoy run` exits 3 and `convoy_run` answers `outcome: "usage"`. `reset` / `--fresh` skips it, since it discards those changes; a workspace that is not a repository is not read; there is no override flag (T66b, watch). Under `resume` the message names the tree-only cleanup `git reset --hard` and then `git clean -fd` (two commands: PowerShell 5.1 does not parse `&&`), which keeps every branch and every ignored file — never `convoy clean`, which deletes the integration branch the resume continues from — and the `dead` message gains that step between `convoy unlock` and `--resume`. `convoy_run` with `dry_run: true` now runs the same start pre-flight, so it also reports the problems of the `reset` / `resume` options as passed. **(consumer-affecting: runs that used to start now refuse; a new problem kind; a changed `dead` message)** | 0.16.0 |
+| CONV-B17 (T37a) | All six verbs that take the series file positionally answer `--series` and `--series-file` with a usage error (exit 2, unchanged) naming `convoy <verb> <series.toml>`, instead of Click's bare "No such option". | 0.16.0 |
+| CONV-B62 (T61c) | Hook firings that gate one tree take turns on `.convoy/judge.lock`, and every log append holds `.convoy/hook.log.lock`; a firing that waits out its bound (at most 600 s, and short enough that the wait plus its gate's worst case fits the hook timeout; at least 270 s for a gate inside CONV-B61's budget) exits 2 like a gate that could not run, recorded as `busy`, and a lock naming a process that is gone, or none for ten seconds, is taken over. A lock still held on the judge's retry lets the subagent stop, recorded as `busy` with its own reason. **(consumer-affecting: a new `hook.log` outcome, `busy`)** The row's Change now names the second remedy: concurrent writers need a worktree each, which no lock gives. | 0.16.0 |
+| CONV-B61 | `HOOK_TIMEOUT_SECONDS` (1800) is a package constant, and a gate's worst case may use `GATE_BUDGET_SECONDS` (1500) of it, leaving 30 s for the hook and at least 270 s for a firing waiting on the judge lock; `convoy gate --init` lowers `timeout_seconds` until the scaffolded checks fit the budget, and `convoy validate` on a gate-only file warns on stderr when checks × `timeout_seconds` exceeds it. | 0.16.0 |
+| CONV-B64 (test half) | `tests/test_manifest.py` pins `hooks/hooks.json`: it parses, wires `convoy hook` on both events, and carries the timeout `HOOK_TIMEOUT_SECONDS` names. The doctrine line is held. | 0.16.0 |
+| CONV-B09 (a) (T71a) | `CONTRIBUTING.md` §Release discipline states both install paths — an install takes the default branch's tip, an existing install refreshes only on a version change — in place of the one-path rationale. Supersedes T34a's wording. | 0.16.0 |
+| CONV-B66 (T57b) | `docs/GUARDRAILS.md`'s hook-trust rule names the autouse fixture `_no_real_convoy_home` in its *Enforced by:* line. The fixture existed; its attestation did not, and the failure it prevents was real: three `--init` tests had written live trust entries into a developer's real `~/.convoy/hook-trust.toml`. | 0.16.0 |
+| CONV-B67 (T58b) | Release checklist step 1a: the release section's framing paragraph is written at cut time, once its contents are final, and is never carried under `[Unreleased]`. Removes the class (a framing sentence that went false as later entries landed under it) where a gate on one phrase would catch one instance. | 0.16.0 |
+| CONV-B69 (T62a) | The smallest-unit gate doctrine — run the gate at the smallest unit the workflow has; a repair brief that names one PR's reds beats one that names several — moves out of CONV-B53's Status into `docs/authoring-series.md` §Gate granularity with its limits (one measured wave, one defect class, iteration 2 pending). A relocation that asserts nothing the repository did not already assert; the figures stay in CONV-B53. | 0.16.0 |
+| CONV-B71 (T70a) | This reconciliation: the ledger re-read against the 2026-10-06 and 2026-09-13 triage passes and the 0.13.0–0.15.0 CHANGELOG sections. CONV-B14 and CONV-B29 re-statused, the 0.13.0 and 0.14.0 sections added, CONV-B65 to CONV-B71 minted, the watch table and the row-ID map extended. Docs only. | 0.16.0 |
 
 **Why CONV-B70 was built on one report.** In the 2026-09-26 run an untracked file of
 private strings sat in the workspace root and would have entered the first PR's commit; a
@@ -1774,18 +1774,19 @@ resume half is what keeps it safe to ship: a `budget` or `infrastructure` halt r
 the truncated spawn's work is committed, so a tree is dirty after the common halt, and a
 refusal that pointed at `convoy clean` would have destroyed the branch `--resume` needs.
 
-**What CONV-B70 leaves open.** Two things, both recorded here so neither is lost. First,
+**What CONV-B70 left open.** Two things, recorded here so neither is lost. The first is still open:
 `convoy_run` with `dry_run: true` is the only rehearsal of the refusal. The CLI has no
 `run --dry-run`, and `convoy validate` stays tree-blind on purpose: it takes no `--fresh` or
 `--resume`, so it cannot know whether the run it precedes reads the tree at all (`--fresh`
 skips the check) or which remedy applies (`--resume` names a different one), and its answer
 is about the series file and the paths it names. A CLI user who gets `ok` from validate can
 still get exit 3 from `convoy run` on a dirty tree; `git status --porcelain` in the workspace
-is the rehearsal. Second, `docs/design/03-serving.md` still says that `convoy validate` and
-the tool's `dry_run` both call `preflight`, and its verb table calls them the same pre-flight;
-since this row, `dry_run` calls `start_report`, which adds the tree read and the option
-checks. That file belongs to the open isolation change (PR #109), so the sentence, the
-pre-flight stage of its run lifecycle and the verb table row are corrected once that merges.
+is the rehearsal. The second is done: `docs/design/03-serving.md` said that `convoy validate`
+and the tool's `dry_run` both call `preflight`, and its verb table called them the same
+pre-flight. They differ: `dry_run` calls `start_report`, which adds the tree read and the option
+checks like the run's own start pre-flight, while `convoy validate` calls only `preflight` and
+stays tree-blind. The sentence, the run lifecycle's pre-flight stage and the verb table row were
+corrected in the docs pass after 0.16.0.
 
 ### Served by 0.15.0 (2026-09-13): no row, and the install requirement versioned
 
@@ -2039,7 +2040,7 @@ shipped (see above) or carried forward unchanged in the watch table.
 | T35a | CONV-B12 |
 | T35b | CONV-B06 |
 | T36a | CONV-B13 |
-| T37a | CONV-B17 (built 2026-10-06, unreleased) |
+| T37a | CONV-B17 (shipped 0.16.0) |
 | T38a | CONV-B08 |
 | T39a | declined, superseded (CONV-B14 settled by ADR-0010) |
 | T15b | CONV-B16 |
@@ -2068,17 +2069,17 @@ shipped (see above) or carried forward unchanged in the watch table.
 | T55a | CONV-B65, `proposed` since the 2026-09-13 pass — per-PR changelog fragments (listed under CONV-B54 at `watch` until 2026-10-06) |
 | T56a, T56b | CONV-B42 (shipped 0.14.0) |
 | T57a | shipped 0.14.0 (the `docs/GUARDRAILS.md` test-doctrine rule) |
-| T57b | CONV-B66 (built 2026-10-06, unreleased) |
+| T57b | CONV-B66 (shipped 0.16.0) |
 | T58a | shipped 0.14.0 (`changelog_gate.py --explain`) |
-| T58b | CONV-B67 (built 2026-10-06, unreleased) |
+| T58b | CONV-B67 (shipped 0.16.0) |
 | T59a, T59b | shipped 0.14.0 (`convoy_version` on the run and status envelopes; the skill states its version) |
 | T60a | CONV-B41 (partially shipped 0.14.0) |
 | T61a | CONV-B68 (proposed) |
-| T61c | CONV-B62 (built 2026-10-06, unreleased) |
-| T62a | CONV-B69 (built 2026-10-06, unreleased; relocates CONV-B53's doctrine sentence) |
-| T66a | CONV-B70 (built 2026-10-06, unreleased) |
+| T61c | CONV-B62 (shipped 0.16.0) |
+| T62a | CONV-B69 (shipped 0.16.0; relocates CONV-B53's doctrine sentence) |
+| T66a | CONV-B70 (shipped 0.16.0) |
 | T70a | CONV-B71 (this reconciliation) |
-| T71a | CONV-B09 (a) (built 2026-10-06, unreleased; supersedes T34a's wording) |
+| T71a | CONV-B09 (a) (shipped 0.16.0; supersedes T34a's wording) |
 | T58c, T59c, T60b, T61b, T62b, T64a, T64b, T65a, T66b, T67a, T68a | watch table |
 
 Rows received from the 2026-08-11 cross-project pass resolve as **KEEL-B16 → CONV-B36**
