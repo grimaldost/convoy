@@ -94,7 +94,7 @@ with the `run_id` it returns.
   `integration` branch exists is a pre-flight problem rather than a silent full run (a
   first run takes neither flag). Resuming also refuses a working tree with uncommitted
   changes, which after a halt is the truncated spawn's debris; the problem names the
-  cleanup that touches only the tree, `git reset --hard && git clean -fd`, which keeps
+  cleanup that touches only the tree, `git reset --hard` and then `git clean -fd`, which keeps
   every branch. Not `convoy clean`: it deletes the `integration` branch this continues
   from. CLI equivalent: `convoy run --resume`.
 - `detach` (default `false`) — **start the run and return at once** instead of blocking
@@ -391,9 +391,12 @@ hooks never fire inside a governed run; a hook a project wires in its own
 refusal above is what keeps it from gating a driven tree.
 
 Firings that gate one tree take turns: each holds `.convoy/judge.lock` from just before
-its gate until its log line is written, and one that waits out 600 s is answered as a gate
-that could not run (exit 2, recorded as `usage`); a lock left by a killed firing is taken
-over once the process it names is gone. The lock orders judges. It does not make
+its gate until its log line is written, and one that waits out its bound is answered as a
+gate that could not run (exit 2, recorded as `usage`). The bound is at most 600 s and less
+when the firing's own gate needs the time: the wait and the gate's worst case (checks x
+`timeout_seconds`) must fit the 1800 s hook timeout with a 30 s margin, so a gate whose worst
+case fills the timeout does not wait. A lock left by a killed firing is taken over once the
+process it names is gone, or, when it names none, once it is ten seconds old. The lock orders judges. It does not make
 concurrent writers safe: subagents that edit at the same time need a tree each (a worktree
 per agent), because each gate judges whatever the others have half-written.
 
@@ -493,7 +496,7 @@ least one entry.
   `budget`; the truncated work is not integrated); the recovery is to raise the cap and
   re-run. A budget halt leaves the truncated spawn's work uncommitted, and a run refuses
   a dirty tree: to keep the PRs already integrated, clear it with
-  `git reset --hard && git clean -fd` (every branch kept) and `resume` (`--resume`); to
+  `git reset --hard` and then `git clean -fd` (every branch kept) and `resume` (`--resume`); to
   start over, `reset` (`--fresh`) clears it itself. See "Limits and re-runs".
 - **`[governance.tools]`** entries are host Claude Code tool names (e.g. `Read`, `Edit`,
   `Write`, `Bash`, `Grep`, `Glob`); convoy passes the per-role allow-list through to the
@@ -622,7 +625,7 @@ integration state rather than built on. Resuming when no `integration` branch ex
 pre-flight problem, not a silent full run. So is resuming on a dirty tree: a halt returns
 before the truncated spawn's work is committed, and the resumed run would commit that
 debris into the next PR. The problem names the cleanup,
-`git reset --hard && git clean -fd`: it restores tracked and staged files to `HEAD` and
+`git reset --hard` and then `git clean -fd`: it restores tracked and staged files to `HEAD` and
 removes untracked ones, and keeps every branch and every ignored file. After a killed
 run, `convoy unlock` comes first.
 
@@ -648,7 +651,7 @@ verb for restoring a workspace **without** starting a run (it takes no lock, pay
 probe, and closes the killed run's ledger entry); run `convoy clean --dry-run` first to see
 exactly what either will remove. It is the cleanup before starting over, never before a
 resume: it deletes the `integration` branch `--resume` continues from, so a resume's
-cleanup is the tree-only `git reset --hard && git clean -fd` above. Deleting a halted PR's
+cleanup is the tree-only `git reset --hard` and then `git clean -fd` above. Deleting a halted PR's
 branch by hand is not necessary; `--resume` already does it.
 
 `outputs/spawns.jsonl` is

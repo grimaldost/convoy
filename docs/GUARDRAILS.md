@@ -143,7 +143,7 @@ model to enforce, not this guardrail's.
 *Enforced by:* `interface/hook.py` (`trust_status` before any load or run) +
 `tests/test_hook.py` (an untrusted spec with a side-effecting check leaves no trace and
 no log; a changed spec is refused) + autouse fixture `_no_real_convoy_home`
-(tests/conftest.py:42-52), which prevents tests from writing live trust entries into
+(in `tests/conftest.py`), which prevents tests from writing live trust entries into
 the real `~/.convoy/hook-trust.toml`.
 
 ### Telemetry is append-only and versioned

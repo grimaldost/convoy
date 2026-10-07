@@ -42,8 +42,11 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   `convoy_run` answers `outcome: "usage"` with the problem. `reset` / `--fresh` skips the
   check, since it discards those changes, and a workspace that is not a git repository is not
   read. Runs that used to start on a dirty tree now refuse, and there is no override flag.
-  Under `resume` the message names a cleanup that touches only the tree,
-  `git reset --hard && git clean -fd`, which keeps every branch and every ignored file; never
+  Without `resume` the message offers to commit, ignore or remove the files, and says that
+  `--fresh` also clears the tree but deletes every untracked file without listing it, and the
+  series' branches with them. Under `resume` the message names a cleanup that touches only the
+  tree, `git reset --hard` and then `git clean -fd`, two commands run in that order (Windows
+  PowerShell 5.1 does not parse `&&`), which keep every branch and every ignored file; never
   `convoy clean`, which deletes the integration branch the resume continues from, and not
   `git checkout -- .`, which leaves a staged file staged. The `dead` status message gains the
   same step between `convoy unlock` and `--resume`. `convoy_run` with `dry_run: true` now runs
@@ -65,11 +68,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   whole gate in the same tree, sharing its caches and build output, and appended to
   `.convoy/hook.log` with a plain `open('a')`, which is not atomic across processes on Windows. A
   firing that runs a gate now holds `.convoy/judge.lock` from just before the gate until its log
-  line is written, and every append holds `.convoy/hook.log.lock`. A firing that waits out 600 s
-  (a third of the hook timeout) is answered as a gate that could not run: exit 2 with a one-line
-  reason, recorded with the existing `usage` outcome, and on the judge's retry the subagent may
-  stop, as for any gate that could not run. A lock that names a process that is gone, left by a
-  firing Claude Code killed, is taken over. The run lock is unchanged: `convoy status`,
+  line is written, and every append holds `.convoy/hook.log.lock`. A firing waits at most 600 s
+  (a third of the hook timeout), and less when its own gate needs the time: it waits only as long
+  as leaves the gate's worst case (checks x `timeout_seconds`) and a 30 s margin inside the 1800 s
+  hook timeout, so a gate whose worst case fills the timeout does not wait at all. A firing that
+  waits out its bound is answered as a gate that could not run: exit 2 with a one-line reason,
+  recorded with the existing `usage` outcome, and on the judge's retry the subagent may stop, as
+  for any gate that could not run. A lock that names a process that is gone, left by a firing
+  Claude Code killed, is taken over, and so is a lock that names no pid and is older than ten
+  seconds, or a `judge.lock.break` file left by a waiter killed mid-takeover; the error for a lock
+  that cannot be taken over names both files. The run lock is unchanged: `convoy status`,
   `convoy unlock` and `convoy clean` never read the judge lock. `convoy gate --init` now writes a
   `.convoy/.gitignore` that also ignores the locks; in a project scaffolded earlier,
   `.convoy/judge.lock` shows as untracked while a gate runs. The lock orders judges and does not

@@ -72,7 +72,7 @@ policy.
 ## Release discipline
 
 Pre-1.0, changes accumulate under `[Unreleased]` and are cut into tagged
-releases. **A shipped change is not done until a tagged release serves it** —
+releases. **A shipped change is not done until its release is cut and tagged** —
 an install takes the default branch tip (which may be an old version), and an
 existing install refreshes only on a version change. Unreleased work reaches
 new installs under the old version label, and reaches existing installs not
@@ -92,9 +92,8 @@ Cadence: cut a release after each backlog build round (a batch of
    where the rule said 0.9.1); precedent ("recent bumps were minor") is not
    the test.
 1. Move `[Unreleased]` into a new `## [0.x.y] - <date>` section in
-   `CHANGELOG.md`.
-1a. The release section's framing paragraph is written at cut time, once its
-   contents are final, and is never carried under `[Unreleased]`.
+   `CHANGELOG.md`. The release section's framing paragraph is written at this
+   point, once its contents are final, and is never carried under `[Unreleased]`.
 2. Bump the version in all FOUR locations. Three are hand-edited —
    `pyproject.toml`, `.claude-plugin/plugin.json`, and `__version__` in
    `src/convoy/__init__.py` (`.claude-plugin/marketplace.json` carries no version
@@ -114,20 +113,25 @@ Cadence: cut a release after each backlog build round (a batch of
    section as the body:
    `gh release create v0.x.y --verify-tag --title 'convoy 0.x.y' --notes-file <section>`.
    The release is what the repository's own front page advertises; new installs
-   pull the default branch tip (which carries the old version until the tag exists),
-   so the front page's visibility is distinct from marketplace delivery.
+   pull the default branch tip (which carries the old version until the release PR
+   merges), so the front page's visibility is distinct from marketplace delivery.
 
-**Why the tag is the step that matters.** A version change is what triggers an
-existing install to refresh; an untagged release goes unnoticed by installed
-consumers no matter how correct the merge was. That is not hypothetical: `0.2.0`
-was bumped, changelogged and merged while consumers went on being served `0.1.2`
-for ten days. The mechanized half of this checklist held and the unmechanized
-half did not, which is why the `release-tag` workflow now checks daily that
-`main`'s version has **both** a matching tag and a published release — scheduled
-rather than push-triggered, since both are created *after* the merge and a push
-gate would fail every release by construction. It checks the two separately: a tag
-with no release page is exactly the state five versions sat in, so one passing must
-not vouch for the other.
+**Why the tag is the step that matters.** On the reading this section adopts, the
+version bump reaching the default branch is what refreshes an existing install; the
+tag and the release are what make that version label checkable, by people and by the
+`release-tag` workflow, and a bump that is never tagged is a label nothing verifies.
+One observation fits this reading and is not proof of it: an existing install's
+cache sat at the `v0.15.0` tag (`f23b297`) while the marketplace checkout of the
+default branch had moved on to `4c991ef`, with no version change between them. The
+first miss of this kind was `0.2.0`, bumped, changelogged and merged but not tagged
+for ten days, with consumers reported to be on `0.1.2`; that report predates the
+reading above, and nothing here relies on it. The mechanized half of this
+checklist held and the unmechanized half did not, which is why the `release-tag`
+workflow now checks daily that `main`'s version has **both** a matching tag and a
+published release — scheduled rather than push-triggered, since both are created
+*after* the merge and a push gate would fail every release by construction. It
+checks the two separately: a tag with no release page is exactly the state five
+versions sat in, so one passing must not vouch for the other.
 
 ## The feedback loop
 

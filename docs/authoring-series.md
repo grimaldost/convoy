@@ -87,16 +87,14 @@ What the gate framework adds over running the same commands by hand:
 
 ## Gate granularity
 
-Run the gate at the smallest unit the workflow has. The possibilities are per-PR,
-per-subagent, or per-phase deployment, depending on how your work is organized; the
-hook's `SubagentStop` judge embodies the per-subagent shape. A repair brief that names
-a single PR's failures outperforms one that names several.
+Run the gate at the smallest unit the workflow has (per PR, per subagent; the hook's
+`SubagentStop` judge has that shape); a repair brief that names one PR's reds beats one
+that names five.
 
-This doctrine stems from measurement of one scenario: CONV-B53 (docs/backlog.md)
-tested a per-PR gate against a single defect class with a bounded repair loop. A
-second wave is pending, with a second defect class measured. The per-PR results and
-per-session comparisons are recorded in CONV-B53; this section states only the
-gate-choice principle, not the measurement endpoints.
+The limits: this rests on one measured wave, with one defect class, in CONV-B53
+(`docs/backlog.md`). Iteration 2 is pending and needs a held-out group with a second
+defect class before it can claim more. The figures and the arms stay in CONV-B53; this
+section states only the gate-choice principle.
 
 ## The one-PR-series pattern
 
