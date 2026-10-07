@@ -13,6 +13,18 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **A gate's checks are compared with the hook timeout.** `hooks/hooks.json` gives both hook events
+  1800 s, and a gate runs its checks one after another, each bounded by `timeout_seconds`, so a
+  gate whose checks can together outlast 1800 s is killed by Claude Code without a word.
+  `convoy gate --init` now lowers `timeout_seconds` until the scaffolded checks fit (a project
+  with six checks or fewer keeps the default 300 s, so today's scaffolds are unchanged), and
+  `convoy validate` on a gate-only file prints a warning on stderr when `checks x timeout_seconds`
+  exceeds the hook timeout. The exit code stays 0 and stdout stays `ok (gate-only)`. The number
+  is the package constant `HOOK_TIMEOUT_SECONDS`, and a manifest test pins it to
+  `hooks/hooks.json`.
+
 ### Changed
 
 - **The fallback tier table names Opus 5.5 for `strong`.** `DEFAULT_TIER_MODELS['strong']`

@@ -7,11 +7,21 @@ import pytest
 from typer.testing import CliRunner
 
 import convoy.interface.cli as cli
-from convoy.core.spec import load_gate_spec
+import convoy.interface.gate_scaffold as gate_scaffold
+from convoy.core.spec import Check, load_gate_spec
 from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK, EXIT_USAGE
 from convoy.interface.fs_probe import isolation_result
-from convoy.interface.gate_scaffold import GateScaffoldError, detect_toolchain, scaffold_gate
-from convoy.interface.gate_service import find_gate_spec, load_gate_spec_file
+from convoy.interface.gate_scaffold import (
+    GateScaffoldError,
+    Toolchain,
+    detect_toolchain,
+    scaffold_gate,
+)
+from convoy.interface.gate_service import (
+    HOOK_TIMEOUT_SECONDS,
+    find_gate_spec,
+    load_gate_spec_file,
+)
 
 runner = CliRunner()
 
@@ -104,6 +114,30 @@ def test_scaffold_writes_a_loadable_project_spec_and_the_gitignore(tmp_path: Pat
     assert spec.id == 'proj'
     assert [check.name for check in spec.checks] == ['lock', 'lint', 'format', 'types', 'tests']
     assert find_gate_spec(root / 'tests', {}) == spec_path
+
+
+def test_scaffold_of_a_default_project_keeps_the_default_timeout(tmp_path: Path) -> None:
+    root = _python_project(tmp_path / 'proj')
+    scaffold_gate(root, {})
+    assert 'timeout_seconds' not in _spec_text(root)
+    assert load_gate_spec(_spec_text(root)).timeout_seconds == 300
+
+
+def test_scaffold_fits_a_wide_gate_inside_the_hook_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """n checks at the default 300 s would outlast the hook: 7 x 300 = 2100 > 1800."""
+    root = tmp_path / 'proj'
+    root.mkdir()
+    wide = Toolchain(
+        'python',
+        tuple(Check(name=f'c{i}', run='exit 0', blocking=True) for i in range(7)),
+    )
+    monkeypatch.setattr(gate_scaffold, 'detect_toolchain', lambda _root: wide)
+    scaffold_gate(root, {})
+    spec = load_gate_spec(_spec_text(root))
+    assert len(spec.checks) == 7
+    assert len(spec.checks) * spec.timeout_seconds <= HOOK_TIMEOUT_SECONDS
 
 
 def test_scaffold_header_names_the_next_step(tmp_path: Path) -> None:

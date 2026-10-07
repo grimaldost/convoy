@@ -241,6 +241,45 @@ def test_validate_accepts_a_gate_only_file(tmp_path: Path, monkeypatch: pytest.M
     assert 'ok (gate-only)' in result.output
 
 
+def _wide_gate_toml(checks: int, timeout_seconds: int) -> str:
+    check = '[[checks]]\nname = "c{i}"\nrun = "python -c pass"\nblocking = true\n\n'
+    return (
+        '[series]\nid = "gate-only"\n\n'
+        f'[governance]\ntimeout_seconds = {timeout_seconds}\n\n'
+        + ''.join(check.format(i=i) for i in range(checks))
+    )
+
+
+def test_validate_warns_when_a_gate_can_outlast_the_hook_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """7 checks x 300 s = 2100 s: Claude Code would kill the hook silently at 1800 s."""
+    workspace, _, _ = _layout(tmp_path)
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_wide_gate_toml(7, 300))
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert result.stdout.strip() == 'ok (gate-only)'
+    assert '1800' in result.stderr
+    assert '2100' in result.stderr
+
+
+def test_validate_stays_quiet_when_a_gate_fits_the_hook_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, _, _ = _layout(tmp_path)
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_wide_gate_toml(6, 300))  # exactly 1800: at the limit, not over
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert result.stdout.strip() == 'ok (gate-only)'
+    assert result.stderr == ''
+
+
 def test_validate_gate_only_refuses_a_selection_with_no_blocking_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

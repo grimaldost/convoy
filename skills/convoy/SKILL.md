@@ -377,8 +377,8 @@ the messenger reuses that verdict and runs the gate itself only when no judge re
 exists for that agent and session, or the record is older than an hour. The hook's
 timeout is 1800 s; each check is bounded by the spec's `timeout_seconds`, and a gate
 whose checks together exceed the hook timeout is killed by Claude Code — the one path on
-which nothing is said, so keep the sum under the timeout. Plugin hooks live under the
-config directory, and convoy's own spawns run under config isolation, so the plugin's
+which nothing is said, so keep the sum under the timeout (`convoy validate` warns when it
+is not). Plugin hooks live under the config directory, and convoy's own spawns run under config isolation, so the plugin's
 hooks never fire inside a governed run; a hook a project wires in its own
 `.claude/settings.json` survives isolation and would fire inside one — the lock
 refusal above is what keeps it from gating a driven tree.

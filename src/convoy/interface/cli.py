@@ -26,6 +26,7 @@ from convoy.interface.drivers.headless import (
 from convoy.interface.fs_probe import isolation_result
 from convoy.interface.gate_scaffold import GateScaffoldError, scaffold_gate
 from convoy.interface.gate_service import (
+    HOOK_TIMEOUT_SECONDS,
     advisory_only_detail,
     find_gate_spec,
     gate_brief_envelope,
@@ -205,6 +206,15 @@ def _validate_gate_only_or_exit(
         ]
         typer.echo(format_problems(problems), err=True)
         raise typer.Exit(EXIT_USAGE)
+    worst_case = len(spec.checks) * spec.timeout_seconds
+    if worst_case > HOOK_TIMEOUT_SECONDS:
+        typer.echo(
+            f'warning: {len(spec.checks)} checks x timeout_seconds = {spec.timeout_seconds} '
+            f'is {worst_case} s, over the hook timeout of {HOOK_TIMEOUT_SECONDS} s; Claude Code '
+            'kills a hook that outlasts it without a word. Lower timeout_seconds or split '
+            'the checks.',
+            err=True,
+        )
     typer.echo('ok (gate-only)')
 
 

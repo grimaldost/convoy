@@ -76,6 +76,14 @@ TRUST_FILE = 'hook-trust.toml'
 TRUSTED_ROOTS_ENV = 'CONVOY_TRUSTED_ROOTS'
 
 
+# The timeout ``hooks/hooks.json`` declares for both hook events, in seconds. Claude Code kills a
+# hook that outlasts it without a word, and a gate runs its checks one after another, each
+# bounded by the spec's ``timeout_seconds`` — so ``len(checks) * timeout_seconds`` must stay
+# under this. The JSON file sits outside the package, so the number lives here and
+# ``tests/test_manifest.py`` pins the two together.
+HOOK_TIMEOUT_SECONDS = 1800
+
+
 class GateSpecNotFoundError(SpecError):
     """No series file was given and no project gate spec could be found."""
 
