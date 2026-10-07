@@ -28,6 +28,11 @@ _CREATE_NEW = os.O_CREAT | os.O_EXCL | os.O_WRONLY
 _UNLINK_ATTEMPTS = 100
 _UNLINK_RETRY_SECONDS = 0.01
 
+# A lock file with no readable pid, or a ``.break`` file (which records none), has only its
+# age to say whether its owner is gone. Both are alive for milliseconds in a healthy run, so
+# a few seconds is long past any process that is still working on them.
+_ORPHAN_AFTER_SECONDS = 10.0
+
 
 class WorkspaceBusyError(Exception):
     """Another run already holds the workspace lock."""
@@ -148,7 +153,8 @@ def _unlink(path: Path) -> None:
 
     A failure that outlasts the retries is left in place rather than raised from a
     ``finally``: the file then names a process that is about to exit, and the next waiter
-    removes it as stale.
+    removes it as stale. That holds for a lock file, which records a pid. A ``.break`` file
+    records none, and :func:`_remove_if_stale` removes it by its age.
     """
     for _ in range(_UNLINK_ATTEMPTS):
         try:
@@ -159,26 +165,52 @@ def _unlink(path: Path) -> None:
             return
 
 
-def _remove_if_stale(path: Path) -> bool:
-    """Remove the lock at *path* when the process it records is gone; return whether it did.
+def _seconds_old(path: Path) -> float | None:
+    try:
+        return time.time() - path.stat().st_mtime
+    except OSError:
+        return None
 
-    Stale means what :func:`lock_ownership` means by it: a recorded pid that
-    :func:`process_is_alive` says no longer exists. An empty or unreadable lock is a holder
-    caught between creating the file and writing its pid, never stale. Two waiters can find
-    the same stale lock, so the removal happens under ``<name>.break``, taken with the same
-    ``O_EXCL`` create, and re-reads the pid there: a waiter that arrives after another has
-    already replaced the lock reads a different pid and leaves the new holder alone.
+
+def _is_orphaned(path: Path) -> bool:
+    """Whether the process that made *path* is gone, as far as the file can say.
+
+    A recorded pid is judged as :func:`lock_ownership` judges one: stale when
+    :func:`process_is_alive` says no such process, and never when it is this process. A
+    file with no readable pid is a holder caught between creating it and writing the pid
+    while it is new, and orphaned once it is older than :data:`_ORPHAN_AFTER_SECONDS`: the
+    holder was killed in that window and nothing else will ever fill the file in.
     """
     pid = _recorded_pid(path)
-    if pid is None or pid == os.getpid() or process_is_alive(pid):
+    if pid is None:
+        age = _seconds_old(path)
+        return age is not None and age > _ORPHAN_AFTER_SECONDS
+    return pid != os.getpid() and not process_is_alive(pid)
+
+
+def _remove_if_stale(path: Path) -> bool:
+    """Remove the lock at *path* when its holder is gone; return whether it did.
+
+    Two waiters can find the same stale lock, so the removal happens under ``<name>.break``,
+    taken with the same ``O_EXCL`` create, and looks again there: a waiter that arrives
+    after another has already replaced the lock sees a different pid and leaves the new
+    holder alone. The break file records no pid, so one that outlives its waiter (killed
+    between the create and the cleanup) is told by its age and removed, or the lock it
+    guards could never be taken over again.
+    """
+    seen = _recorded_pid(path)
+    if not _is_orphaned(path):
         return False
     breaker = path.with_name(path.name + '.break')
+    age = _seconds_old(breaker)
+    if age is not None and age > _ORPHAN_AFTER_SECONDS:
+        _unlink(breaker)
     try:
         os.close(os.open(breaker, _CREATE_NEW))
     except OSError:
         return False  # another waiter is removing it; the next poll sees the result
     try:
-        if _recorded_pid(path) != pid:
+        if _recorded_pid(path) != seen or not _is_orphaned(path):
             return False
         path.unlink()
     except OSError:
@@ -187,6 +219,22 @@ def _remove_if_stale(path: Path) -> bool:
         return True
     finally:
         _unlink(breaker)
+
+
+def _busy_message(path: Path, wait_seconds: float) -> str:
+    """Why a judge lock stayed taken for the whole wait, and what removes it."""
+    owner = _recorded_pid(path)
+    breaker = path.with_name(path.name + '.break')
+    if owner is not None and owner != os.getpid() and not process_is_alive(owner):
+        return (
+            f'{path} was left by pid {owner}, which is gone, and could not be taken over '
+            f'within {wait_seconds:g} s; remove {path} and {breaker} by hand'
+        )
+    holder = f'pid {owner}' if owner is not None else 'another process'
+    return (
+        f'{path} is held by {holder}; waited {wait_seconds:g} s. If no convoy hook is '
+        f'running in this tree, remove {path} (and {breaker}, if it exists) by hand'
+    )
 
 
 @contextmanager
@@ -202,8 +250,9 @@ def judge_lock(path: Path, *, wait_seconds: float, poll_seconds: float) -> Itera
     The file is created with ``O_CREAT | O_EXCL`` and records the holder's pid. A waiter
     tries again every *poll_seconds*; once *wait_seconds* have passed it raises
     :class:`JudgeBusyError`, naming the file and the pid it records. A lock whose recorded
-    process is gone (a firing killed at the hook timeout never reaches its ``finally``) is
-    removed and taken. The file is removed on the way out, including when the block raises.
+    process is gone (a firing killed at the hook timeout never reaches its ``finally``), or
+    that records none and has sat for seconds (killed before it wrote one), is removed and
+    taken. The file is removed on the way out, including when the block raises.
     It is advisory: it orders the processes that take it and constrains nothing else.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -215,12 +264,7 @@ def judge_lock(path: Path, *, wait_seconds: float, poll_seconds: float) -> Itera
             if _remove_if_stale(path):
                 continue
             if time.monotonic() >= deadline:
-                owner = _recorded_pid(path)
-                holder = f'pid {owner}' if owner is not None else 'another process'
-                raise JudgeBusyError(
-                    f'{path} is held by {holder}; waited {wait_seconds:g} s. If no convoy '
-                    'hook is running in this tree, remove the file by hand'
-                ) from None
+                raise JudgeBusyError(_busy_message(path, wait_seconds)) from None
         except PermissionError:
             # Windows answers a create that races a delete with "access denied". A
             # directory that is really not writable keeps answering it, and that error is

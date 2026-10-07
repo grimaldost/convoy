@@ -40,7 +40,10 @@ Firings that gate one tree take turns. Several subagents stopping at once each f
 judge, and two suites running in one tree share its caches and build output. A firing
 that runs a gate holds ``.convoy/judge.lock`` from just before the gate until its log line
 is written; another waits up to :data:`JUDGE_WAIT_SECONDS`, then is answered as a gate
-that could not run. The lock orders judges. It does not make concurrent writers safe:
+that could not run. The wait is also bounded by what the gate needs: a firing waits only
+as long as leaves its own gate's worst case (checks x ``timeout_seconds``) inside the hook
+timeout, so a spec whose worst case fills the timeout does not wait at all. The lock orders
+judges. It does not make concurrent writers safe:
 subagents that edit one tree at the same time need a tree each (a worktree per agent),
 because each gate judges whatever the others have half-written.
 
@@ -112,11 +115,15 @@ HOOK_LOG_RELPATH = Path('.convoy') / 'hook.log'
 # The lock a firing holds, next to the log, while it gates the tree and writes its line.
 JUDGE_LOCK_NAME = 'judge.lock'
 
-# How long a firing waits for another firing's gate in the same tree before it gives up
-# loudly, and how often it looks. A third of the hook timeout leaves the waiter two thirds
-# for its own gate. Read when a firing starts waiting, so a test can shorten them.
+# The longest a firing waits for another firing's gate in the same tree before it gives up
+# loudly, and how often it looks. Read when a firing starts waiting, so a test can shorten
+# them. What a given firing actually waits is :func:`judge_wait_seconds`.
 JUDGE_WAIT_SECONDS = HOOK_TIMEOUT_SECONDS / 3
 JUDGE_POLL_SECONDS = 1.0
+
+# Held back from the hook timeout when a waiter plans its wait: the hook's own start-up (uv
+# resolving the environment) and the log append are not part of the gate's worst case.
+HOOK_MARGIN_SECONDS = 30
 
 # Every append holds ``hook.log.lock`` for the milliseconds it takes, so the line of a
 # firing that gave up waiting is written whole beside the holder's.
@@ -285,12 +292,25 @@ def judge_lock_path(spec_path: Path, cwd: Path) -> Path:
     return log_path_for(spec_path, cwd).parent / JUDGE_LOCK_NAME
 
 
-# Called with the judge lock's path just before a gate runs. :func:`decide` alone takes no
-# lock; :func:`run_hook` passes one that takes it and keeps it until the log line is written.
-type Hold = Callable[[Path], None]
+def judge_wait_seconds(worst_case: float) -> float:
+    """How long a firing may wait for the judge lock, given its own gate's worst case.
+
+    The wait and the gate run one after the other under one hook timeout, and Claude Code
+    kills a hook that outlasts it without a word. So the wait is the lesser of
+    :data:`JUDGE_WAIT_SECONDS` and what the timeout leaves after the gate's worst case and
+    :data:`HOOK_MARGIN_SECONDS`: zero when the gate alone fills the timeout.
+    """
+    room = HOOK_TIMEOUT_SECONDS - HOOK_MARGIN_SECONDS - worst_case
+    return max(0.0, min(JUDGE_WAIT_SECONDS, room))
 
 
-def _unheld(_lock: Path) -> None:
+# Called with the judge lock's path and the gate's worst-case seconds just before a gate
+# runs. :func:`decide` alone takes no lock; :func:`run_hook` passes one that takes it and
+# keeps it until the log line is written.
+type Hold = Callable[[Path, float], None]
+
+
+def _unheld(_lock: Path, _worst_case: float) -> None:
     return None
 
 
@@ -349,9 +369,10 @@ def _gate(
     """
     started = time.monotonic()
     try:
-        hold(judge_lock_path(spec_path, workspace))
-        started = time.monotonic()
+        # Loaded before the lock is taken: how long a firing may wait depends on its gate.
         spec = load_gate_spec_file(spec_path, env, root=workspace)
+        hold(judge_lock_path(spec_path, workspace), len(spec.checks) * spec.timeout_seconds)
+        started = time.monotonic()
         outcome = run_gate(spec, workspace, phases)
     except (OSError, UnicodeDecodeError, SpecError, GateUsageError, JudgeBusyError) as exc:
         elapsed = round((time.monotonic() - started) * 1000)
@@ -642,7 +663,7 @@ def run_hook(raw: bytes, env: Mapping[str, str]) -> int:
 
     A firing that runs a gate holds the tree's judge lock from just before the gate until
     its log line is written, so two firings never gate one tree at once. One that waits
-    out :data:`JUDGE_WAIT_SECONDS` is answered as a gate that could not run.
+    out :func:`judge_wait_seconds` is answered as a gate that could not run.
     """
     payload = parse_event(raw)
     if isinstance(payload, str):
@@ -651,9 +672,13 @@ def run_hook(raw: bytes, env: Mapping[str, str]) -> int:
 
     with ExitStack() as held:
 
-        def hold(lock: Path) -> None:
+        def hold(lock: Path, worst_case: float) -> None:
             held.enter_context(
-                judge_lock(lock, wait_seconds=JUDGE_WAIT_SECONDS, poll_seconds=JUDGE_POLL_SECONDS)
+                judge_lock(
+                    lock,
+                    wait_seconds=judge_wait_seconds(worst_case),
+                    poll_seconds=JUDGE_POLL_SECONDS,
+                )
             )
 
         result = decide(payload, env, hold)

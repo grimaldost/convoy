@@ -200,8 +200,8 @@ def test_a_judge_lock_left_by_a_dead_process_is_taken_over(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize('contents', ['', 'not-a-pid'])
-def test_a_judge_lock_naming_no_pid_is_not_taken_over(tmp_path: Path, contents: str) -> None:
-    """Empty is a holder caught between O_CREAT and its write: busy, never stale."""
+def test_a_fresh_judge_lock_naming_no_pid_is_not_taken_over(tmp_path: Path, contents: str) -> None:
+    """Empty and new is a holder caught between O_CREAT and its write: busy, not stale."""
     path = tmp_path / 'judge.lock'
     path.write_text(contents, encoding='utf-8')
 
@@ -209,3 +209,64 @@ def test_a_judge_lock_naming_no_pid_is_not_taken_over(tmp_path: Path, contents: 
         pass
 
     assert path.read_text(encoding='utf-8') == contents
+
+
+def _age(path: Path, seconds: float) -> None:
+    """Make *path* look *seconds* old, as a file left by a process that died."""
+    then = time.time() - seconds
+    os.utime(path, (then, then))
+
+
+def test_a_judge_lock_naming_no_pid_is_taken_over_once_it_has_aged(tmp_path: Path) -> None:
+    """A holder killed between O_CREAT and the pid write leaves an empty lock for good."""
+    path = tmp_path / 'judge.lock'
+    path.write_text('', encoding='utf-8')
+    _age(path, 3600)
+
+    with judge_lock(path, wait_seconds=0, poll_seconds=0.01):
+        assert path.read_text(encoding='utf-8') == str(os.getpid())
+
+    assert not list(tmp_path.iterdir()), 'the takeover left a file behind'
+
+
+def test_a_break_file_left_by_a_killed_waiter_does_not_jam_the_takeover(tmp_path: Path) -> None:
+    """The break file records no pid, so only its age can say its waiter is gone."""
+    path = tmp_path / 'judge.lock'
+    breaker = tmp_path / 'judge.lock.break'
+    path.write_text(str(_dead_pid()), encoding='utf-8')
+    breaker.write_text('', encoding='utf-8')
+    _age(breaker, 3600)
+
+    with judge_lock(path, wait_seconds=0, poll_seconds=0.01):
+        assert path.read_text(encoding='utf-8') == str(os.getpid())
+
+    assert not list(tmp_path.iterdir()), 'the takeover left a file behind'
+
+
+def test_a_fresh_break_file_means_another_waiter_is_taking_over(tmp_path: Path) -> None:
+    path = tmp_path / 'judge.lock'
+    breaker = tmp_path / 'judge.lock.break'
+    path.write_text(str(_dead_pid()), encoding='utf-8')
+    breaker.write_text('', encoding='utf-8')
+
+    with pytest.raises(JudgeBusyError), judge_lock(path, wait_seconds=0.05, poll_seconds=0.01):
+        pass
+
+    assert breaker.exists(), 'a waiter removed the break file of one still at work'
+
+
+def test_the_busy_message_for_a_dead_holder_names_both_files(tmp_path: Path) -> None:
+    """When the takeover cannot proceed, the remedy covers the file the pid does not explain."""
+    path = tmp_path / 'judge.lock'
+    path.write_text(str(_dead_pid()), encoding='utf-8')
+    (tmp_path / 'judge.lock.break').write_text('', encoding='utf-8')
+
+    with (
+        pytest.raises(JudgeBusyError) as caught,
+        judge_lock(path, wait_seconds=0.05, poll_seconds=0.01),
+    ):
+        pass
+
+    message = str(caught.value)
+    assert 'is gone' in message and 'held by pid' not in message
+    assert 'judge.lock.break' in message

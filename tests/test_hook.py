@@ -960,3 +960,41 @@ def test_a_scaffolded_tree_stays_clean_while_a_judge_holds_its_lock(
 def test_the_judge_waits_a_third_of_the_hook_timeout() -> None:
     """The docs state the bound as 600 s; this keeps the number and the constant together."""
     assert hook_module.JUDGE_WAIT_SECONDS == hook_module.HOOK_TIMEOUT_SECONDS / 3 == 600
+
+
+@pytest.mark.parametrize('worst_case', [0, 1, 300, 1200, 1500, 1769, 1770, 1800, 5400])
+def test_the_wait_and_the_gate_together_fit_the_hook_timeout(worst_case: int) -> None:
+    """A waiter that gets the lock after the whole wait still has its gate's worst case left."""
+    wait = hook_module.judge_wait_seconds(worst_case)
+    assert 0 <= wait <= hook_module.JUDGE_WAIT_SECONDS
+    if worst_case <= hook_module.HOOK_TIMEOUT_SECONDS - hook_module.HOOK_MARGIN_SECONDS:
+        assert (
+            wait + worst_case <= hook_module.HOOK_TIMEOUT_SECONDS - hook_module.HOOK_MARGIN_SECONDS
+        )
+    else:
+        assert wait == 0
+
+
+def test_a_gate_that_fills_the_hook_timeout_does_not_wait_for_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Waiting any time first would let the firing outlast the hook timeout, in silence."""
+    root = tmp_path / 'proj'
+    spec = _project(root, _check('ok', _OK))
+    governance = f'[governance]\ntimeout_seconds = {hook_module.HOOK_TIMEOUT_SECONDS}\n\n'
+    spec.write_text(
+        spec.read_text(encoding='utf-8').replace('[[checks]]', governance + '[[checks]]', 1),
+        encoding='utf-8',
+    )
+    env = _trusted(tmp_path, root)
+    monkeypatch.setattr(hook_module, 'JUDGE_WAIT_SECONDS', 30.0)
+    lock = root / '.convoy' / hook_module.JUDGE_LOCK_NAME
+    with judge_lock(lock, wait_seconds=0, poll_seconds=0.01):
+        started = time.monotonic()
+        code = run_hook(_writer_stop(tmp_path, root, 'agent-a'), env)
+        assert time.monotonic() - started < 5.0, (
+            'the firing waited though its gate fills the timeout'
+        )
+    assert code == HOOK_EXIT_FEEDBACK
+    assert 'judge.lock' in capsys.readouterr().err
+    assert _log_lines(root)[0]['outcome'] == 'usage'
