@@ -390,6 +390,13 @@ hooks never fire inside a governed run; a hook a project wires in its own
 `.claude/settings.json` survives isolation and would fire inside one — the lock
 refusal above is what keeps it from gating a driven tree.
 
+Firings that gate one tree take turns: each holds `.convoy/judge.lock` from just before
+its gate until its log line is written, and one that waits out 600 s is answered as a gate
+that could not run (exit 2, recorded as `usage`); a lock left by a killed firing is taken
+over once the process it names is gone. The lock orders judges. It does not make
+concurrent writers safe: subagents that edit at the same time need a tree each (a worktree
+per agent), because each gate judges whatever the others have half-written.
+
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared
 `repair_hint` — in the exact form convoy appends to its own fix spawn's brief, so an

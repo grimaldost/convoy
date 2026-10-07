@@ -53,6 +53,11 @@ _PLACEHOLDER = Check(
 
 _ORACLE_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_-]*$')
 
+# What the hook writes in .convoy/: hook.log, the hook.log.lock each append holds, the
+# judge.lock a gating firing holds, and the <lock>.break file taken while a stale lock is
+# removed. The two locks exist only while held, but a gate runs while judge.lock does.
+_HOOK_IGNORE = 'hook.log*\njudge.lock*\n'
+
 _ORACLE_TEMPLATE = '''"""Held-out oracle `{name}` for {project}.
 
 Runs with the scored workspace as its working directory, out of the implementer's reach.
@@ -211,7 +216,7 @@ def scaffold_gate(
     """Write the project gate spec under *root* and return the paths created.
 
     ``.convoy/gate.toml`` from :func:`detect_toolchain`, plus ``.convoy/.gitignore``
-    (ignoring the hook's ``hook.log``) when none exists. With *independent*, also a
+    (ignoring the files the hook writes there) when none exists. With *independent*, also a
     placeholder oracle ``<name>.py`` under the project's oracles directory
     (``CONVOY_ORACLES`` from *env*, else the default) and a blocking independent check
     naming it through ``${CONVOY_ORACLES}``, so the spec stays portable. Refuses to
@@ -254,7 +259,7 @@ def scaffold_gate(
     )
     written = [spec_path]
     if not ignore_path.exists():
-        ignore_path.write_text('hook.log\n', encoding='utf-8')
+        ignore_path.write_text(_HOOK_IGNORE, encoding='utf-8')
         written.append(ignore_path)
     if oracle_path is not None:
         oracle_path.parent.mkdir(parents=True, exist_ok=True)

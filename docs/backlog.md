@@ -1032,11 +1032,24 @@ is not atomic across processes on Windows; an interleaved line degrades to a re-
 a false green. Review S12, second half; the first half (refuse a workspace a `convoy run`
 holds the lock on) shipped in 0.12.0.
 
-**Change.** An advisory lock around the gate run and the log append — `workspace_lock`
-already has the primitive — with a bounded wait and a loud exit 2 on contention, so two
-judges never grade one tree at once and the messenger never reads a torn line.
+**Change.** Two cases, two remedies. Concurrent *judges* reading one tree: an advisory lock
+of the hook's own around the gate run and the log append, with a bounded wait and a loud
+exit 2 on contention, so two judges never grade one tree at once and no two log lines
+interleave. It is not `workspace_lock`, which has no wait loop, is the run lock that
+`status`, `unlock` and `clean` read, and lives in `.git`, which a tree outside a repository
+lacks and a worktree has as a file. Concurrent *writers* in one tree are a different case,
+and no lock fixes it: each subagent's gate judges whatever the others have half-written,
+so a green can belong to a neighbour's edit. Writers need separation, a worktree per agent,
+which the operator arranges; the lock only orders the judging.
 
-**Effort** S · **Source** [review]
+**Status.** Built on the 2026-10-06 maintenance branch, unreleased (T61c). A firing that
+runs a gate holds `.convoy/judge.lock` until its log line is written, and every append
+holds `.convoy/hook.log.lock`. One that waits out 600 s is a gate that could not run (exit
+2, outcome `usage`), and a lock naming a process that is gone is taken over. The scaffold's
+`.convoy/.gitignore` covers both locks. The writers case is documented in the skill, not
+built.
+
+**Effort** S · **Source** [review] · **Row** T61c
 
 ## Later
 

@@ -3,12 +3,15 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from convoy.interface.workspace_lock import (
+    JudgeBusyError,
     WorkspaceBusyError,
+    judge_lock,
     lock_owner_pid,
     lock_ownership,
     lock_path,
@@ -118,3 +121,91 @@ def test_lock_ownership_is_stale_once_the_owner_is_gone(tmp_path: Path) -> None:
     ownership = lock_ownership(ws)
     assert ownership.pid == dead_pid
     assert ownership.stale is True
+
+
+# --- judge_lock: the hook's advisory lock, with a bounded wait ------------------------------
+#
+# A second, separately named lock. A held one must never read as a run lock, and a run lock
+# must never stop a judge from taking it: the run lock means "a convoy run is driving this
+# tree", which the hook refuses on its own, before it ever waits for a judge.
+
+
+def test_judge_lock_records_the_holder_and_is_gone_after_release(tmp_path: Path) -> None:
+    path = tmp_path / '.convoy' / 'judge.lock'
+
+    with judge_lock(path, wait_seconds=0, poll_seconds=0.01):
+        assert path.read_text(encoding='utf-8') == str(os.getpid())
+
+    assert not path.exists()
+
+
+def test_judge_lock_is_released_after_an_exception_inside_the_block(tmp_path: Path) -> None:
+    path = tmp_path / 'judge.lock'
+
+    with pytest.raises(ValueError), judge_lock(path, wait_seconds=0, poll_seconds=0.01):
+        raise ValueError('boom')
+
+    assert not path.exists()
+
+
+def test_a_second_judge_waits_out_the_bound_then_raises_busy(tmp_path: Path) -> None:
+    path = tmp_path / 'judge.lock'
+
+    with judge_lock(path, wait_seconds=0, poll_seconds=0.01):
+        started = time.monotonic()
+        with (
+            pytest.raises(JudgeBusyError, match=str(os.getpid())),
+            judge_lock(path, wait_seconds=0.2, poll_seconds=0.02),
+        ):
+            pass
+        assert time.monotonic() - started >= 0.2
+        assert path.exists(), 'the waiter removed a lock it never held'
+
+    assert not path.exists()
+
+
+@pytest.mark.parametrize('directory', ['.convoy', '.git'])
+def test_a_held_judge_lock_is_not_a_run_lock(tmp_path: Path, directory: str) -> None:
+    ws = tmp_path / 'ws'
+    (ws / '.git').mkdir(parents=True)
+
+    with judge_lock(ws / directory / 'judge.lock', wait_seconds=0, poll_seconds=0.01):
+        assert lock_ownership(ws).pid is None
+        assert not lock_path(ws).exists()
+        with workspace_lock(ws):
+            assert lock_owner_pid(ws) == os.getpid()
+
+
+def test_a_held_run_lock_does_not_stop_a_judge(tmp_path: Path) -> None:
+    ws = tmp_path / 'ws'
+    ws.mkdir()
+
+    with (
+        workspace_lock(ws),
+        judge_lock(ws / '.convoy' / 'judge.lock', wait_seconds=0, poll_seconds=0.01),
+    ):
+        pass
+
+
+def test_a_judge_lock_left_by_a_dead_process_is_taken_over(tmp_path: Path) -> None:
+    """A firing Claude Code killed at its timeout never ran its ``finally``."""
+    path = tmp_path / 'judge.lock'
+    path.write_text(str(_dead_pid()), encoding='utf-8')
+
+    with judge_lock(path, wait_seconds=0, poll_seconds=0.01):
+        assert path.read_text(encoding='utf-8') == str(os.getpid())
+
+    assert not path.exists()
+    assert not list(tmp_path.iterdir()), 'the takeover left a file behind'
+
+
+@pytest.mark.parametrize('contents', ['', 'not-a-pid'])
+def test_a_judge_lock_naming_no_pid_is_not_taken_over(tmp_path: Path, contents: str) -> None:
+    """Empty is a holder caught between O_CREAT and its write: busy, never stale."""
+    path = tmp_path / 'judge.lock'
+    path.write_text(contents, encoding='utf-8')
+
+    with pytest.raises(JudgeBusyError), judge_lock(path, wait_seconds=0.05, poll_seconds=0.01):
+        pass
+
+    assert path.read_text(encoding='utf-8') == contents

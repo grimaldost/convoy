@@ -109,7 +109,10 @@ def test_scaffold_writes_a_loadable_project_spec_and_the_gitignore(tmp_path: Pat
     written = scaffold_gate(root, {})
     spec_path = root / '.convoy' / 'gate.toml'
     assert set(written) == {spec_path, root / '.convoy' / '.gitignore'}
-    assert (root / '.convoy' / '.gitignore').read_text(encoding='utf-8') == 'hook.log\n'
+    # Everything the hook writes in .convoy/: its log, the log's append lock, the judge lock,
+    # and the `.break` file either lock takes while it removes a stale holder.
+    gitignore = (root / '.convoy' / '.gitignore').read_text(encoding='utf-8')
+    assert gitignore == 'hook.log*\njudge.lock*\n'
     spec = load_gate_spec(_spec_text(root))
     assert spec.id == 'proj'
     assert [check.name for check in spec.checks] == ['lock', 'lint', 'format', 'types', 'tests']

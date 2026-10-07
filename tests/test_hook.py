@@ -9,7 +9,11 @@ touches the real home directory.
 
 import json
 import re
+import subprocess
 import sys
+import threading
+import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,18 +22,21 @@ import pytest
 from typer.testing import CliRunner
 
 import convoy.interface.cli as cli
+import convoy.interface.hook as hook_module
 from convoy import __version__
+from convoy.interface.gate_scaffold import scaffold_gate
 from convoy.interface.gate_service import trust_project
 from convoy.interface.hook import (
     HOOK_EXIT_FEEDBACK,
     HOOK_EXIT_SILENT,
+    append_log,
     decide,
     parse_event,
     parse_phase_markers,
     read_transcript,
     run_hook,
 )
-from convoy.interface.workspace_lock import lock_path
+from convoy.interface.workspace_lock import judge_lock, lock_path
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'hooks'
 runner = CliRunner()
@@ -758,3 +765,198 @@ def test_no_recorded_fixture_carries_a_user_profile_path() -> None:
     for path in sorted(FIXTURES.iterdir()):
         text = path.read_text(encoding='utf-8')
         assert not profile.search(text), f'{path.name} carries a user profile path'
+
+
+# --- concurrent firings in one tree (CONV-B62) ------------------------------------------------
+#
+# Several subagents stopping at once each fire the judge. The gate is replaced by a probe
+# that wraps the real one and counts how many firings are inside it at the same moment, so
+# "never at once" is measured rather than inferred from timings.
+
+
+@dataclass
+class _GateProbe:
+    active: int = 0
+    peak: int = 0
+    entered: threading.Event = field(default_factory=threading.Event)
+    guard: threading.Lock = field(default_factory=threading.Lock)
+
+
+def _probe_the_gate(monkeypatch: pytest.MonkeyPatch, hold_seconds: float) -> _GateProbe:
+    probe = _GateProbe()
+    real_run_gate = hook_module.run_gate
+
+    def probing(spec: Any, workspace: Path, phases: tuple[str, ...] = ()) -> Any:
+        with probe.guard:
+            probe.active += 1
+            probe.peak = max(probe.peak, probe.active)
+        probe.entered.set()
+        try:
+            time.sleep(hold_seconds)
+            return real_run_gate(spec, workspace, phases)
+        finally:
+            with probe.guard:
+                probe.active -= 1
+
+    monkeypatch.setattr(hook_module, 'run_gate', probing)
+    return probe
+
+
+def _writer_stop(tmp_path: Path, root: Path, agent: str, **over: Any) -> bytes:
+    transcript = _transcript(tmp_path / f'{agent}.jsonl', f'work for {agent}', 'Edit')
+    return json.dumps(_stop_payload(root, transcript, agent_id=agent, **over)).encode()
+
+
+def _fire_in_thread(
+    raw: bytes, env: dict[str, str], codes: dict[str, int], key: str
+) -> threading.Thread:
+    thread = threading.Thread(
+        target=lambda: codes.__setitem__(key, run_hook(raw, env)), daemon=True
+    )
+    thread.start()
+    return thread
+
+
+def test_two_judges_in_one_tree_take_turns_and_the_log_stays_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    env = _trusted(tmp_path, root)
+    probe = _probe_the_gate(monkeypatch, hold_seconds=0.3)
+    codes: dict[str, int] = {}
+    threads = [
+        _fire_in_thread(_writer_stop(tmp_path, root, agent), env, codes, agent)
+        for agent in ('agent-a', 'agent-b')
+    ]
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+    assert codes == {'agent-a': HOOK_EXIT_SILENT, 'agent-b': HOOK_EXIT_SILENT}
+    assert probe.peak == 1, 'two firings ran the gate in one tree at the same time'
+    lines = _log_lines(root)  # every line parses as JSON, or this raises
+    assert sorted(line['agent_id'] for line in lines) == ['agent-a', 'agent-b']
+    assert {line['outcome'] for line in lines} == {'completed'}
+
+
+def test_a_judge_that_waits_out_the_bound_exits_2_and_nothing_interleaves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    env = _trusted(tmp_path, root)
+    # The bound is read when a firing starts waiting; a short one keeps the test fast.
+    monkeypatch.setattr(hook_module, 'JUDGE_WAIT_SECONDS', 0.2)
+    monkeypatch.setattr(hook_module, 'JUDGE_POLL_SECONDS', 0.02)
+    probe = _probe_the_gate(monkeypatch, hold_seconds=1.5)
+    codes: dict[str, int] = {}
+    holder = _fire_in_thread(_writer_stop(tmp_path, root, 'agent-a'), env, codes, 'agent-a')
+    assert probe.entered.wait(timeout=10)
+    started = time.monotonic()
+    loser = run_hook(_writer_stop(tmp_path, root, 'agent-b'), env)
+    waited = time.monotonic() - started
+    holder.join(timeout=30)
+    assert not holder.is_alive()
+    assert codes == {'agent-a': HOOK_EXIT_SILENT}
+    assert loser == HOOK_EXIT_FEEDBACK
+    assert probe.peak == 1, 'the loser ran the gate while the holder was still in it'
+    assert waited >= 0.2
+    err = capsys.readouterr().err
+    assert err.count('\n') == 1 and 'judge.lock' in err
+    by_agent = {line['agent_id']: line for line in _log_lines(root)}
+    assert by_agent['agent-a']['outcome'] == 'completed'
+    assert by_agent['agent-b']['outcome'] == 'usage'
+    assert 'judge.lock' in by_agent['agent-b']['error']
+    assert by_agent['agent-b']['exit_code'] == HOOK_EXIT_FEEDBACK
+
+
+def test_an_append_waits_for_the_append_lock(tmp_path: Path) -> None:
+    """The loser's line is written outside the judge lock; the append lock keeps it whole."""
+    root = tmp_path / 'proj'
+    spec = _project(root, _check('ok', _OK))
+    log = root / '.convoy' / 'hook.log'
+    failures: list[str | None] = []
+    with judge_lock(log.with_name('hook.log.lock'), wait_seconds=0, poll_seconds=0.01):
+        writer = threading.Thread(
+            target=lambda: failures.append(append_log(spec, root, {'line': 1})), daemon=True
+        )
+        writer.start()
+        writer.join(timeout=0.3)
+        assert writer.is_alive() and not log.exists(), 'the append did not wait for the lock'
+    writer.join(timeout=10)
+    assert failures == [None]
+    assert _log_lines(root) == [{'line': 1}]
+
+
+def test_a_judge_lock_still_held_on_the_retry_lets_the_subagent_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Busy is one more way the gate could not run: one blocked stop, then it may stop."""
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    env = _trusted(tmp_path, root)
+    monkeypatch.setattr(hook_module, 'JUDGE_WAIT_SECONDS', 0.05)
+    monkeypatch.setattr(hook_module, 'JUDGE_POLL_SECONDS', 0.01)
+    lock = root / '.convoy' / hook_module.JUDGE_LOCK_NAME
+    with judge_lock(lock, wait_seconds=0, poll_seconds=0.01):
+        first = run_hook(_writer_stop(tmp_path, root, 'agent-a'), env)
+        retry = run_hook(_writer_stop(tmp_path, root, 'agent-a', stop_hook_active=True), env)
+    assert (first, retry) == (HOOK_EXIT_FEEDBACK, HOOK_EXIT_SILENT)
+    blocked, released = _log_lines(root)
+    assert blocked['outcome'] == released['outcome'] == 'usage'
+    assert released['reason'] == 'gate could not run on the retry; the subagent may stop'
+
+
+def test_a_firing_that_runs_no_gate_does_not_wait_for_the_judge_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    env = _trusted(tmp_path, root)
+    monkeypatch.setattr(hook_module, 'JUDGE_WAIT_SECONDS', 5.0)
+    reader = _transcript(tmp_path / 'reader.jsonl', 'look around', 'Read', 'Grep')
+    lock = root / '.convoy' / hook_module.JUDGE_LOCK_NAME
+    with judge_lock(lock, wait_seconds=0, poll_seconds=0.01):
+        started = time.monotonic()
+        code = run_hook(json.dumps(_stop_payload(root, reader)).encode(), env)
+        assert time.monotonic() - started < 2.0, 'a read-only stop waited for the judge lock'
+    assert code == HOOK_EXIT_SILENT
+    assert _log_lines(root)[0]['outcome'] == 'skipped'
+
+
+def test_a_scaffolded_tree_stays_clean_while_a_judge_holds_its_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run refuses an untracked file, and a gate may check the tree is clean."""
+    root = tmp_path / 'proj'
+    root.mkdir()
+    scaffold_gate(root, {})
+
+    def git(*args: str) -> str:
+        done = subprocess.run(['git', *args], cwd=root, capture_output=True, text=True, check=False)
+        assert done.returncode == 0, done.stderr
+        return done.stdout
+
+    git('init', '-q')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test User')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'scaffold the gate')
+    env = _trusted(tmp_path, root)
+    seen: list[str] = []
+    real_run_gate = hook_module.run_gate
+
+    def probing(spec: Any, workspace: Path, phases: tuple[str, ...] = ()) -> Any:
+        assert (root / '.convoy' / hook_module.JUDGE_LOCK_NAME).exists()
+        seen.append(git('status', '--porcelain', '--untracked-files=all'))
+        return real_run_gate(spec, workspace, phases)
+
+    monkeypatch.setattr(hook_module, 'run_gate', probing)
+    run_hook(_writer_stop(tmp_path, root, 'agent-a'), env)
+    assert seen == ['']
+    assert git('status', '--porcelain', '--untracked-files=all') == ''
+
+
+def test_the_judge_waits_a_third_of_the_hook_timeout() -> None:
+    """The docs state the bound as 600 s; this keeps the number and the constant together."""
+    assert hook_module.JUDGE_WAIT_SECONDS == hook_module.HOOK_TIMEOUT_SECONDS / 3 == 600

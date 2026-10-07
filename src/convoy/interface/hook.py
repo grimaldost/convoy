@@ -36,13 +36,21 @@ the whole tree. A gate that cannot run (an unreadable or invalid spec, a refused
 invocation, a dead workspace) is exit 2 with a one-line reason — the loud answer,
 because a hook that swallowed its own misconfiguration would look like a green gate.
 
+Firings that gate one tree take turns. Several subagents stopping at once each fire the
+judge, and two suites running in one tree share its caches and build output. A firing
+that runs a gate holds ``.convoy/judge.lock`` from just before the gate until its log line
+is written; another waits up to :data:`JUDGE_WAIT_SECONDS`, then is answered as a gate
+that could not run. The lock orders judges. It does not make concurrent writers safe:
+subagents that edit one tree at the same time need a tree each (a worktree per agent),
+because each gate judges whatever the others have half-written.
+
 Attestation: one JSON line per firing is appended to ``.convoy/hook.log`` under the
 project root (the scaffold gitignores it): the leg, the event, the verdict, the hook's
 exit code, the subagent's id, type and dated model, the phases, the retry flag, the
 per-check facts, the gate's wall-clock, the spec's path and hash, the workspace — so an
 experiment counts firings from the log rather than from transcripts, and the messenger
-finds the judge's verdict there. Writing the log is best-effort and never changes the
-verdict.
+finds the judge's verdict there. Each append holds ``.convoy/hook.log.lock``, so no two
+lines interleave. Writing the log is best-effort and never changes the verdict.
 """
 
 import hashlib
@@ -50,7 +58,8 @@ import json
 import re
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -60,6 +69,7 @@ from convoy import __version__
 from convoy.core.gate import GateUsageError, repair_brief
 from convoy.core.spec import SpecError
 from convoy.interface.gate_service import (
+    HOOK_TIMEOUT_SECONDS,
     GateOutcome,
     find_gate_spec,
     gate_root,
@@ -68,7 +78,7 @@ from convoy.interface.gate_service import (
     trust_status,
 )
 from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS
-from convoy.interface.workspace_lock import lock_path
+from convoy.interface.workspace_lock import JudgeBusyError, judge_lock, lock_path
 
 # The hook protocol's exit codes — not convoy's. 0: nothing to say; 2: stderr is feedback
 # (to the subagent on SubagentStop, to the orchestrator on PostToolUse).
@@ -98,6 +108,20 @@ READ_ONLY_TOOLS = frozenset(
 )
 
 HOOK_LOG_RELPATH = Path('.convoy') / 'hook.log'
+
+# The lock a firing holds, next to the log, while it gates the tree and writes its line.
+JUDGE_LOCK_NAME = 'judge.lock'
+
+# How long a firing waits for another firing's gate in the same tree before it gives up
+# loudly, and how often it looks. A third of the hook timeout leaves the waiter two thirds
+# for its own gate. Read when a firing starts waiting, so a test can shorten them.
+JUDGE_WAIT_SECONDS = HOOK_TIMEOUT_SECONDS / 3
+JUDGE_POLL_SECONDS = 1.0
+
+# Every append holds ``hook.log.lock`` for the milliseconds it takes, so the line of a
+# firing that gave up waiting is written whole beside the holder's.
+_APPEND_WAIT_SECONDS = 10.0
+_APPEND_POLL_SECONDS = 0.01
 
 # How far back the messenger looks for the judge's verdict on the same subagent.
 _REUSE_WINDOW_SECONDS = 3600
@@ -251,6 +275,25 @@ def log_path_for(spec_path: Path, cwd: Path) -> Path:
     return gate_root(spec_path, cwd) / HOOK_LOG_RELPATH
 
 
+def judge_lock_path(spec_path: Path, cwd: Path) -> Path:
+    """The judge lock of the tree *spec_path* governs: beside its hook log, in ``.convoy/``.
+
+    Not under ``.git``: a tree the hook gates need not be a repository, and in a git
+    worktree ``.git`` is a file. A scaffolded ``.convoy/.gitignore`` ignores the lock; in
+    a project scaffolded before it did, the file shows as untracked while a gate runs.
+    """
+    return log_path_for(spec_path, cwd).parent / JUDGE_LOCK_NAME
+
+
+# Called with the judge lock's path just before a gate runs. :func:`decide` alone takes no
+# lock; :func:`run_hook` passes one that takes it and keeps it until the log line is written.
+type Hold = Callable[[Path], None]
+
+
+def _unheld(_lock: Path) -> None:
+    return None
+
+
 def latest_stop_record(
     log_path: Path, agent_id: str, session_id: str = ''
 ) -> dict[str, Any] | None:
@@ -297,13 +340,20 @@ def _gate(
     workspace: Path,
     phases: tuple[str, ...],
     env: Mapping[str, str],
+    hold: Hold,
 ) -> tuple[GateOutcome, int, str] | HookResult:
-    """Run the gate: the outcome, its wall-clock and the spec id, or the loud usage result."""
+    """Run the gate: the outcome, its wall-clock and the spec id, or the loud usage result.
+
+    A judge lock another firing still holds when the wait runs out is one more way the
+    gate could not run, answered like the others.
+    """
     started = time.monotonic()
     try:
+        hold(judge_lock_path(spec_path, workspace))
+        started = time.monotonic()
         spec = load_gate_spec_file(spec_path, env, root=workspace)
         outcome = run_gate(spec, workspace, phases)
-    except (OSError, UnicodeDecodeError, SpecError, GateUsageError) as exc:
+    except (OSError, UnicodeDecodeError, SpecError, GateUsageError, JudgeBusyError) as exc:
         elapsed = round((time.monotonic() - started) * 1000)
         return HookResult(
             HOOK_EXIT_FEEDBACK,
@@ -349,7 +399,11 @@ def _verdict_record(
 
 
 def _decide_stop(
-    payload: Mapping[str, Any], spec_path: Path, workspace: Path, env: Mapping[str, str]
+    payload: Mapping[str, Any],
+    spec_path: Path,
+    workspace: Path,
+    env: Mapping[str, str],
+    hold: Hold,
 ) -> HookResult:
     """The judge: gate the subagent's work as it tries to stop."""
     transcript = _string(payload, 'agent_transcript_path')
@@ -371,7 +425,7 @@ def _decide_stop(
         )
     retry = bool(payload.get('stop_hook_active'))
     phases = parse_phase_markers(facts.brief)
-    gated = _gate(payload, spec_path, workspace, phases, env)
+    gated = _gate(payload, spec_path, workspace, phases, env, hold)
     if isinstance(gated, HookResult):
         if retry:
             # The gate could not run on the retry either; the subagent cannot act on
@@ -410,7 +464,11 @@ def _orchestrator_header(agent_id: str, phases: tuple[str, ...]) -> str:
 
 
 def _decide_dispatch(
-    payload: Mapping[str, Any], spec_path: Path, workspace: Path, env: Mapping[str, str]
+    payload: Mapping[str, Any],
+    spec_path: Path,
+    workspace: Path,
+    env: Mapping[str, str],
+    hold: Hold,
 ) -> HookResult:
     """The messenger: after a synchronous dispatch returns, tell the orchestrator of a red."""
     tool_response = payload.get('tool_response')
@@ -444,7 +502,7 @@ def _decide_dispatch(
             HOOK_EXIT_FEEDBACK, _orchestrator_header(agent_id, phases) + brief, record
         )
     phases = parse_phase_markers(_string(payload.get('tool_input'), 'prompt'))
-    gated = _gate(payload, spec_path, workspace, phases, env)
+    gated = _gate(payload, spec_path, workspace, phases, env, hold)
     if isinstance(gated, HookResult):
         return gated
     outcome, gate_ms, series_id = gated
@@ -458,11 +516,13 @@ def _decide_dispatch(
     )
 
 
-def decide(payload: Mapping[str, Any], env: Mapping[str, str]) -> HookResult:
+def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unheld) -> HookResult:
     """The hook's whole decision, given the parsed event and the environment (no I/O on stdio).
 
     Runs the gate — check commands execute in the tree the spec governs — and appends
-    nothing; :func:`run_hook` owns the streams and the log.
+    nothing; :func:`run_hook` owns the streams, the log and the judge lock. *hold* is
+    called with the lock's path just before a gate runs, so nothing that answers without
+    running one (a read-only subagent, a reused verdict, a refusal) waits for it.
     """
     event = _string(payload, 'hook_event_name')
     if event == 'PostToolUse':
@@ -545,46 +605,70 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str]) -> HookResult:
         )
 
     if event == 'SubagentStop':
-        result = _decide_stop(payload, spec_path, workspace, env)
+        result = _decide_stop(payload, spec_path, workspace, env, hold)
     else:
-        result = _decide_dispatch(payload, spec_path, workspace, env)
+        result = _decide_dispatch(payload, spec_path, workspace, env, hold)
     if result.record is not None:
         result.record.update(stamp)
     return _finish(result)
 
 
 def append_log(spec_path: Path, cwd: Path, record: Mapping[str, Any]) -> str | None:
-    """Append one JSON line to the project's hook log; return a message on failure."""
+    """Append one JSON line to the project's hook log; return a message on failure.
+
+    Under ``hook.log.lock``: ``open('a')`` is not atomic across processes on Windows, and
+    a firing that gave up on the judge lock writes its line while the holder may be
+    writing one.
+    """
     log_path = log_path_for(spec_path, cwd)
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open('a', encoding='utf-8') as handle:
+        with (
+            judge_lock(
+                log_path.with_name(log_path.name + '.lock'),
+                wait_seconds=_APPEND_WAIT_SECONDS,
+                poll_seconds=_APPEND_POLL_SECONDS,
+            ),
+            log_path.open('a', encoding='utf-8') as handle,
+        ):
             handle.write(json.dumps(record, ensure_ascii=False) + '\n')
-    except OSError as exc:
+    except (OSError, JudgeBusyError) as exc:
         return f'convoy hook: could not append {log_path}: {exc}\n'
     return None
 
 
 def run_hook(raw: bytes, env: Mapping[str, str]) -> int:
-    """Parse the event, decide, write stderr and the log, return the hook exit code."""
+    """Parse the event, decide, write stderr and the log, return the hook exit code.
+
+    A firing that runs a gate holds the tree's judge lock from just before the gate until
+    its log line is written, so two firings never gate one tree at once. One that waits
+    out :data:`JUDGE_WAIT_SECONDS` is answered as a gate that could not run.
+    """
     payload = parse_event(raw)
     if isinstance(payload, str):
         sys.stderr.write(f'convoy hook: {payload}\n')
         return HOOK_EXIT_FEEDBACK
 
-    result = decide(payload, env)
-    # An untrusted project gets no file written into it: the machine refused it, and a
-    # log line in a clone's tree would be the first trace the refusal left.
-    if result.record is not None and result.record.get('outcome') != 'untrusted':
-        cwd = Path(_string(payload, 'cwd') or '.')
-        try:
-            spec_path = find_gate_spec(cwd, env)
-        except SpecError:
-            spec_path = None
-        if spec_path is not None:
-            failure = append_log(spec_path, cwd, result.record)
-            if failure is not None:
-                sys.stderr.write(failure)
+    with ExitStack() as held:
+
+        def hold(lock: Path) -> None:
+            held.enter_context(
+                judge_lock(lock, wait_seconds=JUDGE_WAIT_SECONDS, poll_seconds=JUDGE_POLL_SECONDS)
+            )
+
+        result = decide(payload, env, hold)
+        # An untrusted project gets no file written into it: the machine refused it, and a
+        # log line in a clone's tree would be the first trace the refusal left.
+        if result.record is not None and result.record.get('outcome') != 'untrusted':
+            cwd = Path(_string(payload, 'cwd') or '.')
+            try:
+                spec_path = find_gate_spec(cwd, env)
+            except SpecError:
+                spec_path = None
+            if spec_path is not None:
+                failure = append_log(spec_path, cwd, result.record)
+                if failure is not None:
+                    sys.stderr.write(failure)
     if result.stderr:
         sys.stderr.write(result.stderr)
     return result.exit_code

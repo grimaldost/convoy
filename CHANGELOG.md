@@ -61,6 +61,19 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   verb now declares both spellings as a hidden, eager option that exits 2, the same code as before,
   with `the series file is positional, not a flag: convoy <verb> <series.toml>`. The exit-code
   table is unchanged and the flags stay out of `--help`.
+- **Hook firings that gate one tree take turns.** Several subagents stopping at once each ran the
+  whole gate in the same tree, sharing its caches and build output, and appended to
+  `.convoy/hook.log` with a plain `open('a')`, which is not atomic across processes on Windows. A
+  firing that runs a gate now holds `.convoy/judge.lock` from just before the gate until its log
+  line is written, and every append holds `.convoy/hook.log.lock`. A firing that waits out 600 s
+  (a third of the hook timeout) is answered as a gate that could not run: exit 2 with a one-line
+  reason, recorded with the existing `usage` outcome, and on the judge's retry the subagent may
+  stop, as for any gate that could not run. A lock that names a process that is gone, left by a
+  firing Claude Code killed, is taken over. The run lock is unchanged: `convoy status`,
+  `convoy unlock` and `convoy clean` never read the judge lock. `convoy gate --init` now writes a
+  `.convoy/.gitignore` that also ignores the locks; in a project scaffolded earlier,
+  `.convoy/judge.lock` shows as untracked while a gate runs. The lock orders judges and does not
+  make concurrent writers safe: subagents that edit at the same time need a tree each.
 
 ## [0.15.0] - 2026-09-13
 

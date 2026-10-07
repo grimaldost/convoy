@@ -382,8 +382,8 @@ def gate(
             '--init',
             help=(
                 'Scaffold the project gate spec at .convoy/gate.toml (plus a .gitignore for '
-                "the hook log) from the toolchain found in the workspace — the project's "
-                'own suite as blocking, non-independent checks — and exit. Refuses to '
+                "the hook's log and locks) from the toolchain found in the workspace — the "
+                "project's own suite as blocking, non-independent checks — and exit. Refuses to "
                 'overwrite. Nothing detected writes a placeholder check that stays red '
                 'until you declare the checks.'
             ),
@@ -938,10 +938,11 @@ def hook() -> None:
     unless the project has a gate spec — ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml``, then
     ``.convoy/gate.toml`` from the event's ``cwd`` upward — and this machine trusts the
     project (``convoy gate --init`` / ``--trust``). Green: exit 0 and no output. A gate
-    that cannot run is exit 2 with a one-line reason. A ``[convoy-phase: <tag>]`` marker
-    in the subagent's brief scopes the gate. Every firing appends one JSON line to
-    ``.convoy/hook.log``. Exit codes are the hook protocol's (0 silent, 2 feedback),
-    not convoy's.
+    that cannot run is exit 2 with a one-line reason, and so is a firing that waits out
+    600 s for another firing gating the same tree (``.convoy/judge.lock``). A
+    ``[convoy-phase: <tag>]`` marker in the subagent's brief scopes the gate. Every firing
+    appends one JSON line to ``.convoy/hook.log``. Exit codes are the hook protocol's (0
+    silent, 2 feedback), not convoy's.
     """
     raise typer.Exit(run_hook(sys.stdin.buffer.read(), os.environ))
 
