@@ -2084,9 +2084,11 @@ def test_series_flag_spelling_is_rejected_naming_the_positional(
 
     result = runner.invoke(cli.app, args)
 
+    # CI forces colour, and Rich then splits the message with escape codes.
+    plain = re.sub(r'\[[0-9;]*m', '', result.output)
     assert result.exit_code == 2
-    assert f'convoy {verb} <series.toml>' in result.output
-    assert 'No such option' not in result.output
+    assert f'convoy {verb} <series.toml>' in plain
+    assert 'No such option' not in plain
     assert ran == []
 
 
