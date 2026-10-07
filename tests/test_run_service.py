@@ -21,6 +21,8 @@ from convoy.interface.drivers.headless import EXIT_OK, RunOutcome
 from convoy.interface.git import Git, GitError
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.run_service import PreflightError, run_series_headless
+from convoy.interface.run_summary import TREE_ONLY_CLEANUP_STEPS
+from convoy.interface.spawn import FakeSpawn, SpawnRequest, SpawnResult, budget_result, ok_result
 from convoy.interface.workspace_lock import workspace_lock
 
 
@@ -615,28 +617,95 @@ def test_resume_on_a_dirty_tree_refuses_and_names_a_tree_only_cleanup(
     assert 'convoy clean' not in problem.message
 
 
+class _HaltingSpawn(FakeSpawn):
+    """A spawn its budget cuts short with work half-written: modified, untracked and staged."""
+
+    def spawn(self, request: SpawnRequest, cwd: Path) -> SpawnResult:
+        (cwd / 'README.md').write_text('half-written by a truncated spawn\n', encoding='utf-8')
+        (cwd / 'scratch.json').write_text('{}\n', encoding='utf-8')
+        (cwd / 'staged.txt').write_text('staged, never committed\n', encoding='utf-8')
+        _git(cwd, 'add', 'staged.txt')
+        return super().spawn(request, cwd)
+
+
+class _WritingSpawn(FakeSpawn):
+    """A spawn that finishes: it leaves one new file for the run to commit."""
+
+    def spawn(self, request: SpawnRequest, cwd: Path) -> SpawnResult:
+        (cwd / 'feature.txt').write_text('the work\n', encoding='utf-8')
+        return super().spawn(request, cwd)
+
+
+def _commits_touching(ws: Path, *args: str) -> str:
+    done = subprocess.run(
+        ['git', 'log', '--name-only', '--format=', *args],
+        cwd=ws,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout
+
+
+def test_the_named_cleanup_lets_a_resume_continue_and_the_debris_reaches_no_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The halt, the cleanup and the resume, end to end with stubbed spawns."""
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+    (ws / '.gitignore').write_text('*.log\n', encoding='utf-8')
+    _git(ws, 'add', '.gitignore')
+    _git(ws, 'commit', '-m', 'ignore logs')
+
+    halting = _HaltingSpawn([budget_result()])
+    monkeypatch.setattr(run_service, 'HeadlessSpawn', lambda: halting)
+    halted = run_series_headless(series, ws, run_id='r1', config_isolation=False)
+    assert halted.outcome == 'budget'
+    assert Git(ws).status_porcelain() != (), 'the stubbed halt left no debris to clean'
+    (ws / 'local.log').write_text('ignored, and kept\n', encoding='utf-8')
+
+    # The refusal first, then exactly the commands it names, each run the way an operator
+    # would paste it. One at a time: a shell may not chain them.
+    with pytest.raises(PreflightError) as excinfo:
+        run_series_headless(series, ws, run_id='r2', resume=True, config_isolation=False)
+    [problem] = _tree_problems(excinfo.value.problems)
+    assert run_service.TREE_ONLY_CLEANUP in problem.message
+    for step in TREE_ONLY_CLEANUP_STEPS:
+        subprocess.run(step, shell=True, cwd=ws, check=True)
+
+    assert Git(ws).status_porcelain() == ()
+    assert (ws / 'local.log').exists()  # ignored files survive
+    writing = _WritingSpawn([ok_result()])
+    monkeypatch.setattr(run_service, 'HeadlessSpawn', lambda: writing)
+    resumed = run_series_headless(series, ws, run_id='r2', resume=True, config_isolation=False)
+
+    assert resumed == RunOutcome('completed', True, EXIT_OK)
+    assert len(writing.calls) == 1
+    assert 'feature.txt' in _commits_touching(ws, 'integration')
+    history = _commits_touching(ws, '--all')
+    assert 'scratch.json' not in history
+    assert 'staged.txt' not in history
+    assert (
+        'half-written'
+        not in subprocess.run(
+            ['git', 'log', '--all', '-p'], cwd=ws, capture_output=True, text=True, check=True
+        ).stdout
+    )
+
+
 def test_the_named_cleanup_clears_the_debris_and_keeps_the_branch_resume_needs(
     tmp_path: Path,
 ) -> None:
     ws, series = _halted_resume_workspace(tmp_path)
     (ws / 'local.log').write_text('ignored, and kept\n', encoding='utf-8')
 
-    # Exactly the command the message names, run the way an operator would paste it.
-    subprocess.run(run_service.TREE_ONLY_CLEANUP, shell=True, cwd=ws, check=True)
+    for step in TREE_ONLY_CLEANUP_STEPS:
+        subprocess.run(step, shell=True, cwd=ws, check=True)
 
     assert Git(ws).status_porcelain() == ()
     assert Git(ws).branch_exists('integration')
     assert (ws / 'local.log').exists()  # ignored files survive
     assert run_service.start_report(series, ws, run_id='r', resume=True).problems == ()
-    history = subprocess.run(
-        ['git', 'log', '--all', '--name-only', '--format='],
-        cwd=ws,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert 'scratch.json' not in history.stdout
-    assert 'staged.txt' not in history.stdout
 
 
 def test_a_workspace_that_is_not_a_repository_has_no_tree_problem(tmp_path: Path) -> None:

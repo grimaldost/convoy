@@ -137,14 +137,15 @@ def _tree_problems(workspace: Path, *, fresh: bool, resume: bool) -> list[Proble
     if resume:
         remedy = (
             'They are most likely what the halted spawn left uncommitted. Discard them with '
-            f'`{TREE_ONLY_CLEANUP}`, which keeps every branch (the integration branch '
+            f'{TREE_ONLY_CLEANUP}, which keeps every branch (the integration branch '
             'included) and every ignored file, then resume; commit or ignore anything you '
             'mean to keep first'
         )
     else:
         remedy = (
-            'Commit them, ignore them in .gitignore, or remove them; reset (CLI: --fresh) '
-            'discards them on request, along with the series branches'
+            'Commit them, ignore them in .gitignore, or remove them. The CLI flag --fresh '
+            'also clears the tree, but it deletes every untracked file without listing it, '
+            "and the series' branches with them"
         )
     return [Problem(kind='workspace', where=str(workspace), message=f'{found}. {remedy}.')]
 

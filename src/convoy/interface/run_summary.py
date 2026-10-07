@@ -63,7 +63,11 @@ ABANDONED_BY_UNLOCK_REASON = 'workspace lock cleared by convoy unlock; the run n
 # ignored ones. Every branch survives, the integration branch included. ``git checkout -- .``
 # is not enough: it leaves a staged file staged. ``convoy clean`` is the wrong tool here,
 # because it also deletes the integration branch the resume continues from.
-TREE_ONLY_CLEANUP = 'git reset --hard && git clean -fd'
+TREE_ONLY_CLEANUP_STEPS = ('git reset --hard', 'git clean -fd')
+
+# The same two commands as prose for a message, with no `&&`: Windows PowerShell 5.1 does
+# not parse it, and Windows is a target.
+TREE_ONLY_CLEANUP = '`git reset --hard` and then `git clean -fd` (two commands, in this order)'
 
 
 def _run_lines(telemetry_path: Path, run_id: str | None = None) -> list[dict[str, Any]]:
@@ -327,7 +331,7 @@ def summarize_run(
         envelope['message'] = (
             f'the process that was running {run_id} is gone and it recorded no outcome; '
             'run `convoy unlock` to release the workspace, then discard the uncommitted '
-            f'work it left in the tree with `{TREE_ONLY_CLEANUP}` (every branch is kept), '
+            f'work it left in the tree with {TREE_ONLY_CLEANUP} (every branch is kept), '
             'then re-run with --resume to continue from the PRs that already integrated'
         )
     return envelope
