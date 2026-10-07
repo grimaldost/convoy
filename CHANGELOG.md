@@ -21,6 +21,20 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   own tier or names a `model` never reaches it, and a tier that falls through still raises the
   pre-flight advisory naming this date.
 
+### Fixed
+
+- **A scored spawn no longer reads the operator's own CLAUDE.md from above its working
+  directory.** Claude Code reads `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` in every
+  directory above its working directory, whatever `CLAUDE_CONFIG_DIR` says. A spawn working in
+  a repository under the operator's home therefore read the operator's `~/.claude/CLAUDE.md`
+  despite the credential-only config, which broke the isolation the C5 invariant promises.
+  Under isolation each spawn now gets a settings layer (`--settings`, written into the isolated
+  config dir and named after the spawn's working directory). Its `claudeMdExcludes` lists the
+  instruction files above that directory. The repository's own instruction files still reach
+  the spawn. The account's claude.ai connectors, which reach a session whatever its config dir,
+  are turned off too (`ENABLE_CLAUDEAI_MCP_SERVERS=false`). `--no-config-isolation` leaves both
+  as they were.
+
 ## [0.15.0] - 2026-09-13
 
 **Minor**, by the install-requirement rule this release adds to

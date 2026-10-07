@@ -4,12 +4,19 @@ All fakes: a monkeypatched ``Path.home`` and ``tmp_path``-based config dirs. The
 tests never read the real ``~/.claude`` and never touch the network.
 """
 
+import json
+import os
 import shutil
 from pathlib import Path
 
 import pytest
 
-from convoy.interface.config_isolation import host_config_dir, isolated_config
+from convoy.interface.config_isolation import (
+    ancestor_memory_excludes,
+    host_config_dir,
+    isolated_config,
+    write_isolation_settings,
+)
 
 
 def _fake_host(tmp_path: Path, *, credential: str | None) -> Path:
@@ -126,3 +133,42 @@ def test_credential_is_unlinked_even_if_dir_removal_fails(
     # The dir lingers (rmtree was a no-op) but the credential was unlinked first.
     assert path.exists()
     assert not (path / '.credentials.json').exists()
+
+
+# ---------------------------------------------------------------------------
+# Instruction files above the spawn's working directory
+# ---------------------------------------------------------------------------
+
+
+def test_every_instruction_file_above_the_cwd_is_excluded_and_none_in_it(tmp_path: Path) -> None:
+    """The CLI reads CLAUDE.md in every directory above its cwd, whatever CLAUDE_CONFIG_DIR
+    says, so the operator's ~/.claude/CLAUDE.md reaches a spawn run under their home."""
+    cwd = tmp_path / 'repo' / 'worktree'
+    cwd.mkdir(parents=True)
+    excludes = ancestor_memory_excludes(cwd)
+    above = Path(os.path.abspath(cwd)).parent.as_posix()
+    for name in ('CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md'):
+        assert f'{above}/{name}' in excludes
+    own = Path(os.path.abspath(cwd)).as_posix()
+    assert not [entry for entry in excludes if entry.startswith(own + '/')]
+    assert len(excludes) == len(set(excludes))
+
+
+def test_the_settings_layer_lives_in_the_config_dir_and_is_named_after_the_cwd(
+    tmp_path: Path,
+) -> None:
+    """One isolated dir serves a whole run, whose spawns can work in different worktrees at
+    once: each cwd gets its own layer, and the same cwd finds the same bytes."""
+    config = tmp_path / 'cfg'
+    config.mkdir()
+    first, second = tmp_path / 'a', tmp_path / 'b'
+    first.mkdir()
+    second.mkdir()
+    layer_a = write_isolation_settings(config, first)
+    layer_b = write_isolation_settings(config, second)
+    assert layer_a.parent == config
+    assert layer_a != layer_b
+    assert write_isolation_settings(config, first) == layer_a
+    body = json.loads(layer_a.read_text(encoding='utf-8'))
+    assert body == {'claudeMdExcludes': ancestor_memory_excludes(first)}
+    assert sorted(p.name for p in config.iterdir()) == sorted([layer_a.name, layer_b.name])

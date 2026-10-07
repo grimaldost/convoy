@@ -269,6 +269,45 @@ def test_config_dir_pinned_when_given(tmp_path: Path) -> None:
     assert child_env.get('CLAUDE_CONFIG_DIR') == str(cfg)
 
 
+def test_isolation_excludes_instruction_files_above_the_cwd(tmp_path: Path) -> None:
+    """Under isolation the spawn gets a --settings layer from the config dir whose
+    claudeMdExcludes lists the files above its cwd, and the claude.ai connectors are off."""
+    cfg = tmp_path / 'cred_only'
+    cfg.mkdir()
+    work = tmp_path / 'worktree'
+    work.mkdir()
+    body = f'print({_result_line()!r})\nsys.exit(0)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body), config_dir=cfg)
+
+    spawn.spawn(_request(), cwd=work)
+
+    capture = _read_capture(tmp_path)
+    argv, child_env = capture['argv'], capture['env']
+    assert isinstance(argv, list)
+    assert isinstance(child_env, dict)
+    layer = Path(argv[argv.index('--settings') + 1])
+    assert layer.parent == cfg
+    excludes = json.loads(layer.read_text(encoding='utf-8'))['claudeMdExcludes']
+    assert f'{Path(os.path.abspath(work)).parent.as_posix()}/.claude/CLAUDE.md' in excludes
+    assert child_env.get('ENABLE_CLAUDEAI_MCP_SERVERS') == 'false'
+
+
+def test_without_isolation_the_operator_config_is_left_alone(tmp_path: Path) -> None:
+    """The opt-out (--no-config-isolation) keeps the pre-isolation behaviour whole."""
+    body = f'print({_result_line()!r})\nsys.exit(0)\n'
+    spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
+
+    spawn.spawn(_request(), cwd=tmp_path)
+
+    capture = _read_capture(tmp_path)
+    argv, child_env = capture['argv'], capture['env']
+    assert isinstance(argv, list)
+    assert isinstance(child_env, dict)
+    assert '--settings' not in argv
+    host = os.environ.get('ENABLE_CLAUDEAI_MCP_SERVERS')
+    assert child_env.get('ENABLE_CLAUDEAI_MCP_SERVERS') == host
+
+
 # ---------------------------------------------------------------------------
 # Infrastructure classification
 # ---------------------------------------------------------------------------

@@ -12,9 +12,18 @@ copies the credential file when the host keeps auth in a file (subscription/API 
 yields it, and removes it on exit — including on exception. Keychain-backed auth keeps
 nothing under the config dir, so the isolated dir is simply empty and still
 authenticates; that case is handled by copying nothing.
+
+The config dir is not the only route for memory. The CLI also reads ``CLAUDE.md``,
+``CLAUDE.local.md`` and ``.claude/CLAUDE.md`` in its working directory and in every
+directory above it, whatever ``CLAUDE_CONFIG_DIR`` says, so a spawn whose working
+directory lies under the operator's home reads the operator's own ``~/.claude/CLAUDE.md``
+as an ancestor's memory. ``write_isolation_settings`` writes a settings layer, passed
+with ``--settings``, whose ``claudeMdExcludes`` lists those ancestor files.
 """
 
 import contextlib
+import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -28,6 +37,10 @@ from pathlib import Path
 # hooks, plugins, or memory. The whole file is copied verbatim — convoy does not parse
 # or strip it — so any inert cached tokens it also holds travel too, harmlessly.
 _CREDENTIAL_BASENAMES: tuple[str, ...] = ('.credentials.json',)
+
+# The instruction files the CLI reads in its working directory and in every directory above
+# it, whatever CLAUDE_CONFIG_DIR says.
+_MEMORY_FILES: tuple[str, ...] = ('CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md')
 
 
 def host_config_dir(environ: Mapping[str, str] | None = None) -> Path:
@@ -78,6 +91,45 @@ def _copy_credential(source_dir: Path, dest_dir: Path) -> bool:
         return False
     shutil.copy2(found, dest_dir / found.name)
     return True
+
+
+def ancestor_memory_excludes(cwd: Path) -> list[str]:
+    """``claudeMdExcludes`` globs for every instruction file above ``cwd``, none in it.
+
+    Absolute, with forward slashes, for each directory above ``cwd`` in each of its
+    spellings (as given and resolved: a Windows temporary directory can be an 8.3 short
+    path). The working directory's own files are not listed: the repository a spawn works
+    on keeps its project instructions.
+    """
+    folders: list[Path] = []
+    candidates = [Path(os.path.abspath(cwd))]
+    with contextlib.suppress(OSError):
+        candidates.append(Path(cwd).resolve())
+    for candidate in candidates:
+        folders += [folder for folder in candidate.parents if folder not in folders]
+    return [
+        f'{folder.as_posix().rstrip("/")}/{name}' for folder in folders for name in _MEMORY_FILES
+    ]
+
+
+def write_isolation_settings(config_dir: Path, cwd: Path) -> Path:
+    """Write the settings layer that keeps the instruction files above ``cwd`` out of a spawn
+    into ``config_dir``, and return its path for ``--settings``.
+
+    The file is named after ``cwd``: spawns that share one isolated dir but run in
+    different worktrees never overwrite each other's layer, and spawns in the same
+    worktree find the same bytes already there.
+    """
+    digest = hashlib.sha256(os.path.abspath(cwd).encode('utf-8')).hexdigest()[:16]
+    path = config_dir / f'isolation-{digest}.json'
+    body = json.dumps({'claudeMdExcludes': ancestor_memory_excludes(cwd)}, indent=2) + '\n'
+    with contextlib.suppress(OSError):
+        if path.read_text(encoding='utf-8') == body:
+            return path
+    staged = path.with_suffix(f'.{os.getpid()}.tmp')
+    staged.write_text(body, encoding='utf-8')
+    os.replace(staged, path)
+    return path
 
 
 @contextmanager
