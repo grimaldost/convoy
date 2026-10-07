@@ -13,6 +13,10 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-07
+
+Patch release: help-text rendering fix and documentation updates to keep docs in sync with code.
+
 ### Fixed
 
 - **`convoy --help`, `convoy gate --help` and `convoy validate --help` keep the TOML section names.**
