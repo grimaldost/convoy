@@ -1746,9 +1746,9 @@ the one thing not to do is discover the answer from a broken scored arm. [cross-
 Built on the 2026-10-06 maintenance branch from the open rows of the 2026-10-06 triage and
 served by the 0.16.0 release tagged v0.16.0. CONV-B70 is **(consumer-affecting)**, so by
 release step 0 in `CONTRIBUTING.md` the cut to 0.16.0 is a minor. The same tag serves the
-`strong`-tier floor moving to `claude-opus-5-5` and the isolation fix of PR #109
+`strong`-tier floor moving to `claude-opus-5-5` (see CONV-B14) and the isolation fix of PR #109
 (a scored spawn no longer reads the operator's own CLAUDE.md from above its working
-directory), both not rows (see CONV-B14).
+directory), not rows.
 
 | Row | Promotion | Shipped by |
 |---|---|---|
@@ -1774,12 +1774,20 @@ resume half is what keeps it safe to ship: a `budget` or `infrastructure` halt r
 the truncated spawn's work is committed, so a tree is dirty after the common halt, and a
 refusal that pointed at `convoy clean` would have destroyed the branch `--resume` needs.
 
-**What CONV-B70 leaves open (CONV-B70 follow-up — done in 0.16.0).** `docs/design/03-serving.md`
-incorrectly stated that `convoy validate` and the tool's `dry_run` both call `preflight`, and its
-verb table calls them the same pre-flight; they actually differ. `dry_run` calls `start_report`
-(which adds the tree read and the option checks, like the run's own start pre-flight), while
-`convoy validate` only calls `preflight` (which stays tree-blind). The sentence, the pre-flight
-stage of the run lifecycle description and the verb table row are corrected to match the code.
+**What CONV-B70 leaves open.** Two things, both recorded here so neither is lost. First,
+`convoy_run` with `dry_run: true` is the only rehearsal of the refusal. The CLI has no
+`run --dry-run`, and `convoy validate` stays tree-blind on purpose: it takes no `--fresh` or
+`--resume`, so it cannot know whether the run it precedes reads the tree at all (`--fresh`
+skips the check) or which remedy applies (`--resume` names a different one), and its answer
+is about the series file and the paths it names. A CLI user who gets `ok` from validate can
+still get exit 3 from `convoy run` on a dirty tree; `git status --porcelain` in the workspace
+is the rehearsal. Second, `docs/design/03-serving.md` incorrectly stated that `convoy validate` and
+the tool's `dry_run` both call `preflight`, and its verb table calls them the same pre-flight;
+they actually differ. `dry_run` calls `start_report` (which adds the tree read and the option
+checks, like the run's own start pre-flight), while `convoy validate` only calls `preflight`
+(which stays tree-blind). The sentence, the pre-flight stage of the run lifecycle description and
+the verb table row are corrected in the docs pass after 0.16.0 (CONV-B70 follow-up — corrected in
+the docs pass after 0.16.0).
 
 ### Served by 0.15.0 (2026-09-13): no row, and the install requirement versioned
 
