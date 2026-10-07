@@ -1137,7 +1137,9 @@ carried no verdict are counted rather than read as `usage`. Blocking that retry 
 weighed and not built: it would break the one-repair-round bound, and under a gate that
 leaves no time to wait it would spin. A lock naming a process that is gone is taken over,
 and so is one naming no pid after ten seconds, or a leftover `judge.lock.break` file. The
-scaffold's `.convoy/.gitignore` covers both locks. The writers case is documented in the
+busy error advises removing a lock by hand only when its holder is gone; for one that may
+still run it says another firing is at work and, on a first stop, that stopping again
+retries. The scaffold's `.convoy/.gitignore` covers both locks. The writers case is documented in the
 skill, not built.
 
 **Effort** S · **Source** [review] · **Row** T61c

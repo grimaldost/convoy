@@ -222,7 +222,11 @@ def _remove_if_stale(path: Path) -> bool:
 
 
 def _busy_message(path: Path, wait_seconds: float) -> str:
-    """Why a judge lock stayed taken for the whole wait, and what removes it."""
+    """Why a judge lock stayed taken for the whole wait, and, for a dead holder, what removes it.
+
+    A holder that may still run gets no removal advice: the reader cannot tell whether it
+    runs, and one that deletes a live lock gates beside its holder.
+    """
     owner = _recorded_pid(path)
     breaker = path.with_name(path.name + '.break')
     if owner is not None and owner != os.getpid() and not process_is_alive(owner):
@@ -232,8 +236,8 @@ def _busy_message(path: Path, wait_seconds: float) -> str:
         )
     holder = f'pid {owner}' if owner is not None else 'another process'
     return (
-        f'{path} is held by {holder}; waited {wait_seconds:g} s. If no convoy hook is '
-        f'running in this tree, remove {path} (and {breaker}, if it exists) by hand'
+        f'another convoy hook firing is at work in this tree: {path} is held by {holder}; '
+        f'waited {wait_seconds:g} s'
     )
 
 

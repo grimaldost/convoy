@@ -154,12 +154,14 @@ def test_a_second_judge_waits_out_the_bound_then_raises_busy(tmp_path: Path) -> 
     with judge_lock(path, wait_seconds=0, poll_seconds=0.01):
         started = time.monotonic()
         with (
-            pytest.raises(JudgeBusyError, match=str(os.getpid())),
+            pytest.raises(JudgeBusyError, match=str(os.getpid())) as caught,
             judge_lock(path, wait_seconds=0.2, poll_seconds=0.02),
         ):
             pass
         assert time.monotonic() - started >= 0.2
         assert path.exists(), 'the waiter removed a lock it never held'
+        # The holder is alive: a reader told to delete its lock would gate beside it.
+        assert 'by hand' not in str(caught.value)
 
     assert not path.exists()
 

@@ -67,7 +67,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -469,6 +469,10 @@ def _decide_stop(
                 else 'gate could not run on the retry; the subagent may stop'
             )
             return HookResult(HOOK_EXIT_SILENT, '', record)
+        if (gated.record or {}).get('outcome') == 'busy':
+            # Waiting is all the subagent can do about another firing's lock, and its next
+            # stop is the retry: it gates again, or stops ungated if the lock is still held.
+            return replace(gated, stderr=gated.stderr.rstrip('\n') + '; stopping again retries\n')
         return gated
     outcome, gate_ms, series_id = gated
     record = _verdict_record(payload, outcome, phases, gate_ms, series_id)

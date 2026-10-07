@@ -871,6 +871,8 @@ def test_a_judge_that_waits_out_the_bound_exits_2_and_nothing_interleaves(
     assert waited >= 0.2
     err = capsys.readouterr().err
     assert err.count('\n') == 1 and 'judge.lock' in err
+    # The subagent cannot tell whether the holder runs, so it is told only to stop again.
+    assert 'stopping again retries' in err and 'by hand' not in err
     by_agent = {line['agent_id']: line for line in _log_lines(root)}
     assert by_agent['agent-a']['outcome'] == 'completed'
     # Its own outcome, not `usage`: a busy tree is not a gate that is broken.

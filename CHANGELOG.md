@@ -87,7 +87,11 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   the log counts it. A lock that names a process that is gone, left by a firing
   Claude Code killed, is taken over, and so is a lock that names no pid and is older than ten
   seconds, or a `judge.lock.break` file left by a waiter killed mid-takeover; the error for a lock
-  that cannot be taken over names both files. The run lock is unchanged: `convoy status`,
+  that cannot be taken over names both files. The error for a lock whose holder may still run
+  says that another firing is at work in the tree and gives no advice to remove the lock, since
+  the subagent reading it cannot tell whether the holder runs, and deleting a live lock would
+  let two gates run in one tree; on the subagent's first stop it adds that stopping again
+  retries. The run lock is unchanged: `convoy status`,
   `convoy unlock` and `convoy clean` never read the judge lock. `convoy gate --init` now writes a
   `.convoy/.gitignore` that also ignores the locks; in a project scaffolded earlier,
   `.convoy/judge.lock` shows as untracked while a gate runs. The lock orders judges and does not
