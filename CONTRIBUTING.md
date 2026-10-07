@@ -94,6 +94,10 @@ Cadence: cut a release after each backlog build round (a batch of
 1. Move `[Unreleased]` into a new `## [0.x.y] - <date>` section in
    `CHANGELOG.md`. The release section's framing paragraph is written at this
    point, once its contents are final, and is never carried under `[Unreleased]`.
+   In `docs/backlog.md`, retarget the heading of the "Built in the <date>
+   maintenance round" section at the tag being cut (e.g., `### Built in the
+   2026-10-06 maintenance round (served by 0.16.0)`) and change every "unreleased"
+   value in its "Shipped by" column to the version number.
 2. Bump the version in all FOUR locations. Three are hand-edited —
    `pyproject.toml`, `.claude-plugin/plugin.json`, and `__version__` in
    `src/convoy/__init__.py` (`.claude-plugin/marketplace.json` carries no version
