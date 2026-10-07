@@ -23,8 +23,8 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 ### Changed
 
 - **Docs match the code in three places.** The README shows the `convoy_status` tool with its
-  `workspace` argument; the ADR index lists ADR 0010 once; and the README's `convoy hook` row and
-  the skill state that a payload that is not a hook event (empty, malformed, or not a JSON object on
+  `workspace` argument; the ADR index lists ADR 0010 once; and the README's `convoy hook` row,
+  the skill and the design doc's verb table state that a payload that is not a hook event (empty, malformed, or not a JSON object on
   stdin) exits 2, which tests already pinned.
 
 ## [0.16.0] - 2026-10-07
