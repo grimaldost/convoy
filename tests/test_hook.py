@@ -22,10 +22,18 @@ import pytest
 from typer.testing import CliRunner
 
 import convoy.interface.cli as cli
+import convoy.interface.gate_scaffold as gate_scaffold
 import convoy.interface.hook as hook_module
 from convoy import __version__
-from convoy.interface.gate_scaffold import scaffold_gate
-from convoy.interface.gate_service import trust_project
+from convoy.core.spec import DEFAULT_GATE_TIMEOUT_SECONDS, Check
+from convoy.interface.gate_scaffold import Toolchain, scaffold_gate
+from convoy.interface.gate_service import (
+    GATE_BUDGET_SECONDS,
+    HOOK_MARGIN_SECONDS,
+    HOOK_TIMEOUT_SECONDS,
+    JUDGE_MIN_WAIT_SECONDS,
+    trust_project,
+)
 from convoy.interface.hook import (
     HOOK_EXIT_FEEDBACK,
     HOOK_EXIT_SILENT,
@@ -865,7 +873,8 @@ def test_a_judge_that_waits_out_the_bound_exits_2_and_nothing_interleaves(
     assert err.count('\n') == 1 and 'judge.lock' in err
     by_agent = {line['agent_id']: line for line in _log_lines(root)}
     assert by_agent['agent-a']['outcome'] == 'completed'
-    assert by_agent['agent-b']['outcome'] == 'usage'
+    # Its own outcome, not `usage`: a busy tree is not a gate that is broken.
+    assert by_agent['agent-b']['outcome'] == 'busy'
     assert 'judge.lock' in by_agent['agent-b']['error']
     assert by_agent['agent-b']['exit_code'] == HOOK_EXIT_FEEDBACK
 
@@ -888,10 +897,16 @@ def test_an_append_waits_for_the_append_lock(tmp_path: Path) -> None:
     assert _log_lines(root) == [{'line': 1}]
 
 
-def test_a_judge_lock_still_held_on_the_retry_lets_the_subagent_stop(
+def test_a_judge_lock_still_held_on_the_retry_is_recorded_as_an_ungated_stop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Busy is one more way the gate could not run: one blocked stop, then it may stop."""
+    """One blocked stop, then it may stop, as for any gate that could not run.
+
+    The repair round stays the bound: the subagent cannot free the lock, and blocking every
+    stop until it frees would spin a gate that leaves no room to wait. But the stop is
+    recorded as `busy`, apart from a gate that could not run, so the log counts the
+    subagents that stopped without a verdict because the tree was busy.
+    """
     root = tmp_path / 'proj'
     _project(root, _check('ok', _OK))
     env = _trusted(tmp_path, root)
@@ -903,8 +918,8 @@ def test_a_judge_lock_still_held_on_the_retry_lets_the_subagent_stop(
         retry = run_hook(_writer_stop(tmp_path, root, 'agent-a', stop_hook_active=True), env)
     assert (first, retry) == (HOOK_EXIT_FEEDBACK, HOOK_EXIT_SILENT)
     blocked, released = _log_lines(root)
-    assert blocked['outcome'] == released['outcome'] == 'usage'
-    assert released['reason'] == 'gate could not run on the retry; the subagent may stop'
+    assert blocked['outcome'] == released['outcome'] == 'busy'
+    assert released['reason'] == 'judge lock still held on the retry; the subagent stops ungated'
 
 
 def test_a_firing_that_runs_no_gate_does_not_wait_for_the_judge_lock(
@@ -997,4 +1012,76 @@ def test_a_gate_that_fills_the_hook_timeout_does_not_wait_for_the_lock(
         )
     assert code == HOOK_EXIT_FEEDBACK
     assert 'judge.lock' in capsys.readouterr().err
-    assert _log_lines(root)[0]['outcome'] == 'usage'
+    assert _log_lines(root)[0]['outcome'] == 'busy'
+
+
+# --- the gate budget: one threshold for the scaffold, validate and the wait (CONV-B61/B62) ----
+
+
+def test_the_gate_budget_leaves_the_margin_and_the_minimum_wait() -> None:
+    """The budget is five checks at the default 300 s, so a Python scaffold keeps 300 s."""
+    assert (
+        GATE_BUDGET_SECONDS + HOOK_MARGIN_SECONDS + JUDGE_MIN_WAIT_SECONDS == HOOK_TIMEOUT_SECONDS
+    )
+    assert GATE_BUDGET_SECONDS == 5 * DEFAULT_GATE_TIMEOUT_SECONDS
+    assert JUDGE_MIN_WAIT_SECONDS > 0
+    assert hook_module.HOOK_MARGIN_SECONDS == HOOK_MARGIN_SECONDS
+
+
+@pytest.mark.parametrize('worst_case', [0, 1, 300, 1200, 1499, 1500])
+def test_a_gate_inside_the_budget_leaves_a_firing_the_minimum_wait(worst_case: int) -> None:
+    assert hook_module.judge_wait_seconds(worst_case) >= JUDGE_MIN_WAIT_SECONDS
+
+
+def _six_check_scaffold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, dict[str, str]]:
+    """What ``convoy gate --init --independent oracle`` writes for a Python project, made runnable.
+
+    Five toolchain checks plus the oracle, with the timeout the scaffold chose. The checks
+    and the oracle are replaced by ones that pass with this interpreter, so the test runs
+    no toolchain.
+    """
+    root = tmp_path / 'proj'
+    root.mkdir()
+    five = Toolchain('python', tuple(Check(name=f'c{i}', run=_OK, blocking=True) for i in range(5)))
+    monkeypatch.setattr(gate_scaffold, 'detect_toolchain', lambda _root: five)
+    oracles = tmp_path / 'oracles'
+    env = {**_home(tmp_path), 'CONVOY_ORACLES': str(oracles)}
+    scaffold_gate(root, env, independent='oracle')
+    (oracles / 'oracle.py').write_text('raise SystemExit(0)\n', encoding='utf-8')
+    spec_path = root / '.convoy' / 'gate.toml'
+    interpreter = f'run = "\\"{sys.executable}\\" "'.replace('\\', '\\\\')
+    text = spec_path.read_text(encoding='utf-8').replace('run = "python "', interpreter, 1)
+    spec_path.write_text(text, encoding='utf-8')
+    trust_project(root, env)
+    return root, env
+
+
+def test_two_judges_under_the_six_check_scaffold_take_turns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loser waits for the holder's gate, then runs its own.
+
+    Six checks at 300 s filled the 1800 s hook timeout, so the second firing did not wait
+    at all: it exited 2 at once, and its retry, seconds later and with the first gate still
+    running, let the subagent stop without a gate.
+    """
+    root, env = _six_check_scaffold(tmp_path, monkeypatch)
+    monkeypatch.setattr(hook_module, 'JUDGE_POLL_SECONDS', 0.02)
+    probe = _probe_the_gate(monkeypatch, hold_seconds=1.0)
+    codes: dict[str, int] = {}
+    holder = _fire_in_thread(_writer_stop(tmp_path, root, 'agent-a'), env, codes, 'agent-a')
+    assert probe.entered.wait(timeout=10)
+    started = time.monotonic()
+    loser = run_hook(_writer_stop(tmp_path, root, 'agent-b'), env)
+    waited = time.monotonic() - started
+    holder.join(timeout=60)
+    assert not holder.is_alive()
+    assert codes == {'agent-a': HOOK_EXIT_SILENT}
+    assert loser == HOOK_EXIT_SILENT
+    assert probe.peak == 1, 'the loser ran the gate while the holder was still in it'
+    assert waited >= 0.5, 'the loser did not wait for the holder'
+    by_agent = {line['agent_id']: line for line in _log_lines(root)}
+    assert by_agent['agent-a']['outcome'] == by_agent['agent-b']['outcome'] == 'completed'
+    assert by_agent['agent-b']['counts'] == {'selected': 6, 'passed': 6, 'failed': 0}

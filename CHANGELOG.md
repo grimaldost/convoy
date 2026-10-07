@@ -17,13 +17,17 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 - **A gate's checks are compared with the hook timeout.** `hooks/hooks.json` gives both hook events
   1800 s, and a gate runs its checks one after another, each bounded by `timeout_seconds`, so a
-  gate whose checks can together outlast 1800 s is killed by Claude Code without a word.
-  `convoy gate --init` now lowers `timeout_seconds` until the scaffolded checks fit (a project
-  with six checks or fewer keeps the default 300 s, so today's scaffolds are unchanged), and
-  `convoy validate` on a gate-only file prints a warning on stderr when `checks x timeout_seconds`
-  exceeds the hook timeout. The exit code stays 0 and stdout stays `ok (gate-only)`. The number
-  is the package constant `HOOK_TIMEOUT_SECONDS`, and a manifest test pins it to
-  `hooks/hooks.json`.
+  gate whose checks can together outlast 1800 s is killed by Claude Code without a word. A
+  gate's worst case (`checks x timeout_seconds`) may now use 1500 s of the 1800 s: the rest
+  holds 30 s for the hook's own start-up and at least 270 s for a firing to wait while another
+  firing gates the same tree (see the judge lock under Fixed). `convoy gate --init` lowers
+  `timeout_seconds` until the scaffolded checks fit that budget: a Python project's five
+  checks keep the default 300 s, and the six that `--independent` writes get 250 s (they got
+  300 s, which filled the timeout and left no time to wait). `convoy validate` on a gate-only
+  file prints a warning on stderr when the worst case exceeds the budget, naming the kill when
+  it also exceeds the timeout. The exit code stays 0 and stdout stays `ok (gate-only)`. The
+  numbers are the package constants `HOOK_TIMEOUT_SECONDS` and `GATE_BUDGET_SECONDS`, and a
+  manifest test pins the first to `hooks/hooks.json`.
 
 ### Changed
 
@@ -71,10 +75,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   line is written, and every append holds `.convoy/hook.log.lock`. A firing waits at most 600 s
   (a third of the hook timeout), and less when its own gate needs the time: it waits only as long
   as leaves the gate's worst case (checks x `timeout_seconds`) and a 30 s margin inside the 1800 s
-  hook timeout, so a gate whose worst case fills the timeout does not wait at all. A firing that
-  waits out its bound is answered as a gate that could not run: exit 2 with a one-line reason,
-  recorded with the existing `usage` outcome, and on the judge's retry the subagent may stop, as
-  for any gate that could not run. A lock that names a process that is gone, left by a firing
+  hook timeout. A gate inside the 1500 s budget (see the timeout entry under Added) waits at
+  least 270 s; a gate whose worst case fills the timeout does not wait at all. A firing that
+  waits out its bound exits 2 with a one-line reason, as a gate that could not run does, and
+  is recorded in `.convoy/hook.log` with a new outcome, `busy`. **(consumer-affecting)** On the
+  judge's retry a lock still held lets the subagent stop, as for any gate that could not run,
+  recorded as `busy` with the reason `judge lock still held on the retry; the subagent stops
+  ungated`: the one stop the judge lets through without a verdict, kept apart from `usage` so
+  the log counts it. A lock that names a process that is gone, left by a firing
   Claude Code killed, is taken over, and so is a lock that names no pid and is older than ten
   seconds, or a `judge.lock.break` file left by a waiter killed mid-takeover; the error for a lock
   that cannot be taken over names both files. The run lock is unchanged: `convoy status`,

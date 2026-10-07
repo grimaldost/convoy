@@ -18,8 +18,8 @@ from pathlib import Path
 
 from convoy.core.spec import DEFAULT_GATE_TIMEOUT_SECONDS, Check, GateSpec, dump_gate_spec
 from convoy.interface.gate_service import (
+    GATE_BUDGET_SECONDS,
     GATE_SPEC_RELPATH,
-    HOOK_TIMEOUT_SECONDS,
     ORACLES_ENV,
     oracles_dir_for,
 )
@@ -249,9 +249,11 @@ def scaffold_gate(
         if path.exists():
             raise GateScaffoldError(f'refusing to overwrite existing path: {path}')
 
-    # The hook runs the checks one after another under one timeout, so the per-check bound
-    # is lowered until n checks fit it. Today's gates (n <= 6) keep the default.
-    timeout = min(DEFAULT_GATE_TIMEOUT_SECONDS, HOOK_TIMEOUT_SECONDS // len(checks))
+    # The hook runs the checks one after another under one timeout, and a firing that finds
+    # another firing's gate running in the tree waits out of the same timeout. So the
+    # per-check bound is lowered until n checks fit the gate budget: a Python project's five
+    # checks keep the default 300 s; with --independent's oracle, six get 250 s.
+    timeout = min(DEFAULT_GATE_TIMEOUT_SECONDS, GATE_BUDGET_SECONDS // len(checks))
     spec = GateSpec(id=root.name, checks=tuple(checks), timeout_seconds=timeout)
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(

@@ -39,10 +39,14 @@ because a hook that swallowed its own misconfiguration would look like a green g
 Firings that gate one tree take turns. Several subagents stopping at once each fire the
 judge, and two suites running in one tree share its caches and build output. A firing
 that runs a gate holds ``.convoy/judge.lock`` from just before the gate until its log line
-is written; another waits up to :data:`JUDGE_WAIT_SECONDS`, then is answered as a gate
-that could not run. The wait is also bounded by what the gate needs: a firing waits only
+is written; another waits up to :data:`JUDGE_WAIT_SECONDS`, then gives up loudly (exit 2,
+recorded as ``busy``). The wait is also bounded by what the gate needs: a firing waits only
 as long as leaves its own gate's worst case (checks x ``timeout_seconds``) inside the hook
-timeout, so a spec whose worst case fills the timeout does not wait at all. The lock orders
+timeout. A gate inside the budget (``gate_service.GATE_BUDGET_SECONDS``, which the scaffold
+fits and ``convoy validate`` warns past) leaves at least
+``gate_service.JUDGE_MIN_WAIT_SECONDS``; a spec whose worst case fills the timeout does not
+wait at all. On the retry a lock still held lets the subagent stop, recorded as ``busy``
+with its own reason: the one stop the judge lets through without a verdict. The lock orders
 judges. It does not make concurrent writers safe:
 subagents that edit one tree at the same time need a tree each (a worktree per agent),
 because each gate judges whatever the others have half-written.
@@ -72,6 +76,7 @@ from convoy import __version__
 from convoy.core.gate import GateUsageError, repair_brief
 from convoy.core.spec import SpecError
 from convoy.interface.gate_service import (
+    HOOK_MARGIN_SECONDS,
     HOOK_TIMEOUT_SECONDS,
     GateOutcome,
     find_gate_spec,
@@ -120,10 +125,6 @@ JUDGE_LOCK_NAME = 'judge.lock'
 # them. What a given firing actually waits is :func:`judge_wait_seconds`.
 JUDGE_WAIT_SECONDS = HOOK_TIMEOUT_SECONDS / 3
 JUDGE_POLL_SECONDS = 1.0
-
-# Held back from the hook timeout when a waiter plans its wait: the hook's own start-up (uv
-# resolving the environment) and the log append are not part of the gate's worst case.
-HOOK_MARGIN_SECONDS = 30
 
 # Every append holds ``hook.log.lock`` for the milliseconds it takes, so the line of a
 # firing that gave up waiting is written whole beside the holder's.
@@ -298,7 +299,8 @@ def judge_wait_seconds(worst_case: float) -> float:
     The wait and the gate run one after the other under one hook timeout, and Claude Code
     kills a hook that outlasts it without a word. So the wait is the lesser of
     :data:`JUDGE_WAIT_SECONDS` and what the timeout leaves after the gate's worst case and
-    :data:`HOOK_MARGIN_SECONDS`: zero when the gate alone fills the timeout.
+    ``HOOK_MARGIN_SECONDS``: at least ``JUDGE_MIN_WAIT_SECONDS`` for a gate inside
+    ``GATE_BUDGET_SECONDS``, zero when the gate alone fills the timeout.
     """
     room = HOOK_TIMEOUT_SECONDS - HOOK_MARGIN_SECONDS - worst_case
     return max(0.0, min(JUDGE_WAIT_SECONDS, room))
@@ -362,10 +364,11 @@ def _gate(
     env: Mapping[str, str],
     hold: Hold,
 ) -> tuple[GateOutcome, int, str] | HookResult:
-    """Run the gate: the outcome, its wall-clock and the spec id, or the loud usage result.
+    """Run the gate: the outcome, its wall-clock and the spec id, or the loud result.
 
-    A judge lock another firing still holds when the wait runs out is one more way the
-    gate could not run, answered like the others.
+    A judge lock another firing still holds when the wait runs out is answered like a gate
+    that could not run, but recorded as ``busy``, not ``usage``: nothing is wrong with the
+    spec or the tree, another firing was gating it.
     """
     started = time.monotonic()
     try:
@@ -379,7 +382,13 @@ def _gate(
         return HookResult(
             HOOK_EXIT_FEEDBACK,
             f'convoy hook: the gate could not run ({spec_path}): {exc}\n',
-            _record(payload, outcome='usage', error=str(exc), phases=list(phases), gate_ms=elapsed),
+            _record(
+                payload,
+                outcome='busy' if isinstance(exc, JudgeBusyError) else 'usage',
+                error=str(exc),
+                phases=list(phases),
+                gate_ms=elapsed,
+            ),
         )
     return outcome, round((time.monotonic() - started) * 1000), spec.id
 
@@ -450,9 +459,15 @@ def _decide_stop(
     if isinstance(gated, HookResult):
         if retry:
             # The gate could not run on the retry either; the subagent cannot act on
-            # that (it cannot edit its brief or the spec), so it may stop. Recorded.
+            # that (it cannot edit its brief or the spec, or free another firing's lock),
+            # so it may stop. Recorded, and a busy tree under its own reason: that stop
+            # carries no verdict, and the log is where it can be counted.
             record = dict(gated.record or {})
-            record['reason'] = 'gate could not run on the retry; the subagent may stop'
+            record['reason'] = (
+                'judge lock still held on the retry; the subagent stops ungated'
+                if record.get('outcome') == 'busy'
+                else 'gate could not run on the retry; the subagent may stop'
+            )
             return HookResult(HOOK_EXIT_SILENT, '', record)
         return gated
     outcome, gate_ms, series_id = gated
@@ -663,7 +678,8 @@ def run_hook(raw: bytes, env: Mapping[str, str]) -> int:
 
     A firing that runs a gate holds the tree's judge lock from just before the gate until
     its log line is written, so two firings never gate one tree at once. One that waits
-    out :func:`judge_wait_seconds` is answered as a gate that could not run.
+    out :func:`judge_wait_seconds` is answered as a gate that could not run, recorded as
+    ``busy``.
     """
     payload = parse_event(raw)
     if isinstance(payload, str):

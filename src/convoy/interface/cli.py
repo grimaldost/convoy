@@ -26,7 +26,10 @@ from convoy.interface.drivers.headless import (
 from convoy.interface.fs_probe import isolation_result
 from convoy.interface.gate_scaffold import GateScaffoldError, scaffold_gate
 from convoy.interface.gate_service import (
+    GATE_BUDGET_SECONDS,
+    HOOK_MARGIN_SECONDS,
     HOOK_TIMEOUT_SECONDS,
+    JUDGE_MIN_WAIT_SECONDS,
     advisory_only_detail,
     find_gate_spec,
     gate_brief_envelope,
@@ -206,16 +209,36 @@ def _validate_gate_only_or_exit(
         ]
         typer.echo(format_problems(problems), err=True)
         raise typer.Exit(EXIT_USAGE)
-    worst_case = len(spec.checks) * spec.timeout_seconds
-    if worst_case > HOOK_TIMEOUT_SECONDS:
-        typer.echo(
-            f'warning: {len(spec.checks)} checks x timeout_seconds = {spec.timeout_seconds} '
-            f'is {worst_case} s, over the hook timeout of {HOOK_TIMEOUT_SECONDS} s; Claude Code '
-            'kills a hook that outlasts it without a word. Lower timeout_seconds or split '
-            'the checks.',
-            err=True,
-        )
+    warning = _gate_budget_warning(len(spec.checks), spec.timeout_seconds)
+    if warning:
+        typer.echo(warning, err=True)
     typer.echo('ok (gate-only)')
+
+
+def _gate_budget_warning(checks: int, timeout_seconds: int) -> str:
+    """The advisory for a gate whose worst case passes the budget, or ``''``.
+
+    The threshold is ``GATE_BUDGET_SECONDS``, the one the scaffold fits its checks into
+    and the hook plans its wait against, not the bare hook timeout: a gate between the two
+    fits the timeout but leaves a firing that finds the tree busy too little time to wait.
+    """
+    worst_case = checks * timeout_seconds
+    if worst_case <= GATE_BUDGET_SECONDS:
+        return ''
+    found = (
+        f'warning: {checks} checks x timeout_seconds = {timeout_seconds} is {worst_case} s, '
+        f'over the {GATE_BUDGET_SECONDS} s a gate may use of the {HOOK_TIMEOUT_SECONDS} s '
+        'hook timeout'
+    )
+    if worst_case > HOOK_TIMEOUT_SECONDS:
+        consequence = 'Claude Code kills a hook that outlasts the timeout without a word'
+    else:
+        consequence = (
+            f'the rest holds {HOOK_MARGIN_SECONDS} s for the hook itself and at least '
+            f'{JUDGE_MIN_WAIT_SECONDS} s for a firing to wait while another firing gates the '
+            'same tree, so with this gate such a firing waits less, or not at all, and gives up'
+        )
+    return f'{found}: {consequence}. Lower timeout_seconds or split the checks.'
 
 
 class _SeriesFlagRejected(typer.BadParameter):
@@ -939,7 +962,8 @@ def hook() -> None:
     ``.convoy/gate.toml`` from the event's ``cwd`` upward — and this machine trusts the
     project (``convoy gate --init`` / ``--trust``). Green: exit 0 and no output. A gate
     that cannot run is exit 2 with a one-line reason, and so is a firing that waits out
-    600 s for another firing gating the same tree (``.convoy/judge.lock``). A
+    its bound for another firing gating the same tree (``.convoy/judge.lock``): up to
+    600 s, less when its own gate's worst case needs the time. A
     ``[convoy-phase: <tag>]`` marker in the subagent's brief scopes the gate. Every firing
     appends one JSON line to ``.convoy/hook.log``. Exit codes are the hook protocol's (0
     silent, 2 feedback), not convoy's.

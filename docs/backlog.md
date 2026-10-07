@@ -1094,11 +1094,15 @@ firing is at least reconstructible from the previous one.
 **Status.** Built on the 2026-10-06 maintenance branch, unreleased. A gate spec carries one
 `timeout_seconds` applied to each check, so the sum is the check count times that value.
 `HOOK_TIMEOUT_SECONDS` (1800) is a package constant, pinned to `hooks/hooks.json` by
-CONV-B64's test; `convoy gate --init` lowers `timeout_seconds` until the scaffolded checks fit
-it (a project with six checks or fewer keeps the default 300 s); and `convoy validate` on a
-gate-only file warns on stderr when checks × `timeout_seconds` exceeds it, with the exit code
-and stdout unchanged. The third clause — the hook's record carrying the budget it ran under —
-is not built.
+CONV-B64's test. A gate's worst case may use `GATE_BUDGET_SECONDS` (1500) of it, which keeps
+30 s for the hook itself and at least 270 s for a firing waiting on CONV-B62's judge lock;
+the bare timeout was the first threshold, and a blind review measured what it left: the
+six-check scaffold filled it, so a second firing could not wait at all. `convoy gate --init`
+lowers `timeout_seconds` until the scaffolded checks fit the budget (five checks keep the
+default 300 s, the six-check `--independent` scaffold gets 250 s), and `convoy validate` on a
+gate-only file warns on stderr when checks × `timeout_seconds` exceeds the budget, with the
+exit code and stdout unchanged. The third clause — the hook's record carrying the budget it
+ran under — is not built.
 
 **Effort** S · **Source** [review]
 
@@ -1123,13 +1127,18 @@ which the operator arranges; the lock only orders the judging.
 
 **Status.** Built on the 2026-10-06 maintenance branch, unreleased (T61c). A firing that
 runs a gate holds `.convoy/judge.lock` until its log line is written, and every append
-holds `.convoy/hook.log.lock`. One that waits out its bound is a gate that could not run
-(exit 2, outcome `usage`). The bound is at most 600 s and shrinks so that the wait plus the
-gate's worst case fits the 1800 s hook timeout with a 30 s margin; a gate whose worst case
-fills the timeout does not wait. A lock naming a process that is gone is taken over, and so
-is one naming no pid after ten seconds, or a leftover `judge.lock.break` file. The scaffold's
-`.convoy/.gitignore` covers both locks. The writers case is documented in the skill, not
-built.
+holds `.convoy/hook.log.lock`. One that waits out its bound exits 2 like a gate that could
+not run, recorded with the new outcome `busy`. The bound is at most 600 s and shrinks so that
+the wait plus the gate's worst case fits the 1800 s hook timeout with a 30 s margin; a gate
+inside CONV-B61's 1500 s budget waits at least 270 s, and a gate whose worst case fills the
+timeout does not wait. On the judge's retry a lock still held lets the subagent stop, as for
+any gate that could not run, recorded as `busy` with its own reason, so the stops that
+carried no verdict are counted rather than read as `usage`. Blocking that retry again was
+weighed and not built: it would break the one-repair-round bound, and under a gate that
+leaves no time to wait it would spin. A lock naming a process that is gone is taken over,
+and so is one naming no pid after ten seconds, or a leftover `judge.lock.break` file. The
+scaffold's `.convoy/.gitignore` covers both locks. The writers case is documented in the
+skill, not built.
 
 **Effort** S · **Source** [review] · **Row** T61c
 
@@ -1743,8 +1752,8 @@ release step 0 in `CONTRIBUTING.md` the next cut is a minor. The same tag serves
 |---|---|---|
 | CONV-B70 (T66a) | A run refuses to start on a working tree with uncommitted changes. A run commits each PR with `git add -A`, so a modified tracked file, a staged file or an untracked file the repository does not ignore went into the first PR's commit. The start pre-flight now reads `git status --porcelain` and raises a `workspace` problem naming up to three paths and counting the rest: `convoy run` exits 3 and `convoy_run` answers `outcome: "usage"`. `reset` / `--fresh` skips it, since it discards those changes; a workspace that is not a repository is not read; there is no override flag (T66b, watch). Under `resume` the message names the tree-only cleanup `git reset --hard` and then `git clean -fd` (two commands: PowerShell 5.1 does not parse `&&`), which keeps every branch and every ignored file — never `convoy clean`, which deletes the integration branch the resume continues from — and the `dead` message gains that step between `convoy unlock` and `--resume`. `convoy_run` with `dry_run: true` now runs the same start pre-flight, so it also reports the problems of the `reset` / `resume` options as passed. **(consumer-affecting: runs that used to start now refuse; a new problem kind; a changed `dead` message)** | unreleased |
 | CONV-B17 (T37a) | All six verbs that take the series file positionally answer `--series` and `--series-file` with a usage error (exit 2, unchanged) naming `convoy <verb> <series.toml>`, instead of Click's bare "No such option". | unreleased |
-| CONV-B62 (T61c) | Hook firings that gate one tree take turns on `.convoy/judge.lock`, and every log append holds `.convoy/hook.log.lock`; a firing that waits out its bound (at most 600 s, and short enough that the wait plus its gate's worst case fits the hook timeout) exits 2 as a gate that could not run, and a lock naming a process that is gone, or none for ten seconds, is taken over. The row's Change now names the second remedy: concurrent writers need a worktree each, which no lock gives. | unreleased |
-| CONV-B61 | `HOOK_TIMEOUT_SECONDS` (1800) is a package constant; `convoy gate --init` lowers `timeout_seconds` until the scaffolded checks fit it, and `convoy validate` on a gate-only file warns on stderr when checks × `timeout_seconds` exceeds it. | unreleased |
+| CONV-B62 (T61c) | Hook firings that gate one tree take turns on `.convoy/judge.lock`, and every log append holds `.convoy/hook.log.lock`; a firing that waits out its bound (at most 600 s, and short enough that the wait plus its gate's worst case fits the hook timeout; at least 270 s for a gate inside CONV-B61's budget) exits 2 like a gate that could not run, recorded as `busy`, and a lock naming a process that is gone, or none for ten seconds, is taken over. A lock still held on the judge's retry lets the subagent stop, recorded as `busy` with its own reason. **(consumer-affecting: a new `hook.log` outcome, `busy`)** The row's Change now names the second remedy: concurrent writers need a worktree each, which no lock gives. | unreleased |
+| CONV-B61 | `HOOK_TIMEOUT_SECONDS` (1800) is a package constant, and a gate's worst case may use `GATE_BUDGET_SECONDS` (1500) of it, leaving 30 s for the hook and at least 270 s for a firing waiting on the judge lock; `convoy gate --init` lowers `timeout_seconds` until the scaffolded checks fit the budget, and `convoy validate` on a gate-only file warns on stderr when checks × `timeout_seconds` exceeds it. | unreleased |
 | CONV-B64 (test half) | `tests/test_manifest.py` pins `hooks/hooks.json`: it parses, wires `convoy hook` on both events, and carries the timeout `HOOK_TIMEOUT_SECONDS` names. The doctrine line is held. | unreleased |
 | CONV-B09 (a) (T71a) | `CONTRIBUTING.md` §Release discipline states both install paths — an install takes the default branch's tip, an existing install refreshes only on a version change — in place of the one-path rationale. Supersedes T34a's wording. | unreleased |
 | CONV-B66 (T57b) | `docs/GUARDRAILS.md`'s hook-trust rule names the autouse fixture `_no_real_convoy_home` in its *Enforced by:* line. The fixture existed; its attestation did not, and the failure it prevents was real: three `--init` tests had written live trust entries into a developer's real `~/.convoy/hook-trust.toml`. | unreleased |

@@ -32,6 +32,7 @@ from convoy.interface.drivers.headless import (
     EXIT_USAGE,
     RunOutcome,
 )
+from convoy.interface.gate_service import GATE_BUDGET_SECONDS
 from convoy.interface.git import Git, GitError
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.reporter import NullReporter, StderrReporter
@@ -266,12 +267,34 @@ def test_validate_warns_when_a_gate_can_outlast_the_hook_timeout(
     assert '2100' in result.stderr
 
 
-def test_validate_stays_quiet_when_a_gate_fits_the_hook_timeout(
+def test_validate_warns_when_a_gate_leaves_a_waiting_firing_no_room(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """6 checks x 300 s = 1800 s fits the hook timeout but leaves nothing to wait with.
+
+    A firing that finds another firing's gate running in the tree waits only as long as
+    its own gate's worst case leaves, so this one would give up at once. The threshold is
+    the one the scaffold fits its checks into and the hook plans its wait against.
+    """
+    workspace, _, _ = _layout(tmp_path)
+    series_file = tmp_path / 'gate.toml'
+    series_file.write_text(_wide_gate_toml(6, 300))
+    monkeypatch.chdir(workspace)
+
+    result = runner.invoke(cli.app, ['validate', str(series_file)])
+    assert result.exit_code == EXIT_OK
+    assert result.stdout.strip() == 'ok (gate-only)'
+    assert f'{GATE_BUDGET_SECONDS} s' in result.stderr
+    assert '1800' in result.stderr
+    assert 'wait' in result.stderr
+
+
+def test_validate_stays_quiet_when_a_gate_fits_the_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workspace, _, _ = _layout(tmp_path)
     series_file = tmp_path / 'gate.toml'
-    series_file.write_text(_wide_gate_toml(6, 300))  # exactly 1800: at the limit, not over
+    series_file.write_text(_wide_gate_toml(5, 300))  # exactly 1500: at the budget, not over
     monkeypatch.chdir(workspace)
 
     result = runner.invoke(cli.app, ['validate', str(series_file)])

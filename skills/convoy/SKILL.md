@@ -384,18 +384,22 @@ the messenger reuses that verdict and runs the gate itself only when no judge re
 exists for that agent and session, or the record is older than an hour. The hook's
 timeout is 1800 s; each check is bounded by the spec's `timeout_seconds`, and a gate
 whose checks together exceed the hook timeout is killed by Claude Code — the one path on
-which nothing is said, so keep the sum under the timeout (`convoy validate` warns when it
-is not). Plugin hooks live under the config directory, and convoy's own spawns run under config isolation, so the plugin's
+which nothing is said. Keep the sum within 1500 s, the gate budget, which leaves 30 s for
+the hook itself and at least 270 s for a firing to wait its turn (below); `convoy validate`
+warns past it, and `convoy gate --init` scaffolds inside it. Plugin hooks live under the config directory, and convoy's own spawns run under config isolation, so the plugin's
 hooks never fire inside a governed run; a hook a project wires in its own
 `.claude/settings.json` survives isolation and would fire inside one — the lock
 refusal above is what keeps it from gating a driven tree.
 
 Firings that gate one tree take turns: each holds `.convoy/judge.lock` from just before
-its gate until its log line is written, and one that waits out its bound is answered as a
-gate that could not run (exit 2, recorded as `usage`). The bound is at most 600 s and less
-when the firing's own gate needs the time: the wait and the gate's worst case (checks x
-`timeout_seconds`) must fit the 1800 s hook timeout with a 30 s margin, so a gate whose worst
-case fills the timeout does not wait. A lock left by a killed firing is taken over once the
+its gate until its log line is written, and one that waits out its bound exits 2 like a
+gate that could not run, recorded as `busy`. The bound is at most 600 s and less when the
+firing's own gate needs the time: the wait and the gate's worst case (checks x
+`timeout_seconds`) must fit the 1800 s hook timeout with a 30 s margin, so a gate inside the
+1500 s budget waits at least 270 s and a gate whose worst case fills the timeout does not
+wait. On the judge's retry a lock still held lets the subagent stop without a verdict,
+recorded as `busy` with its own reason; count those lines to see how often a busy tree let a
+subagent through ungated. A lock left by a killed firing is taken over once the
 process it names is gone, or, when it names none, once it is ten seconds old. The lock orders judges. It does not make
 concurrent writers safe: subagents that edit at the same time need a tree each (a worktree
 per agent), because each gate judges whatever the others have half-written.
