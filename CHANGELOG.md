@@ -17,9 +17,12 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 **Minor**, by the test in `docs/design/02-formats.md`: two entries below carry
 **(consumer-affecting)** — a dirty-tree refusal and a new `busy` outcome in `.convoy/hook.log`.
-Main now holds two merged PRs since 0.15.0: #110 (feedback maintenance) and #109 (a scored
+
+A feedback-maintenance round and one isolation fix. A run refuses a working tree with
+uncommitted changes instead of committing its stray files into the first PR; hook firings that
+gate one tree take turns under a judge lock whose wait fits inside the hook timeout; and a scored
 spawn no longer reads the operator's own CLAUDE.md from above its working directory, which
-restores convoy's C5 guarantee).
+restores the isolation the C5 agent-spawn invariant promises.
 
 ### Added
 
