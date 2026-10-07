@@ -35,7 +35,7 @@ from convoy.interface.drivers.headless import (
 from convoy.interface.git import Git, GitError
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.reporter import NullReporter, StderrReporter
-from convoy.interface.run_summary import summarize_run
+from convoy.interface.run_summary import TREE_ONLY_CLEANUP, summarize_run
 from convoy.interface.workspace_lock import lock_path
 
 runner = CliRunner()
@@ -775,6 +775,22 @@ def test_run_without_the_flag_still_uses_cwd(
 
     assert runner.invoke(cli.app, ['run', str(series_file)]).exit_code == EXIT_OK
     assert seen == [Path.cwd()]
+
+
+def test_run_on_a_dirty_tree_exits_usage_and_names_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run stages with `git add -A`, so a stray file would ride into the first PR's commit."""
+    workspace, series_file, _ = _repo_with_series(tmp_path)
+    (workspace / 'private-notes.json').write_text('{}\n', encoding='utf-8')
+    ran: list[object] = []
+    monkeypatch.setattr('convoy.interface.run_service.run_series', lambda *a, **k: ran.append(1))
+
+    result = runner.invoke(cli.app, ['run', str(series_file), '-w', str(workspace)])
+
+    assert result.exit_code == EXIT_USAGE
+    assert 'private-notes.json' in result.output
+    assert ran == []
 
 
 # --- clean --------------------------------------------------------------------------------
@@ -1653,6 +1669,9 @@ def test_status_human_output_says_how_to_recover_a_dead_run(tmp_path: Path) -> N
     # without touching either.
     assert 'convoy unlock' in result.stdout
     assert 'convoy clean' not in result.stdout
+    # The killed spawn's uncommitted debris would make --resume refuse, so the message
+    # names the cleanup that clears it without touching a branch.
+    assert TREE_ONLY_CLEANUP in result.stdout
 
 
 # --- status of a detached run that never reached the ledger -------------------------------

@@ -32,6 +32,25 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   `LINEUP_RECONCILED` moves to 2026-09-26. The table stays a floor: a series that resolves its
   own tier or names a `model` never reaches it, and a tier that falls through still raises the
   pre-flight advisory naming this date.
+- **A run refuses to start on a working tree with uncommitted changes.**
+  **(consumer-affecting)** A run commits each PR with `git add -A`, and its checkouts carry
+  uncommitted changes along, so a modified tracked file, a staged file, or an untracked file
+  the repository does not ignore was committed into the first PR and reached the integration
+  branch. One untracked JSON file in a workspace root came close. The start pre-flight now reads
+  `git status --porcelain` and refuses with a new problem kind, `workspace`, located at the
+  workspace path, naming up to three paths and counting the rest: `convoy run` exits 3, and
+  `convoy_run` answers `outcome: "usage"` with the problem. `reset` / `--fresh` skips the
+  check, since it discards those changes, and a workspace that is not a git repository is not
+  read. Runs that used to start on a dirty tree now refuse, and there is no override flag.
+  Under `resume` the message names a cleanup that touches only the tree,
+  `git reset --hard && git clean -fd`, which keeps every branch and every ignored file; never
+  `convoy clean`, which deletes the integration branch the resume continues from, and not
+  `git checkout -- .`, which leaves a staged file staged. The `dead` status message gains the
+  same step between `convoy unlock` and `--resume`. `convoy_run` with `dry_run: true` now runs
+  the start pre-flight a real run and a detached launch already gate on, so it also reports
+  the `workspace` problem and the problems of the `reset` / `resume` options as passed
+  (`resume` with no integration branch, `resume` with `reset`), which it used to ignore. Its
+  envelope keys are unchanged. `convoy validate` does not read the tree.
 
 ### Fixed
 

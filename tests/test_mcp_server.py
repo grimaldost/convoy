@@ -25,6 +25,7 @@ from convoy.interface.mcp.server import (
     convoy_run,
     summarize_run,
 )
+from convoy.interface.run_summary import TREE_ONLY_CLEANUP
 from convoy.interface.workspace_lock import WorkspaceBusyError, lock_path
 
 
@@ -731,6 +732,85 @@ def test_dry_run_takes_precedence_over_detach(
     assert recorded == []
 
 
+# --- convoy_run: a dirty working tree ----------------------------------------------------
+#
+# A run stages with `git add -A`, so whatever sits in the tree when it starts rides into the
+# first PR's commit. The dry run, the real run and the detached launch run the same start
+# pre-flight, so all three answer with the same problem.
+
+
+def _dirty_repo(tmp_path: Path) -> tuple[Path, Path]:
+    """A series plus a real git workspace on ``base`` holding one untracked file."""
+    series_file, ws = _detach_setup(tmp_path)
+    for args in (
+        ('init', '-b', 'base'),
+        ('config', 'user.email', 'test@example.com'),
+        ('config', 'user.name', 'Test'),
+        ('commit', '--allow-empty', '-m', 'seed'),
+    ):
+        subprocess.run(['git', *args], cwd=ws, check=True, capture_output=True, text=True)
+    (ws / 'private-notes.json').write_text('{}\n', encoding='utf-8')
+    return series_file, ws
+
+
+def _workspace_problems(result: dict[str, Any]) -> list[dict[str, Any]]:
+    return [problem for problem in result['problems'] if problem['kind'] == 'workspace']
+
+
+def test_dry_run_refuses_a_dirty_tree(tmp_path: Path) -> None:
+    series_file, ws = _dirty_repo(tmp_path)
+
+    result = srv._run_impl(
+        str(series_file),
+        str(ws),
+        dry_run=True,
+        config_isolation=True,
+        reset=False,
+        resume=False,
+        detach=False,
+    )
+
+    assert result['ok'] is False
+    assert result['outcome'] == 'usage'
+    [problem] = _workspace_problems(result)
+    assert 'private-notes.json' in problem['message']
+    assert set(result) == {'ok', 'outcome', 'series_id', 'problems', 'advisories'}
+
+
+def test_dry_run_reports_the_run_options_problems_too(tmp_path: Path) -> None:
+    """A dry run answers what a real run with the same options would, resume included."""
+    series_file, ws = _dirty_repo(tmp_path)
+    (ws / 'private-notes.json').unlink()
+
+    result = asyncio.run(
+        convoy_run(series_file=str(series_file), workspace=str(ws), dry_run=True, resume=True)
+    )
+
+    assert result['outcome'] == 'usage'
+    assert [problem['kind'] for problem in result['problems']] == ['resume']
+
+
+def test_a_real_run_and_a_detach_refuse_a_dirty_tree_with_the_same_problem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    series_file, ws = _dirty_repo(tmp_path)
+    ran: list[int] = []
+    monkeypatch.setattr('convoy.interface.run_service.run_series', lambda *a, **k: ran.append(1))
+    launched: list[dict[str, Any]] = []
+    monkeypatch.setattr(srv, 'launch_detached', _record_launch(launched))
+
+    dry = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws), dry_run=True))
+    real = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws)))
+    detached = asyncio.run(convoy_run(series_file=str(series_file), workspace=str(ws), detach=True))
+
+    for result in (real, detached):
+        assert result['ok'] is False
+        assert result['outcome'] == 'usage'
+        assert _workspace_problems(result) == _workspace_problems(dry)
+    assert ran == []
+    assert launched == []
+
+
 # --- advisories in the run envelope --------------------------------------------------------
 #
 # Read from the run_start line for the same reason `halt` is read from run_complete: the
@@ -833,6 +913,10 @@ def test_status_reports_dead_when_the_given_workspace_lock_owner_is_gone(tmp_pat
 
     assert envelope['state'] == 'dead'
     assert envelope['convoy_version'] == __version__
+    # Release the lock, clear the killed spawn's debris without touching a branch, resume.
+    assert 'convoy unlock' in envelope['message']
+    assert TREE_ONLY_CLEANUP in envelope['message']
+    assert 'convoy clean' not in envelope['message']
 
 
 def test_status_without_a_workspace_answers_exactly_as_before(tmp_path: Path) -> None:

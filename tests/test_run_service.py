@@ -190,7 +190,10 @@ def test_fresh_clears_the_debris_a_halt_leaves_behind(
 def test_fresh_false_touches_nothing_in_the_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The escalation is opt-in: without the flag a dirty tree is left exactly as it was."""
+    """The escalation is opt-in: without the flag a dirty tree is left exactly as it was.
+
+    The run refuses it at pre-flight (see the dirty-tree tests below) rather than wiping it.
+    """
     ws, series, _outputs = _clean(tmp_path)
     _init_repo(ws)
     (ws / 'debris.txt').write_text('mine\n')
@@ -200,7 +203,8 @@ def test_fresh_false_touches_nothing_in_the_tree(
     )
     monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: None)
 
-    run_series_headless(series, ws, run_id='r', fresh=False)
+    with pytest.raises(PreflightError):
+        run_series_headless(series, ws, run_id='r', fresh=False)
 
     assert (ws / 'debris.txt').read_text() == 'mine\n'
 
@@ -471,3 +475,173 @@ def test_start_report_separates_advice_from_what_gates_the_run(tmp_path: Path) -
     assert report.problems == ()
     assert report.clean is True
     assert [a.kind for a in report.advisories] == ['gate']
+
+
+# --- a dirty working tree ----------------------------------------------------------------
+#
+# A run stages every change with `git add -A`, so anything already sitting in the tree when
+# it starts rides into the first PR's commit. That is how an untracked JSON file in a
+# workspace root nearly went into a commit: pre-flight read nothing about the tree. These
+# use real git repositories and stub every spawn.
+
+
+def _branches(ws: Path) -> list[str]:
+    listed = subprocess.run(
+        ['git', 'branch', '--format=%(refname:short)'],
+        cwd=ws,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return sorted(listed.stdout.split())
+
+
+def _tree_problems(problems: tuple[Problem, ...] | list[Problem]) -> list[Problem]:
+    return [problem for problem in problems if problem.kind == 'workspace']
+
+
+def test_an_untracked_file_refuses_the_run_before_the_probe_or_any_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws, series, outputs = _clean(tmp_path)
+    _init_repo(ws)
+    (ws / 'private-notes.json').write_text('{"not": "for a commit"}\n', encoding='utf-8')
+
+    probed: list[int] = []
+    ran: list[int] = []
+    monkeypatch.setattr(run_service, 'seat_problem', lambda *_a, **_k: probed.append(1))
+    monkeypatch.setattr(run_service, 'run_series', lambda *_a, **_k: ran.append(1))
+
+    with pytest.raises(PreflightError) as excinfo:
+        run_series_headless(series, ws, run_id='r')
+
+    [problem] = _tree_problems(excinfo.value.problems)
+    assert 'private-notes.json' in problem.message
+    assert problem.where == str(ws)
+    assert probed == []  # refused before the seat probe
+    assert ran == []  # and before the engine
+    assert _branches(ws) == ['base']  # no integration or PR branch was created
+    assert not outputs.exists()
+    assert (ws / 'private-notes.json').exists()  # the refusal touches nothing
+
+
+def test_a_modified_tracked_file_refuses_the_run(tmp_path: Path) -> None:
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+    (ws / 'README.md').write_text('edited by hand\n', encoding='utf-8')
+
+    report = run_service.start_report(series, ws, run_id='r')
+
+    [problem] = _tree_problems(report.problems)
+    assert 'README.md' in problem.message
+
+
+def test_a_gitignored_file_does_not_refuse_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+    (ws / '.gitignore').write_text('*.log\n', encoding='utf-8')
+    _git(ws, 'add', '.gitignore')
+    _git(ws, 'commit', '-m', 'ignore logs')
+    (ws / 'local.log').write_text('ignored on purpose\n', encoding='utf-8')
+    monkeypatch.setattr(
+        run_service, 'run_series', lambda *_a, **_k: RunOutcome('completed', True, EXIT_OK)
+    )
+
+    assert run_series_headless(series, ws, run_id='r') == RunOutcome('completed', True, EXIT_OK)
+
+
+def test_fresh_proceeds_on_a_dirty_tree_because_it_wipes_it(tmp_path: Path) -> None:
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+    (ws / 'debris.txt').write_text('left by a halt\n', encoding='utf-8')
+
+    report = run_service.start_report(series, ws, run_id='r', fresh=True)
+
+    assert _tree_problems(report.problems) == []
+
+
+def test_the_listing_is_bounded_and_counts_every_path(tmp_path: Path) -> None:
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+    for index in range(5):
+        (ws / f'stray-{index}.json').write_text('{}\n', encoding='utf-8')
+
+    [problem] = _tree_problems(run_service.start_report(series, ws, run_id='r').problems)
+
+    assert '5 uncommitted' in problem.message
+    assert sum(f'stray-{index}.json' in problem.message for index in range(5)) == 3
+    assert '2 more' in problem.message
+
+
+def _halted_resume_workspace(tmp_path: Path) -> tuple[Path, Series]:
+    """A workspace a budget halt left behind: the integration branch, plus spawn debris.
+
+    The debris covers all three shapes a truncated spawn leaves: a modified tracked file,
+    an untracked file, and a file it staged without committing. ``*.log`` is ignored, so a
+    test can show an ignored file surviving the cleanup.
+    """
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+    (ws / '.gitignore').write_text('*.log\n', encoding='utf-8')
+    _git(ws, 'add', '.gitignore')
+    _git(ws, 'commit', '-m', 'ignore logs')
+    _git(ws, 'branch', 'integration')
+    _git(ws, 'checkout', '-b', 'pr-1')
+    (ws / 'README.md').write_text('half-written by a truncated spawn\n', encoding='utf-8')
+    (ws / 'scratch.json').write_text('{}\n', encoding='utf-8')
+    (ws / 'staged.txt').write_text('staged, never committed\n', encoding='utf-8')
+    _git(ws, 'add', 'staged.txt')
+    return ws, series
+
+
+def test_resume_on_a_dirty_tree_refuses_and_names_a_tree_only_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws, series = _halted_resume_workspace(tmp_path)
+    ran: list[int] = []
+    monkeypatch.setattr(run_service, 'run_series', lambda *_a, **_k: ran.append(1))
+
+    with pytest.raises(PreflightError) as excinfo:
+        run_series_headless(series, ws, run_id='r', resume=True)
+
+    assert ran == []
+    [problem] = _tree_problems(excinfo.value.problems)
+    for path in ('README.md', 'scratch.json', 'staged.txt'):
+        assert path in problem.message
+    assert run_service.TREE_ONLY_CLEANUP in problem.message
+    # Not `convoy clean`: it deletes the integration branch resume continues from.
+    assert 'convoy clean' not in problem.message
+
+
+def test_the_named_cleanup_clears_the_debris_and_keeps_the_branch_resume_needs(
+    tmp_path: Path,
+) -> None:
+    ws, series = _halted_resume_workspace(tmp_path)
+    (ws / 'local.log').write_text('ignored, and kept\n', encoding='utf-8')
+
+    # Exactly the command the message names, run the way an operator would paste it.
+    subprocess.run(run_service.TREE_ONLY_CLEANUP, shell=True, cwd=ws, check=True)
+
+    assert Git(ws).status_porcelain() == ()
+    assert Git(ws).branch_exists('integration')
+    assert (ws / 'local.log').exists()  # ignored files survive
+    assert run_service.start_report(series, ws, run_id='r', resume=True).problems == ()
+    history = subprocess.run(
+        ['git', 'log', '--all', '--name-only', '--format='],
+        cwd=ws,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert 'scratch.json' not in history.stdout
+    assert 'staged.txt' not in history.stdout
+
+
+def test_a_workspace_that_is_not_a_repository_has_no_tree_problem(tmp_path: Path) -> None:
+    """Many callers pre-flight a plain directory; the engine reports that later, as before."""
+    ws, series, _ = _clean(tmp_path)
+    (ws / 'anything.txt').write_text('not under git\n', encoding='utf-8')
+
+    assert _tree_problems(run_service.start_report(series, ws, run_id='r').problems) == []

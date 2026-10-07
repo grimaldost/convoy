@@ -18,18 +18,23 @@ from convoy.core.telemetry import RunAbandoned
 from convoy.interface.config_isolation import isolated_config
 from convoy.interface.drivers.headless import RunOutcome, format_problems, run_series
 from convoy.interface.gate_runner import SubprocessGateRunner
-from convoy.interface.git import Git
+from convoy.interface.git import Git, GitError
 from convoy.interface.headless_spawn import HeadlessSpawn
 from convoy.interface.preflight_probe import preflight
 from convoy.interface.reporter import NullReporter, Reporter
 from convoy.interface.run_summary import (
     ABANDONED_BY_CLEAN_REASON,
+    TREE_ONLY_CLEANUP,
     orphaned_run_id,
     run_recorded,
 )
 from convoy.interface.seat_probe import seat_problem
 from convoy.interface.telemetry_writer import TelemetryWriter
 from convoy.interface.workspace_lock import workspace_lock
+
+# How many uncommitted paths a tree problem names before it only counts the rest — the
+# bound the gate-scope advisory uses for the files it names.
+_NAMED_PATHS = 3
 
 
 class PreflightError(Exception):
@@ -89,6 +94,61 @@ def _resume_problems(
     return []
 
 
+def _changed_path(line: str) -> str:
+    """The path a ``git status --porcelain`` line names: the new name of a rename or copy."""
+    entry = line[3:]
+    return entry.split(' -> ', 1)[1] if ' -> ' in entry else entry
+
+
+def _tree_problems(workspace: Path, *, fresh: bool, resume: bool) -> list[Problem]:
+    """Refuse to start on a working tree with uncommitted changes.
+
+    A run commits each PR with ``git add -A``, and every checkout it makes carries
+    uncommitted changes along, so anything in the tree when the run starts — a modified
+    tracked file, a staged file, an untracked file the repository does not ignore — is
+    committed into the first PR and reaches the integration branch. That nearly happened
+    to an untracked JSON file left in a workspace root, because nothing before the first
+    commit read the tree.
+
+    Not checked under ``fresh``, which discards exactly these changes before it stages
+    anything. Under ``resume`` the usual cause is the debris a halted spawn left
+    uncommitted, so the message names a cleanup that touches only the tree: ``convoy
+    clean`` would delete the integration branch the resume continues from.
+
+    A workspace that is not a git repository (or a machine with no ``git``) has no tree to
+    read; it answers nothing here and the run fails later, where it always did.
+    """
+    if fresh:
+        return []
+    try:
+        lines = Git(workspace).status_porcelain()
+    except GitError, OSError:
+        return []
+    if not lines:
+        return []
+    paths = [_changed_path(line) for line in lines]
+    named = ', '.join(paths[:_NAMED_PATHS])
+    if len(paths) > _NAMED_PATHS:
+        named += f' and {len(paths) - _NAMED_PATHS} more'
+    found = (
+        f'the working tree has {len(paths)} uncommitted change(s) ({named}); a run commits '
+        'with `git add -A`, so they would be committed into the first PR'
+    )
+    if resume:
+        remedy = (
+            'They are most likely what the halted spawn left uncommitted. Discard them with '
+            f'`{TREE_ONLY_CLEANUP}`, which keeps every branch (the integration branch '
+            'included) and every ignored file, then resume; commit or ignore anything you '
+            'mean to keep first'
+        )
+    else:
+        remedy = (
+            'Commit them, ignore them in .gitignore, or remove them; reset (CLI: --fresh) '
+            'discards them on request, along with the series branches'
+        )
+    return [Problem(kind='workspace', where=str(workspace), message=f'{found}. {remedy}.')]
+
+
 def _run_id_problems(series: Series, run_id: str) -> list[Problem]:
     """Refuse a run id the ledger already holds lines for.
 
@@ -140,8 +200,9 @@ def start_report(
 ) -> PreflightReport:
     """Everything pre-flight has to say about starting this run, spending nothing.
 
-    The free half of the gate: the structural and filesystem pre-flight plus the
-    consistency checks on the options themselves. The seat probe is deliberately not here —
+    The free half of the gate: the structural and filesystem pre-flight, the consistency
+    checks on the options themselves, and a read of the working tree (see
+    :func:`_tree_problems`). The seat probe is deliberately not here —
     it costs a spawn and needs the isolated config dir, so it runs inside
     :func:`run_series_headless` once the workspace is locked.
 
@@ -159,6 +220,7 @@ def start_report(
     problems = [
         *report.problems,
         *_resume_problems(series, workspace, fresh=fresh, resume=resume),
+        *_tree_problems(workspace, fresh=fresh, resume=resume),
         *_run_id_problems(series, run_id),
     ]
     return PreflightReport(problems=tuple(problems), advisories=report.advisories)
@@ -198,7 +260,8 @@ def run_series_headless(
     truncated spawn's work is committed and so leaves exactly the debris branch deletion
     cannot remove — which then aborts ``fresh``'s own checkout. Off by default: with
     ``fresh`` false, a leftover branch still fails loud exactly as before this option
-    existed, and nothing in the tree is touched.
+    existed, nothing in the tree is touched, and a tree with uncommitted changes is a
+    pre-flight problem (see :func:`_tree_problems`).
 
     When ``resume`` is true, the run continues the existing integration branch instead of
     creating one, and skips every PR whose work it already contains — so a halt does not

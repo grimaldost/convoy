@@ -50,7 +50,6 @@ from convoy.interface.gate_service import (
     trust_status,
 )
 from convoy.interface.git import GitError
-from convoy.interface.preflight_probe import preflight
 from convoy.interface.run_service import PreflightError, run_series_headless, start_report
 from convoy.interface.run_summary import error_kind, status_of, summarize_run
 from convoy.interface.scaffold import ScaffoldError, scaffold
@@ -73,9 +72,10 @@ def _detached_impl(
 
     The free pre-flight still runs **here**, in the calling process, so a malformed series
     is answered immediately rather than discovered by polling — detaching is about not
-    waiting for the run, not about deferring what can be known now. What genuinely needs
-    the running process (the seat probe, the workspace lock, git) is left to the child, and
-    lands in its result file; see :func:`~convoy.interface.run_summary.detached_result`.
+    waiting for the run, not about deferring what can be known now; a dirty working tree is
+    one of those things. What genuinely needs the running process (the seat probe, the
+    workspace lock, every git mutation) is left to the child, and lands in its result file;
+    see :func:`~convoy.interface.run_summary.detached_result`.
     """
     # Only the blocking half gates a launch; the child re-runs pre-flight and records the
     # advisories on its own run_start line, so reporting them here too would double them.
@@ -147,10 +147,13 @@ def _run_impl(
 
     ws = Path(workspace)
     if dry_run:
+        # The same start pre-flight a real run and a detached launch gate on, options
+        # included, so a dry run answers what the run it rehearses would: a dirty tree, or
+        # a resume with nothing to resume, is refused here rather than only on the real run.
         # ``advisories`` is always present (empty when there is nothing to say) so a
         # consumer can read the key unconditionally. It never affects ``ok``/``outcome``:
         # advice describes an unusual series, not an invalid one.
-        report = preflight(series, ws)
+        report = start_report(series, ws, run_id=make_run_id(), fresh=reset, resume=resume)
         return {
             'ok': report.clean,
             'outcome': 'validated' if report.clean else 'usage',
@@ -248,9 +251,9 @@ async def convoy_run(
         bool,
         Field(
             description=(
-                'When true, only pre-flight the series (structure, paths, gate isolation) and '
-                'return {ok, outcome, problems}: no git mutation, no agent spawn, no spend. '
-                'Do this before a real run.'
+                'When true, only pre-flight the series (structure, paths, gate isolation, a '
+                'clean working tree, and the reset/resume options) and return {ok, outcome, '
+                'problems}: no git mutation, no agent spawn, no spend. Do this before a real run.'
             )
         ),
     ] = False,
