@@ -1998,3 +1998,42 @@ def test_gate_brief_usage_paths_still_emit_one_object(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_USAGE
     envelope = json.loads(result.stdout)
     assert envelope['outcome'] == 'usage'
+
+
+_SERIES_VERBS = ['validate', 'run', 'clean', 'unlock', 'status', 'gate']
+
+
+@pytest.mark.parametrize('with_positional', [False, True], ids=['no-positional', 'positional'])
+@pytest.mark.parametrize('spelling', ['--series', '--series-file'])
+@pytest.mark.parametrize('verb', _SERIES_VERBS)
+def test_series_flag_spelling_is_rejected_naming_the_positional(
+    verb: str,
+    spelling: str,
+    with_positional: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The MCP surface takes ``series_file=``; the CLI takes the file positionally. A caller
+    who types the flag form must be told the positional form, not Click's bare 'No such option'.
+    """
+    ran: list[object] = []
+    monkeypatch.setattr(cli, 'run_series_headless', lambda *a, **k: ran.append((a, k)))
+    monkeypatch.chdir(tmp_path)
+    args = [verb]
+    if with_positional:
+        args.append('series.toml')
+    args += [spelling, 'x.toml']
+
+    result = runner.invoke(cli.app, args)
+
+    assert result.exit_code == 2
+    assert f'convoy {verb} <series.toml>' in result.output
+    assert 'No such option' not in result.output
+    assert ran == []
+
+
+@pytest.mark.parametrize('verb', _SERIES_VERBS)
+def test_series_flag_spelling_is_hidden_from_help(verb: str) -> None:
+    result = runner.invoke(cli.app, [verb, '--help'])
+    assert result.exit_code == EXIT_OK
+    assert '--series' not in result.output

@@ -21,6 +21,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   own tier or names a `model` never reaches it, and a tier that falls through still raises the
   pre-flight advisory naming this date.
 
+### Fixed
+
+- **The CLI names the positional series file when given `--series` or `--series-file`.** All six
+  verbs that take a series file (`validate`, `run`, `clean`, `unlock`, `status`, `gate`) take it
+  positionally, but the MCP tools call it `series_file=`, so a caller carrying that name over to
+  the command line typed a flag that does not exist and got Click's bare "No such option". Each
+  verb now declares both spellings as a hidden, eager option that exits 2, the same code as before,
+  with `the series file is positional, not a flag: convoy <verb> <series.toml>`. The exit-code
+  table is unchanged and the flags stay out of `--help`.
+
 ## [0.15.0] - 2026-09-13
 
 **Minor**, by the install-requirement rule this release adds to

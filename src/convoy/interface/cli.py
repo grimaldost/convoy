@@ -208,9 +208,50 @@ def _validate_gate_only_or_exit(
     typer.echo('ok (gate-only)')
 
 
+class _SeriesFlagRejected(typer.BadParameter):
+    """A usage error (exit 2) that shows its message as written.
+
+    Typer's own ``BadParameter`` is the one public usage-error class that survives typer
+    vendoring Click (from 0.27 on, a raw ``click.UsageError`` escapes as a traceback); the
+    override drops its "Invalid value for ..." prefix.
+    """
+
+    def format_message(self) -> str:
+        return self.message
+
+
+def _named_series_rejected(ctx: typer.Context, _param: object, value: str | None) -> None:
+    """Reject ``--series`` / ``--series-file`` by naming the positional form.
+
+    The MCP surface takes ``series_file=``, so a caller who carries that name over to the
+    command line types a flag the CLI does not have. Click would answer with a bare "No such
+    option"; this answers with the form that works. It raises ``UsageError``, which exits 2
+    exactly as Click's own unknown-option error does, so the exit taxonomy does not change.
+    The option is declared eager so this runs before Click reports a missing positional.
+    """
+    if value is not None:
+        raise _SeriesFlagRejected(
+            f'the series file is positional, not a flag: convoy {ctx.info_name} <series.toml>',
+            ctx=ctx,
+        )
+
+
+_RejectedSeriesFlag = Annotated[
+    str | None,
+    typer.Option(
+        '--series',
+        '--series-file',
+        hidden=True,
+        is_eager=True,
+        callback=_named_series_rejected,
+    ),
+]
+
+
 @app.command()
 def validate(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -286,6 +327,7 @@ def gate(
             show_default=False,
         ),
     ] = None,
+    _series_flag: _RejectedSeriesFlag = None,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -527,6 +569,7 @@ def _isolation_disabled(environ: Mapping[str, str], flag: bool) -> bool:
 @app.command()
 def run(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     quiet: bool = typer.Option(
         False, '--quiet', '-q', help='Silence progress narration (which is written to stderr).'
     ),
@@ -678,6 +721,7 @@ def _clean_plan(git: Git, series: Series, workspace: Path) -> list[str]:
 @app.command()
 def clean(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -750,6 +794,7 @@ def clean(
 @app.command()
 def unlock(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     workspace: Annotated[
         Path | None, typer.Option('--workspace', '-w', help=_WORKSPACE_HELP)
     ] = None,
@@ -815,6 +860,7 @@ def unlock(
 @app.command()
 def status(
     series_file: Path,
+    _series_flag: _RejectedSeriesFlag = None,
     run_id: Annotated[
         str,
         typer.Option(
