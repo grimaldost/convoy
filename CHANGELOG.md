@@ -57,7 +57,9 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   the start pre-flight a real run and a detached launch already gate on, so it also reports
   the `workspace` problem and the problems of the `reset` / `resume` options as passed
   (`resume` with no integration branch, `resume` with `reset`), which it used to ignore. Its
-  envelope keys are unchanged. `convoy validate` does not read the tree.
+  envelope keys are unchanged. `convoy validate` does not read the tree: it takes no
+  `--fresh` or `--resume`, so it cannot tell whether the run would read it, and the MCP
+  `dry_run` is the one rehearsal of this refusal.
 
 ### Fixed
 

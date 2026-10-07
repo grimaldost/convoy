@@ -577,6 +577,18 @@ def test_the_listing_is_bounded_and_counts_every_path(tmp_path: Path) -> None:
     assert '2 more' in problem.message
 
 
+def test_the_refusal_names_the_wiping_option_by_both_spellings(tmp_path: Path) -> None:
+    """The same message reaches `convoy run` and `convoy_run`, whose option is `reset`."""
+    ws, series, _ = _clean(tmp_path)
+    _init_repo(ws)
+    (ws / 'debris.txt').write_text('left by hand\n', encoding='utf-8')
+
+    [problem] = _tree_problems(run_service.start_report(series, ws, run_id='r').problems)
+
+    assert '`reset` (CLI `--fresh`)' in problem.message
+    assert 'deletes every untracked file' in problem.message
+
+
 def _halted_resume_workspace(tmp_path: Path) -> tuple[Path, Series]:
     """A workspace a budget halt left behind: the integration branch, plus spawn debris.
 

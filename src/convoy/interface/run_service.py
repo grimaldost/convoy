@@ -143,7 +143,7 @@ def _tree_problems(workspace: Path, *, fresh: bool, resume: bool) -> list[Proble
         )
     else:
         remedy = (
-            'Commit them, ignore them in .gitignore, or remove them. The CLI flag --fresh '
+            'Commit them, ignore them in .gitignore, or remove them. `reset` (CLI `--fresh`) '
             'also clears the tree, but it deletes every untracked file without listing it, '
             "and the series' branches with them"
         )
