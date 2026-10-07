@@ -13,6 +13,15 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-07
+
+**Patch**, by the test in `docs/design/02-formats.md`: no entry below carries
+**(consumer-affecting)**.
+
+The CLI help prints the TOML section names again (`[[checks]]`, `[series]` and the rest were
+read as Rich markup and dropped), and three docs now match the code: the `convoy_status`
+signature, the ADR index, and the hook's exit code for a payload that is not a hook event.
+
 ### Fixed
 
 - **`convoy --help`, `convoy gate --help` and `convoy validate --help` keep the TOML section names.**
