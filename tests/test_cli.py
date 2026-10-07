@@ -2120,3 +2120,24 @@ def test_series_flag_spelling_is_hidden_from_help(verb: str) -> None:
     result = runner.invoke(cli.app, [verb, '--help'])
     assert result.exit_code == EXIT_OK
     assert '--series' not in result.output
+
+
+def _plain_help(args: list[str]) -> str:
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == EXIT_OK
+    # CI forces colour, and Rich then splits the text with escape codes.
+    return re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+
+
+@pytest.mark.parametrize('verb', ['gate', 'validate'])
+def test_verb_help_keeps_the_bracketed_toml_section_names(verb: str) -> None:
+    # Rich markup reads `[checks]` as a style tag and drops it, which left the help
+    # saying "Run a series' `` against ..." with the section names missing.
+    plain = _plain_help([verb, '--help'])
+    assert '[[checks]]' in plain
+    assert '[series]' in plain
+
+
+def test_root_help_keeps_the_bracketed_toml_section_names() -> None:
+    plain = _plain_help(['--help'])
+    assert '[[checks]]' in plain

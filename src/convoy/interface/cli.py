@@ -72,6 +72,9 @@ app = typer.Typer(
     help='Governed, measurable multi-PR execution engine.',
     no_args_is_help=True,
     add_completion=False,
+    # Help text names TOML sections (`[[checks]]`, `[series]`); Rich markup would read them as
+    # style tags and drop them from the rendered help.
+    rich_markup_mode=None,
 )
 
 

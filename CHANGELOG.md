@@ -13,6 +13,20 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`convoy --help`, `convoy gate --help` and `convoy validate --help` keep the TOML section names.**
+  typer renders help through Rich markup, which read `[checks]`, `[series]`, `[branches]`, `[paths]`,
+  `[review]` and `[[prs]]` as style tags and dropped them, leaving help text such as "Run a series' ``
+  against a workspace once". The app now turns Rich markup off, so the section names print as written.
+
+### Changed
+
+- **Docs match the code in three places.** The README shows the `convoy_status` tool with its
+  `workspace` argument; the ADR index lists ADR 0010 once; and the README's `convoy hook` row and
+  the skill state that a payload that is not a hook event (empty, malformed, or not a JSON object on
+  stdin) exits 2, which tests already pinned.
+
 ## [0.16.0] - 2026-10-07
 
 **Minor**, by the test in `docs/design/02-formats.md`: two entries below carry
