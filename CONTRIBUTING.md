@@ -116,7 +116,7 @@ Cadence: cut a release after each backlog build round (a batch of
    pull the default branch tip (which carries the old version until the release PR
    merges), so the front page's visibility is distinct from marketplace delivery.
 
-**Why the tag is the step that matters.** On the reading this section adopts, the
+**Why the tag and the release still matter.** On the reading this section adopts, the
 version bump reaching the default branch is what refreshes an existing install; the
 tag and the release are what make that version label checkable, by people and by the
 `release-tag` workflow, and a bump that is never tagged is a label nothing verifies.
