@@ -276,12 +276,19 @@ def test_a_relative_payload_cwd_resolves_against_the_process_cwd(tmp_path: Path)
 
 @dataclass(frozen=True)
 class _Layout:
-    """One arrangement of spec, trust and payload, built under a fresh ``tmp_path``."""
+    """One arrangement of spec, trust and payload, built under a fresh ``tmp_path``.
+
+    *relative* spells every path the hook reads from its input — ``CLAUDE_PROJECT_DIR``, the
+    payload's ``cwd``, ``CONVOY_HOME``, ``CONVOY_TRUSTED_ROOTS``, ``CONVOY_GATE_SPEC`` —
+    relative to a process cwd that is not the payload's ``cwd``, so a guard resolving them
+    against any other base than the full hook does disagrees with it.
+    """
 
     name: str
     spec_at: str  # 'none' | 'cwd' | 'parent' | 'project_dir'
     trust: str  # see _arrange
     payload: str = 'stop'  # 'stop' | 'dispatch' | 'not-json' | 'not-object'
+    relative: bool = False
 
 
 _SPEC_PLACES = ('none', 'cwd', 'parent', 'project_dir')
@@ -305,10 +312,19 @@ _LAYOUTS = [
     _Layout('not-object', 'none', 'no-file', 'not-object'),
     _Layout('explicit-spec', 'none', 'explicit', 'stop'),
 ]
+_LAYOUTS += [
+    _Layout(f'relative-{layout.name}', layout.spec_at, layout.trust, layout.payload, True)
+    for layout in _LAYOUTS
+    if layout.payload in ('stop', 'dispatch')
+]
 
 
 def _arrange(tmp_path: Path, layout: _Layout) -> tuple[bytes, dict[str, str], Path]:
-    """Build *layout*: the stdin bytes, the environment and the payload's cwd."""
+    """Build *layout*: the stdin bytes, the environment and the process cwd to run in.
+
+    The process cwd is the payload's ``cwd`` for an absolute layout and the layout's base
+    directory, two levels above it, for a relative one.
+    """
     base = tmp_path / 'layout'
     project = base / 'project'
     cwd = project / 'sub'
@@ -354,12 +370,27 @@ def _arrange(tmp_path: Path, layout: _Layout) -> tuple[bytes, dict[str, str], Pa
             env['CONVOY_GATE_SPEC'] = str(base / 'missing.toml')
         case _:
             raise AssertionError(layout.trust)
+    process_cwd = cwd
+    payload_cwd = str(cwd)
+    if layout.relative:
+        # Written above with absolute paths (trust_project resolves CONVOY_HOME against the
+        # test's own cwd); respelled now, relative to the base the hook will run in.
+        process_cwd = base
+        payload_cwd = os.path.relpath(cwd, base)
+        for key in ('CLAUDE_PROJECT_DIR', 'CONVOY_HOME', 'CONVOY_GATE_SPEC'):
+            if key in env:
+                env[key] = os.path.relpath(env[key], base)
+        if 'CONVOY_TRUSTED_ROOTS' in env:
+            env['CONVOY_TRUSTED_ROOTS'] = os.pathsep.join(
+                os.path.relpath(item, base)
+                for item in env['CONVOY_TRUSTED_ROOTS'].split(os.pathsep)
+            )
     match layout.payload:
         case 'stop':
-            raw = _raw(_stop(cwd))
+            raw = _raw(_stop(payload_cwd))
         case 'dispatch':
             payload = json.loads((_FIXTURES / 'posttooluse_agent.json').read_text(encoding='utf-8'))
-            payload['cwd'] = str(cwd)
+            payload['cwd'] = payload_cwd
             raw = _raw(payload)
         case 'not-json':
             raw = b'{not json'
@@ -367,7 +398,7 @@ def _arrange(tmp_path: Path, layout: _Layout) -> tuple[bytes, dict[str, str], Pa
             raw = b'[]'
         case _:
             raise AssertionError(layout.payload)
-    return raw, env, cwd
+    return raw, env, process_cwd
 
 
 def _tree_files(root: Path) -> set[Path]:
@@ -376,11 +407,13 @@ def _tree_files(root: Path) -> set[Path]:
 
 @pytest.mark.parametrize('layout', _LAYOUTS, ids=[layout.name for layout in _LAYOUTS])
 def test_whenever_the_guard_skips_the_full_hook_is_silent_and_writes_nothing(
-    tmp_path: Path, layout: _Layout
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: _Layout
 ) -> None:
     raw, env, cwd = _arrange(tmp_path, layout)
+    # Both sides run in the same process cwd: the guard is handed it, decide() reads it.
+    monkeypatch.chdir(cwd)
     delegate = _Recorder()
-    exit_code = _guard(raw, env, cwd, delegate)
+    exit_code = _guard(raw, env, Path.cwd(), delegate)
     if delegate.calls:
         assert delegate.calls == [raw]
         return
@@ -401,14 +434,17 @@ def test_whenever_the_guard_skips_the_full_hook_is_silent_and_writes_nothing(
 
 
 def test_the_parity_table_exercises_both_answers(tmp_path: Path) -> None:
-    """Non-vacuity: the table holds layouts the guard skips and layouts it delegates."""
-    answers: set[bool] = set()
+    """Non-vacuity: the table holds layouts the guard skips and layouts it delegates.
+
+    Both answers occur among the absolute layouts and among the relative ones.
+    """
+    answers: set[tuple[bool, bool]] = set()
     for index, layout in enumerate(_LAYOUTS):
         raw, env, cwd = _arrange(tmp_path / str(index), layout)
         delegate = _Recorder()
         _guard(raw, env, cwd, delegate)
-        answers.add(bool(delegate.calls))
-    assert answers == {True, False}
+        answers.add((layout.relative, bool(delegate.calls)))
+    assert answers == {(False, True), (False, False), (True, True), (True, False)}
 
 
 # --- the module itself ------------------------------------------------------------------------
