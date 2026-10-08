@@ -27,9 +27,9 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   `uv run --project <plugin root> convoy hook` with the same stdin and returns its exit
   code; an explicit `CONVOY_GATE_SPEC`, a payload that is not a JSON object, and a trust file
   it cannot read are all handed to `convoy hook`. `convoy hook` itself is unchanged. A
-  synthetic `SubagentStop` in a directory with no gate took a median of 747 ms with v0.16.1
-  and 225 ms with this change (one Windows 11 machine, 10 runs each after one warm-up,
-  measured back to back). Reproduce with `uv run python scripts/hook_latency.py` on this
+  synthetic `SubagentStop` in a directory with no gate, over five back-to-back pairs on one
+  Windows 11 machine (10 runs each after one warm-up), had a median of 173-233 ms with this
+  change and 501-687 ms with v0.16.1 (197 ms and 587 ms across the five). Reproduce with `uv run python scripts/hook_latency.py` on this
   tree, and with `git worktree add <tmp> v0.16.1` followed by `uv run python
   scripts/hook_latency.py --plugin-root <tmp>` for the earlier release. An armed firing now
   starts uv twice, once for the guard and once for `convoy hook`; a SIGTERM or SIGINT the

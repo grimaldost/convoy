@@ -365,9 +365,9 @@ silently, so installing the plugin arms nothing until a project opts in. The plu
 handler runs a standard-library guard (`src/convoy/interface/hook_guard.py`) before
 `convoy hook`: when no spec is found, or one is found in a project this machine does not
 trust, it exits 0 without starting `convoy`, so a firing with nothing to gate costs uv's
-start-up and one short Python run (a median of 225 ms on one Windows 11 machine, against
-747 ms for v0.16.1's handler, which started `convoy hook` on every firing;
-`scripts/hook_latency.py` measures it). Everything else, including anything the guard does
+start-up and one short Python run (over five back-to-back pairs on one Windows 11 machine,
+a median of 173-233 ms, against 501-687 ms for v0.16.1's handler, which started `convoy hook`
+on every firing; `scripts/hook_latency.py` measures it). Everything else, including anything the guard does
 not understand, goes to `convoy hook` unchanged. The operator's
 trust is the per-machine switch: `convoy gate --trust` records the project root **and
 the spec's hash** in `CONVOY_HOME/hook-trust.toml` (default `~/.convoy/`); an untrusted
