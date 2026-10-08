@@ -44,7 +44,7 @@ def _series(
             timeout_seconds=60,
             budgets=Budgets(implementation=1.0, review=1.0, fix=1.0),
             tools=Tools(implementation=('Read',), review=(), fix=()),
-            model='claude-haiku-4-5',
+            model='claude-haiku-5-5',
         ),
         review=Review(blocking=False, max_fix_attempts=0),
         checks=checks,

@@ -43,7 +43,7 @@ runner = CliRunner()
 
 
 def _series_toml(
-    prompts: Path, outputs: Path, *, model: str = 'claude-haiku-4-5', tier: str = ''
+    prompts: Path, outputs: Path, *, model: str = 'claude-haiku-5-5', tier: str = ''
 ) -> str:
     model_line = f'model = "{model}"' if model else ''
     tier_line = f'tier = "{tier}"' if tier else ''
@@ -1188,7 +1188,7 @@ def _fake_completed(monkeypatch: pytest.MonkeyPatch, outputs: Path) -> None:
                 'num_turns': 3,
                 'duration_s': 1.5,
                 'cost_usd': 0.25,
-                'effective_model': 'claude-haiku-4-5',
+                'effective_model': 'claude-haiku-5-5',
             },
         ]
         (outputs / 'spawns.jsonl').write_text(
@@ -1238,7 +1238,7 @@ def test_json_emits_the_run_envelope_on_stdout(
     # The full trace is referenced, never inlined.
     assert payload['telemetry_path'].endswith('spawns.jsonl')
     assert [pr['pr_id'] for pr in payload['prs']] == ['pr-1']
-    assert payload['prs'][0]['effective_model'] == 'claude-haiku-4-5'
+    assert payload['prs'][0]['effective_model'] == 'claude-haiku-5-5'
     # Reconstructible from its own artefact -- the gate envelope's existing pattern.
     assert payload['convoy_version'] == __version__
 
@@ -1339,7 +1339,7 @@ def _spawn_line(run_id: str, pr_id: str, cost: float) -> dict[str, object]:
         'num_turns': 4,
         'duration_s': 1.0,
         'cost_usd': cost,
-        'effective_model': 'claude-haiku-4-5',
+        'effective_model': 'claude-haiku-5-5',
         'classification': 'ok',
     }
 

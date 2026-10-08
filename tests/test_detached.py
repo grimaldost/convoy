@@ -38,7 +38,7 @@ integration = "integration"
 prompts = "{prompts.as_posix()}"
 outputs = "{outputs.as_posix()}"
 [governance]
-model = "claude-haiku-4-5"
+model = "claude-haiku-5-5"
 effort = "low"
 permission_mode = "acceptEdits"
 timeout_seconds = 60
