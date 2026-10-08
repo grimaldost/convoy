@@ -7,6 +7,10 @@ recorded as convoy's settled identity, and that this record names the price and 
 evidence that would settle it either way. Serves backlog row CONV-B27, which asked for the
 position itself; this is the answer that row's own cross-review note licensed.
 
+See also [ADR-0011](0011-the-runner-is-frozen-the-gate-is-the-product.md) (2026-10-08),
+which freezes the runner, narrowing this record's "does not freeze the engine" for it, and
+declines the priced measurement for good, so it no longer "remains available".
+
 ## Context
 
 Two independent inputs reached the same split. A landscape brief found that every

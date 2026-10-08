@@ -12,6 +12,12 @@
 agent to implement each one, gates every result against deterministic checks,
 integrates the green branches, and records what each step cost.
 
+The gate is the part under development. The runner is frozen: it takes only security fixes,
+fixes for defects that corrupt data or a workspace, the replacement of a legacy floor model
+id, and the removal of its parts, and it is
+retired only after an end-to-end run in which the gate's judge fires for agents the
+Workflow tool starts ([ADR-0011](docs/adr/0011-the-runner-is-frozen-the-gate-is-the-product.md)).
+
 ## Quick start
 
 Requirements: git, [uv](https://docs.astral.sh/uv/), and a co-located

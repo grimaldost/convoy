@@ -22,6 +22,18 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   The `convoy init` starter model is `claude-haiku-5-5`, and the example series in
   `docs/design/02-formats.md` follows. A series that reaches the floor for `weak` or `mid` now runs
   a different model; an explicit `model` or a series `[governance.tier_models]` is unaffected.
+- **The runner is frozen; the gate is the product.** [ADR-0011](docs/adr/0011-the-runner-is-frozen-the-gate-is-the-product.md),
+  accepted on 2026-10-08, freezes `convoy run` and `convoy_run`, the headless driver, the
+  spawn adapter, the seat probe, detached runs and the run telemetry: they take only security
+  fixes, fixes for defects that corrupt data or a workspace, the replacement of a floor model
+  id the platform lists as legacy or retires, and backlog rows that retire parts of the
+  runner. `convoy gate`, `convoy hook`, the gate spec and the trust list keep being
+  developed. The runner is retired only after an end-to-end run in which the gate's judge
+  fires for agents the Workflow tool starts; the ADR removes nothing, and the frozen runner
+  stays installed, documented and tested except for the parts an excepted retire row
+  removes. The freeze is stated in text, not enforced by a check. `AGENTS.md`, `README.md`
+  and `skills/convoy/SKILL.md` say which half is developed, and the backlog rows that wait
+  on the freeze or are excepted from it say so.
 
 ## [0.17.0] - 2026-10-08
 
