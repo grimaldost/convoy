@@ -13,6 +13,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-08
+
+**Patch**, by the test in `docs/design/02-formats.md`: no entry below carries
+**(consumer-affecting)**.
+
+The floor lineup moves to the 5.5 models, and ADR-0011 freezes the runner and keeps the gate
+as the product.
+
 ### Changed
 
 - **The floor's `weak` and `mid` tiers resolve to the 5.5 models.** `DEFAULT_TIER_MODELS` now maps
