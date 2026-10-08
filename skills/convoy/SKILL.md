@@ -34,6 +34,11 @@ failure, integrates the green branches, and records **per-spawn economy** (token
 turns, cost, duration) as an append-only, versioned trace. It is headless —
 fire-and-walk-away, no human checkpoints.
 
+Of the two capabilities, the gate is the one under development. The runner is frozen: it
+still works as documented here, and takes only security fixes, fixes for defects that
+corrupt data or a workspace, and the removal of its parts
+([ADR-0011](../../docs/adr/0011-the-runner-is-frozen-the-gate-is-the-product.md)).
+
 The plugin exposes four MCP tools:
 
 - **`convoy_run`** — run a series (or, with `dry_run`, pre-flight it for free; or,

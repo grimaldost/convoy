@@ -22,3 +22,4 @@ were written retroactively (2026-07-09) for founding decisions already shipped;
 | [0008](0008-phase-scoped-checks.md) | Phase-scoped checks, and a non-blocking advisory channel | Accepted |
 | [0009](0009-thin-governed-layer-position-deferred.md) | The thin-governed-layer position, deferred on measurement cost | Accepted — records a deferral |
 | [0010](0010-the-artefact-carries-the-lineup.md) | The artefact carries the lineup; the built-in table is a floor | Accepted |
+| [0011](0011-the-runner-is-frozen-the-gate-is-the-product.md) | The runner is frozen; the gate is the product | Accepted |

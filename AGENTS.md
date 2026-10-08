@@ -5,6 +5,12 @@ canonical playbook for any coding agent (or human) modifying this repository.
 `CLAUDE.md` and any other per-tool entry files redirect here so there is exactly
 one source of truth.
 
+**Which half is developed.** The gate (`convoy gate`, `convoy hook`, the gate spec and the
+trust list) is the product and takes new work. The runner (`convoy run` and everything that
+drives a spawn) is frozen to security fixes, fixes for defects that corrupt data or a
+workspace, and rows that retire parts of it — see
+[ADR-0011](docs/adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
+
 **Audience routing.** If you are *using* convoy to run a series, read
 [skills/convoy/SKILL.md](skills/convoy/SKILL.md) instead — it documents the tools,
 the series.toml schema, and the result envelope. This file is for *changing*

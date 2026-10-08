@@ -534,6 +534,8 @@ at detach pre-flight too, so an operator learns the seat is dead before designin
 around it rather than after. The fail-closed behaviour is correct and stays; what changes is
 when it speaks and what it says.
 
+**Status (2026-10-08).** The open rest waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
+
 **Effort** M · **Source** [triage] · **Rows** T42a · **Status** partially shipped in
 0.14.0 — the pre-spawn credential-expiry read and its located message (`interface/seat_probe.py`,
 T60a in the 2026-09-13 delta triage) ship; refreshing the credential before copying it, and
@@ -662,6 +664,8 @@ that an option was added. The other direction is worth knowing before anyone tre
 envelope as internal: that harness's row FATH-B36 may retire the arm outright. Establish
 which way it goes rather than assuming either. [cross-review]
 
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
+
 **Effort** M · **Source** [review] + [research] + [cross-review]
 
 ### CONV-B11 — A scaffolded series is non-portable by construction and leads with the lane that has never gone red.
@@ -694,6 +698,8 @@ weaker one, and it is the one CONV-B32 and CONV-B33 actually rest on; the imprec
 would have been read as evidence the mechanism does not work, which is not what the field
 says.
 
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
+
 **Effort** M · **Source** [triage] + [review] · **Row** T33a
 
 ### CONV-B12 — `[governance]` carries model, effort, permissions, budgets and tools, so every other standing rule has exactly one carrier: the per-prompt brief.
@@ -713,6 +719,8 @@ stating rather than leaving to inference. **(consumer-affecting: a new series.to
 field here as a general standing directive with the commit-message policy as its first
 instance, rather than a single-purpose key that has to be widened one release later.
 [cross-review]
+
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
 
 **Effort** M · **Source** [triage] + [cross-review] · **Row** T35a
 
@@ -844,6 +852,8 @@ that never writes a terminal line, so the ledger cannot answer for the run after
 plus `RunComplete` with a distinct outcome). `interface/drivers/headless.py:235-243`,
 `core/telemetry.py`. **(consumer-affecting)**
 
+**Status (2026-10-08).** Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md), unless the owner classifies it as a fix for a defect that corrupts a workspace.
+
 **Effort** S · **Source** [triage] + [review] · **Row** T15b
 
 ### CONV-B17 — The CLI rejects the argument name the MCP tool just taught the operator.
@@ -972,6 +982,8 @@ No convoy behaviour depended on the wrong number — the row had not been built 
 the row's whole argument for how strongly to recommend the field, which is why the
 correction is recorded rather than quietly overwritten.
 
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
+
 **Effort** S–M on top of CONV-B12 · **Source** [cross-review] · **Gate** CONV-B12
 
 ### CONV-B42 — The remedy a dead run advertises is heavier than the situation needs, and the branch that blocks a restart still has to be deleted by hand.
@@ -1050,6 +1062,8 @@ waiter that tested for existence fired at once and had to test for a non-empty f
 and a reader of the outputs directory cannot tell started from finished by the file alone.
 (b) stays gated on CONV-B46. [triage: 2026-09-26 three-PR run, §Friction]
 
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
+
 **Effort** S for (a) and (c) · S for (b), gated · **Source** [triage] · **Gate** CONV-B46 for (b) · **Rows** T44a, T44b, T44c
 
 ### CONV-B44 — After a halt caused by a mis-authored check, `resume` deletes a branch that the corrected checks pass on.
@@ -1067,6 +1081,8 @@ halted run touches only `[[checks]]`, re-gate the existing branch before deletin
 integrate on green. The condition is narrow on purpose: a series edit that touched prompts
 or PR definitions means the branch was built against different instructions and the current
 delete-and-re-implement behaviour is correct.
+
+**Status (2026-10-08).** Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md), unless the owner classifies it as a fix for a defect that corrupts a workspace.
 
 **Effort** M · **Source** [triage] · **Rows** T44d
 
@@ -1248,6 +1264,8 @@ is in use. The other half — realised spend against an all-strong run of the sa
 still unmeasured, and one run is not a campaign, so CONV-B33 stays gated. [triage:
 2026-09-26 three-PR run; economy re-derived from its ledger]
 
+**Status (2026-10-08).** Excepted from the runner freeze of [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md), as the measurement that gates the CONV-B33 retirement.
+
 **Effort** S to measure · **Source** [review]
 
 ### CONV-B19 — Measure the three isolation arms before keeping the credential copy.
@@ -1269,6 +1287,8 @@ booleans each: does it authenticate, do operator hooks/plugins/skills load, does
 workspace's own CLAUDE.md load. Keep `_ENV_STRIP` regardless: billing and routing diversion
 is a separate concern and no flag covers it. Feeds CONV-B34.
 
+**Status (2026-10-08).** Excepted from the runner freeze of [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md), as the measurement that gates the CONV-B34 retirement.
+
 **Effort** S to measure, M to act · **Source** [review] + [research]
 
 ### CONV-B20 — Nothing counts how often an advisory fires, so no producer's calibration can be revisited on evidence.
@@ -1283,6 +1303,8 @@ panel measured **zero** actionable firings over 324 real files for the first one
 **Change.** Count advisory firings per run in the ledger, then hold every new detector
 behind a measured base rate.
 
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
+
 **Effort** S · **Source** [review] + [triage]
 
 ### CONV-B21 — Terminal (whole-series) checks that run once after the final PR integrates.
@@ -1293,6 +1315,8 @@ gate-scope rule at the cost of one line per series, and three consecutive waves 
 with no post-run surprises. The mechanism is still distinct from phase scoping (pay an
 expensive whole-series check once rather than per-PR) but its remaining yield is now
 unmeasured. Needs a new position in the run loop, after the PR walk. [triage]
+
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
 
 **Effort** M · **Source** [triage] · **Row** T19b
 
@@ -1309,6 +1333,8 @@ to repair. Both inputs agree it should be re-opened after CONV-B01 lands, and th
 CONV-B01 plus the sizing rule in CONV-B08 is the cheaper half of the cluster. [triage;
 review]
 
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
+
 **Effort** L · **Source** [triage] + [review] · **Row** T32b
 
 ### CONV-B23 — Per-role `effort` under `[governance]`.
@@ -1318,6 +1344,8 @@ review]
 and applies to implementation and repair alike, though a fix spawn repairing a small gate
 red plausibly wants a different level. Distinct axis from the per-PR override. Singleton.
 **(consumer-affecting)** [triage]
+
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
 
 **Effort** S · **Source** [triage] · **Row** T22a
 
@@ -1333,6 +1361,8 @@ case the row exists for), and a foreign-flavour token must never be stat-ed (a P
 resolves drive-relative on Windows, and a UNC or dead mapped drive blocks for up to 21
 seconds). CONV-B11 addresses the same problem constructively and would retire all three.
 [triage]
+
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
 
 **Effort** M if ever built · **Source** [triage] · **Rows** T23a, T27a, T27b
 
@@ -1357,6 +1387,8 @@ unserved; the open question is whether convoy should run independent branches co
 or stay sequential and cheap. Needs a design before a build: concurrent checkouts against
 one workspace is precisely what the workspace lock forbids, so parallelism implies
 per-branch worktrees and a different isolation story. [research; review]
+
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
 
 **Effort** L · **Source** [research] + [review]
 
@@ -1464,6 +1496,8 @@ second is more machinery than one consumer justifies. **CONV-B43(b) is gated on 
 because it changes a documented file's contract and would otherwise ship through exactly the
 gap described here.
 
+**Status (2026-10-08).** Waits for the next phase: the runner is frozen by [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
+
 **Effort** S for the checklist shape · M for a version line · **Source** [triage] · **Status** watch · **Rows** T46a
 
 ### CONV-B51 — The manual's two newest behavioural claims have no mechanism pinning them.
@@ -1557,28 +1591,28 @@ the promotion gate.
 
 | Row | Substance | Home |
 |---|---|---|
-| T3a | DAG-aware continuation past a halt (continue PRs whose dependency closure excludes the halted PR). Economics largely subsumed by `--resume`. | `interface/drivers/headless.py`, `core/dag.py` |
-| T4b | Commit-provenance telemetry: agent-authored vs engine-synthesized. **(consumer-affecting)** | `core/telemetry.py` |
+| T3a | DAG-aware continuation past a halt (continue PRs whose dependency closure excludes the halted PR). Economics largely subsumed by `--resume`. Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `interface/drivers/headless.py`, `core/dag.py` |
+| T4b | Commit-provenance telemetry: agent-authored vs engine-synthesized. **(consumer-affecting)** Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `core/telemetry.py` |
 | T5a | Mixed-tier design decision, resolved by ADR-0007. Propagation to the sibling planning tool that emits per-PR tiers is still outstanding; see CONV-B18. | `core/spec.py`, `docs/design/02-formats.md` |
-| T6a | `files touched: N (+A/-B)` in per-PR implementation narration — a reasonable cheap addition if narration is ever revisited. | `interface/reporter.py` |
-| T6b | Per-PR integration state in telemetry. | `core/telemetry.py` |
-| T15c | Bounded auto-retry of the branch-setup step before halting (observed environmental `checkout -b` flake). | `interface/drivers/headless.py` |
-| T17 | MAX_PATH detection plus a "scaffold into a shorter directory" hint in `convoy_init`; the `_error_kind` classifier exists and only `_run_impl` uses it. | `interface/scaffold.py`, `interface/mcp/server.py` |
-| T18 | Meter the seat probe as a `role: "preflight"` spawn line, if a consumer ever needs to-the-cent totals. **(consumer-affecting)** | `core/telemetry.py`, `interface/seat_probe.py` |
+| T6a | `files touched: N (+A/-B)` in per-PR implementation narration — a reasonable cheap addition if narration is ever revisited. Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `interface/reporter.py` |
+| T6b | Per-PR integration state in telemetry. Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `core/telemetry.py` |
+| T15c | Bounded auto-retry of the branch-setup step before halting (observed environmental `checkout -b` flake). Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `interface/drivers/headless.py` |
+| T17 | MAX_PATH detection plus a "scaffold into a shorter directory" hint in `convoy_init`; the `_error_kind` classifier exists and only `_run_impl` uses it. Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `interface/scaffold.py`, `interface/mcp/server.py` |
+| T18 | Meter the seat probe as a `role: "preflight"` spawn line, if a consumer ever needs to-the-cent totals. **(consumer-affecting)** Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `core/telemetry.py`, `interface/seat_probe.py` |
 | T30c | Name `docs/plans/*` as historical (append-only, not edited by feature work) in AGENTS.md's living-doc set. Singleton. | `AGENTS.md` |
 | T34c | An ADR-template line naming the surfaces on which a rationale's named reader actually meets it — ADR-0008 promised an operator an advisory and delivered it on the dry-run envelope only, which cost three releases. Singleton. | `docs/adr/` template |
 | T54a | A declared **red window** — a check that must be red until a later PR, by design, with going green early or staying red late as the failure. `phases` displaces which PR a check gates and `blocking = false` makes it permanently advisory; neither expresses "red now, green from PR04". Design-only, no priced instance. **(consumer-affecting)** if built. | `core/spec.py`, `core/gate.py` |
-| T54b | Halt for human adjudication and resume with the conversation preserved, rather than a fresh spawn. `resume` re-reads the series file but restarts the spawn. Design-only, singleton. | `interface/drivers/headless.py` |
+| T54b | Halt for human adjudication and resume with the conversation preserved, rather than a fresh spawn. `resume` re-reads the series file but restarts the spawn. Design-only, singleton. Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `interface/drivers/headless.py` |
 | T58c | When `docs/design/02-formats.md` documents a telemetry or schema field, it names what reads it, so the next removal costs a read rather than a grep. Folds into each field's entry, not a new section. Pending a second report outside the authoring and build pair that raised it. | `docs/design/02-formats.md` |
 | T59c | A best-effort "a newer release exists" advisory on `--version` and at MCP startup, compared against the newest reachable tag. Never blocks. No incident since it was raised. | `interface/cli.py`, `interface/mcp/__main__.py` |
-| T60b | One sentence in the skill's setup section: the seat probe is a point-in-time check, not a lease, so a paid run's seat can expire between a green pre-flight and the first spawn. Displaces the part of §Cost & latency's seat-probe bullet that implies the probe covers the run. Pending a second report from another operator or machine. | `skills/convoy/SKILL.md` §Setup |
+| T60b | One sentence in the skill's setup section: the seat probe is a point-in-time check, not a lease, so a paid run's seat can expire between a green pre-flight and the first spawn. Displaces the part of §Cost & latency's seat-probe bullet that implies the probe covers the run. Pending a second report from another operator or machine. Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `skills/convoy/SKILL.md` §Setup |
 | T61b | Document, for a hand-rolled fan-out, the one thing it needs to copy: a worktree per writing agent, with reviewers read-only in a scratch worktree. Displaces part of the separability preamble in a guide under a word budget. Sibling of CONV-B68; pending a second instance. | `docs/authoring-series.md` |
 | T62b | The per-correct-trial framing in §Cost & latency: the gate costs +20% to +25% per trial and a third (weak tier) to a sixth (mid tier) of control's cost per correct trial (CONV-B53). Displaces the stale per-spawn figure. One measured wave; waits on CONV-B53's iteration 2, a paid run. | `skills/convoy/SKILL.md` §Cost & latency |
 | T64a | A declared-absent `[branches].base` — nullable with a note, or a documented sentinel — so a series generated for a workspace that does not exist yet is valid and unrunnable rather than valid and wrong. `base` is a required string today. **(consumer-affecting)** if built. Pending a second report or a priced instance. | `core/spec.py` |
 | T64b | A schema stamp in `[series]` (for example `schema = "convoy/1"`), written and checked. An engine older than 0.13.0 reading a file that carries `[governance.tier_models]` drops it in silence; 0.13.0's allow-list stops unknown keys from then on, but nothing stamps a file's schema generation. Makes the next skew loud, not the shipped ones. **(consumer-affecting)** if built. A hazard, not an incident. | `core/spec.py` |
 | T65a | The schema documentation for `[governance] effort` says the knob is inert for models with no effort dimension, naming the weak tier's floor model as the case a default lineup produces. Singleton, LOW. | `docs/design/02-formats.md`, `skills/convoy/SKILL.md` schema table |
-| T66b | An `--allow-dirty` override that records the paths already dirty before the first spawn and keeps them out of every commit the run makes, so a deliberate dirty start never sweeps them. Only if a legitimate dirty-start case appears; CONV-B70 ships the refusal with no override, the smaller shape. | `interface/git.py::commit_all`, `interface/drivers/headless.py` |
-| T68a | Each `prs[]` entry carries `cost_usd`, `num_turns`, `input_tokens` and `output_tokens`, summed over its spawns in the fold that already computes the run totals; co-lands with CONV-B43(c). Today a per-PR economy table needs a second parse of `spawns.jsonl`. **(consumer-affecting)** if built. Singleton, LOW. | `interface/run_summary.py` |
+| T66b | An `--allow-dirty` override that records the paths already dirty before the first spawn and keeps them out of every commit the run makes, so a deliberate dirty start never sweeps them. Only if a legitimate dirty-start case appears; CONV-B70 ships the refusal with no override, the smaller shape. Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `interface/git.py::commit_all`, `interface/drivers/headless.py` |
+| T68a | Each `prs[]` entry carries `cost_usd`, `num_turns`, `input_tokens` and `output_tokens`, summed over its spawns in the fold that already computes the run totals; co-lands with CONV-B43(c). Today a per-PR economy table needs a second parse of `spawns.jsonl`. **(consumer-affecting)** if built. Singleton, LOW. Waits for the next phase under [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md). | `interface/run_summary.py` |
 
 ---
 
@@ -1692,6 +1726,8 @@ gets shorter and one confusing paragraph leaves the skill. Drop `review` from th
 trio in `[governance.tools]` at the same time. **(consumer-affecting: required keys become
 optional)**
 
+**Status (2026-10-08).** Excepted from the runner freeze of [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md): it retires part of the runner.
+
 **Effort** M · **Source** [review] + [research]
 
 ### CONV-B31 — Fold `--fresh` into `convoy clean`. Replacement: `clean` then `run`, or `--fresh` reusing clean's tree-restoring steps.
@@ -1749,6 +1785,8 @@ stay; the fan-out, the pre-flight complexity and the folding exist only to serve
 on the measurement, not on the argument — the feature superseded an ADR on production
 evidence and should not be unwound on a single window. [review]
 
+**Status (2026-10-08).** Excepted from the runner freeze of [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md): it retires part of the runner.
+
 **Effort** M · **Source** [review] · **Gate** CONV-B18
 
 ### CONV-B34 — Replace the credential-copy isolation with native flags, if CONV-B19 finds a matching arm. Replacement: `--setting-sources` plus `--strict-mcp-config`; keep `_ENV_STRIP` either way.
@@ -1758,6 +1796,8 @@ operator toolkit load before a bare prompt does anything). The implementation de
 private, undocumented credentials file name. If an arm authenticates, keeps operator
 hooks/plugins/skills out, and still loads the workspace's own CLAUDE.md, the copy can go.
 [review; research]
+
+**Status (2026-10-08).** Excepted from the runner freeze of [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md): it retires part of the runner.
 
 **Effort** M · **Source** [review] + [research] · **Gate** CONV-B19
 
@@ -1781,6 +1821,8 @@ survives the replacement" as an explicit invariant alongside the four above, or 
 the work after that harness's row FATH-B36 settles whether the consumer still exists —
 the one thing not to do is discover the answer from a broken scored arm. [cross-review]
 
+**Status (2026-10-08).** Excepted from the runner freeze of [ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md): it retires part of the runner.
+
 **Effort** L · **Source** [review] + [research] + [cross-review]
 
 ---
@@ -1794,6 +1836,7 @@ Built from the owner's written decisions of 2026-10-08, on one branch per concer
 | Row | Promotion | Shipped by |
 |---|---|---|
 | CONV-B14 (lineup 5.5) | The floor lineup moved to the 5.5 models: `DEFAULT_TIER_MODELS` resolves `weak` to `claude-haiku-5-5` and `mid` to `claude-sonnet-5-5` (`strong` and `frontier` unchanged), stamped `LINEUP_RECONCILED = '2026-10-08'`, because `claude-haiku-4-5` and `claude-sonnet-5` are listed as legacy by the platform model page. The `convoy init` starter model is `claude-haiku-5-5` and the formats doc's example series follows. `tests/test_governance.py` and `tests/test_scaffold.py` pin the new values. A series that reaches the floor for `weak` or `mid` now runs a different model; an explicit `model` or a series `[governance.tier_models]` is unaffected. | unreleased |
+| CONV-B76 | ADR-0011 accepted: the runner is frozen and the gate is the product ([ADR-0011](adr/0011-the-runner-is-frozen-the-gate-is-the-product.md)). The runner takes only security fixes, fixes for defects that corrupt data or a workspace, and rows that retire parts of it; a floor model id the platform retires is such a defect. The gate recipe lives in a native Workflow, with `convoy gate` armed by a hash-pinned `.convoy/gate.toml` as one possible judge; the private-names sweep belongs in CI (not built: it needs the list as a repository secret); the US$152 runner measurement is declined for good. The runner is retired only after an end-to-end run in which the judge fires for Workflow agents; the 2026-10-08 probe is not that run. The freeze is text only, with no CI check. Fifteen waiting rows and eleven watch rows carry a status line pointing at the ADR; the six measure-then-retire rows (CONV-B18, CONV-B19, CONV-B30, CONV-B33, CONV-B34, CONV-B35) carry one saying they are excepted. ADR-0009 points at it, and `AGENTS.md`, `README.md` and `skills/convoy/SKILL.md` say which half is developed. Docs only. | unreleased |
 
 ### Built in the 2026-10-08 round (served by 0.17.0)
 
