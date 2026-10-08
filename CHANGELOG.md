@@ -13,6 +13,27 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **The run result records the remote refs and PRs a spawn created.** A run integrates
+  locally and never pushes, so a branch pushed or a PR opened by a spawned agent is outside
+  what the run governs and what its gate judged; in one recorded run an implementer opened a
+  branch and a PR in a repository the workspace depends on, and the orchestrator learned of it
+  from a commit body. The driver now scans every spawn's own stream — implementation and fix —
+  for the shell commands it issued that write to a remote: `git ... push` (`git_push`),
+  `gh pr create` (`gh_pr_create`), and a writing `gh` verb against a repository named with
+  `-R` / `--repo` (`gh_repo_write`; reads such as `gh pr view -R x` are not recorded). Each
+  `spawn_complete` line carries them as `external_writes`, a list of `{kind, command, target,
+  failed}`, `[]` when there were none **(consumer-affecting: a new telemetry field)**. The
+  result envelope that `convoy run --json`, `convoy status` and `convoy_status` share gains a
+  top-level `external_writes` list, each finding with its `pr_id`, `role` and `attempt`
+  **(consumer-affecting: a new envelope field)**, and one advisory per finding in
+  `advisories`, of kind `external_write` **(consumer-affecting: a new advisory kind; the
+  envelope's `advisories` now holds pre-flight advisories and then these)**. The run prints
+  one line per finding on stderr when the spawn finishes, and `convoy status` shows a count.
+  Report, not enforce: no outcome, exit code or integration changes. The scan sees the
+  commands the agent typed, not a push made by a script it ran.
+
 ### Changed
 
 - **A hook firing with no gate to run no longer starts `convoy`.** The plugin registers its

@@ -940,6 +940,12 @@ def status(
         f'  spawns {economy["spawn_count"]}, turns {economy["num_turns"]}, '
         f'${economy["total_cost_usd"]:.2f}'
     )
+    external_writes = envelope['external_writes']
+    if external_writes:
+        typer.echo(
+            f'  external writes {len(external_writes)} (not gated by this run; '
+            'see external_writes under --json)'
+        )
     if state == 'dead':
         typer.echo(f'  {envelope["message"]}')
     if state == 'finished':

@@ -112,6 +112,7 @@ convoy/
     core/                   # pure — no I/O, fully unit-testable
       spec.py               # C1 series model + validation + TOML round-trip
       dag.py                # C1 depends_on ordering (stable toposort, cycle detection)
+      external_writes.py    # scan a spawn's stream for pushes and PRs it made outside the workspace
       gate.py               # C2 verdict logic (pure) — receives check + independence
       governance.py         # C4 config resolution + parity enforcement
       preflight.py          # pure structural pre-flight — located Problems, no filesystem

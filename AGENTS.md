@@ -43,7 +43,7 @@ after, and it can only ever say yes.
 Functional core / imperative shell:
 
 - `src/convoy/core/` — pure, no I/O: spec parsing, DAG, gate verdict, governance,
-  telemetry model, pricing, preflight rules.
+  telemetry model, pricing, preflight rules, the external-write scan of a spawn's stream.
 - `src/convoy/interface/` — everything that touches the world: the spawn,
   gate-runner, and reporter seams behind `typing.Protocol` ports, concrete git
   and telemetry-writer adapters, the CLI and MCP surfaces over one shared run

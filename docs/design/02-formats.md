@@ -210,7 +210,7 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 |---|---|---|
 | `run_start` | once per `convoy run` | `schema_version`, `event`, `run_id`, `series_id`, `advisories` (list of `{kind, where, message}`; `[]` when pre-flight had nothing to say), `spec_path`, `spec_sha256` |
 | `spawn_start` | once per agent spawn, immediately before it launches | `schema_version`, `event`, `run_id`, `pr_id`, `role` |
-| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `effort`, `classification`, `budget_cap_usd`, `budget_nearing` |
+| `spawn_complete` | once per agent spawn | `schema_version`, `event`, `run_id`, `pr_id`, `role`, `exit_code`, `input_tokens`, `output_tokens`, `num_turns`, `duration_s`, `cost_usd`, `effective_model`, `effort`, `classification`, `budget_cap_usd`, `budget_nearing`, `external_writes` |
 | `gate_complete` | after every gate evaluation of a PR | `schema_version`, `event`, `run_id`, `pr_id`, `attempt`, `blocking_red`, `independent_red`, `checks` |
 | `pr_skipped` | for each PR the run never processed because an earlier PR halted the series | `schema_version`, `event`, `run_id`, `pr_id`, `reason` |
 | `run_complete` | once per `convoy run` | `schema_version`, `event`, `run_id`, `outcome`, `integrated`, `halt` |
@@ -262,6 +262,42 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   forfeiting five downstream PRs between them. A monitor tailing the ledger can now raise
   the cap or stage recovery on the spawn before the busting one; the same moment is
   narrated on stderr as a `near cap` line.
+- **`spawn_complete.external_writes`** (additive) — the commands this spawn issued that
+  write outside the workspace, in stream order, `[]` when there were none (and read as `[]`
+  from a line an older engine wrote without the key). Each is `{kind, command, target,
+  failed}`. A run integrates locally and never pushes, so a remote ref or a PR a spawn
+  creates is outside what the run governs and outside what its gate judged; in one recorded
+  run an implementer opened a branch and a PR in a repository the workspace depends on, and
+  the orchestrator learned of it from a commit body. This records it. It does not enforce:
+  no outcome, exit code or integration changes. `kind` is one of:
+  - `git_push` — a `git ... push ...`, global options before `push` included
+    (`git -C <dir> push`); `target` is the `-C` directory when present, then the remote and
+    refspec tokens.
+  - `gh_pr_create` — a `gh pr create`; `target` is the `-R` / `--repo` value (empty: the
+    current repository), then the `--head` / `-H` value when present.
+  - `gh_repo_write` — any other `gh` command that names a repository with `-R` / `--repo`
+    and whose verb writes: `archive`, `close`, `comment`, `create`, `delete`, `edit`, `fork`,
+    `merge`, `ready`, `reopen`, `review`, `transfer`, `upload`. `target` is the repository.
+    A read against a named repository (`gh pr view -R x`) is not recorded, and neither is a
+    writing verb with no `-R`, which acts on the current repository: of those, only
+    `gh pr create` is recorded.
+
+  `command` is the simple command as issued — the shell command split on newline, `;`,
+  `&&`, `||` and `|` outside quotes — with its whitespace collapsed and cut to 300
+  characters. `failed` is `true` when the paired tool result reported an error, `false` when
+  it did not, and `null` when the stream carries no result for it. **The scan reads the
+  spawn's own stream**: the `tool_use` blocks whose `input.command` is a string (the Bash and
+  PowerShell tools, without keying on a tool name), paired by id with their `tool_result`.
+  It cannot see a push made by a script the agent ran (`./release.sh`), by a tool without a
+  `command` input, or by a process that outlived the spawn: it is a record of the commands
+  the agent typed, not of the network. The result envelope lifts these to a top-level
+  `external_writes` list — each finding plus its `pr_id`, `role` and `attempt` (`0` for the
+  implementation spawn, `n` for the nth fix spawn of that PR in the run, counted from ledger
+  order, the numbering `gate_complete.attempt` uses) — and adds one advisory per finding to
+  the envelope's `advisories`, with `kind: "external_write"`, `where` naming the PR and role
+  (`[[prs]] 'pr-1' implementation`), and a one-line `message` naming the command and target
+  and saying it was not gated by this run. The run narrates the same line on stderr when the
+  spawn finishes, and `convoy status` counts them.
 - **`run_start.spec_path` / `spec_sha256`** (additive) — the spec pin from `[series]`, `""` when the series carries none. A pin that reaches the ledger is a **verified** one: pre-flight resolved the path and matched the hash before the run was allowed to start, so a consumer joining a run to a spec version is reading a checked fact rather than an authoring claim.
 - **`spawn_start`** (additive) — written immediately before a spawn launches, carrying no
   economy because nothing has been spent yet. The ledger recorded only completions, so a PR

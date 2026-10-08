@@ -1786,6 +1786,35 @@ def test_status_reports_the_runs_advisories(tmp_path: Path) -> None:
     assert [a['kind'] for a in payload['advisories']] == ['gate']
 
 
+def test_status_human_output_counts_external_writes(tmp_path: Path) -> None:
+    """A spawn that pushed or opened a PR elsewhere is counted where the operator looks."""
+    series_file, outputs = _status_series(tmp_path)
+    push = {
+        'kind': 'git_push',
+        'command': 'git push origin x',
+        'target': 'origin x',
+        'failed': False,
+    }
+    _ledger(outputs, [{**_spawn_line('r1', 'pr-1', 0.2), 'external_writes': [push, push]}])
+
+    result = runner.invoke(cli.app, ['status', str(series_file)])
+
+    assert result.exit_code == EXIT_OK
+    assert 'external writes 2' in result.output
+
+
+def test_status_human_output_says_nothing_of_external_writes_when_there_are_none(
+    tmp_path: Path,
+) -> None:
+    series_file, outputs = _status_series(tmp_path)
+    _ledger(outputs, [{**_spawn_line('r1', 'pr-1', 0.2), 'external_writes': []}])
+
+    result = runner.invoke(cli.app, ['status', str(series_file)])
+
+    assert result.exit_code == EXIT_OK
+    assert 'external write' not in result.output
+
+
 # --- gate ---------------------------------------------------------------------------------
 
 

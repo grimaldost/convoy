@@ -34,12 +34,14 @@ from pathlib import Path
 from secrets import token_hex
 
 from convoy.core.dag import order
+from convoy.core.external_writes import scan_external_writes
 from convoy.core.gate import GateVerdict, checks_for, decide, repair_brief
 from convoy.core.governance import ResolvedSpawn, effective_governance, resolve_spawn
 from convoy.core.preflight import Advisory, Problem
 from convoy.core.spec import PR, Series
 from convoy.core.telemetry import (
     AdvisoryLine,
+    ExternalWriteLine,
     GateCheckLine,
     GateComplete,
     HaltDetail,
@@ -236,8 +238,15 @@ def _record_spawn(
     The nearing test reads the provider's reported cost rather than the post-fallback one,
     because the reported cost is what the CLI's own spend cap meters against; an estimate
     substituted for a zero would be measuring a different quantity.
+
+    Every spawn's stream is also scanned for the commands it issued that write outside the
+    workspace (``core.external_writes``): a push, a PR, a write to a named GitHub
+    repository. A run never pushes, so these are outside what it governs and what its gate
+    judged; they are recorded on the line and narrated, and nothing else changes — the
+    caller's control flow never reads them.
     """
     output_tail = '' if result.classification == 'ok' else result.output[-_OUTPUT_TAIL_CHARS:]
+    writes = scan_external_writes(result.output)
     spend_usd = result.economy.cost_usd
     cap_usd = governed.budget_usd
     nearing = budget_is_nearing(spend_usd, cap_usd)
@@ -258,9 +267,17 @@ def _record_spawn(
             classification=result.classification,
             budget_cap_usd=cap_usd,
             budget_nearing=nearing,
+            external_writes=tuple(
+                ExternalWriteLine(
+                    kind=write.kind, command=write.command, target=write.target, failed=write.failed
+                )
+                for write in writes
+            ),
         )
     )
     reporter.spawn_done(pr_id, role, result)
+    if writes:
+        reporter.external_writes(pr_id, role, writes)
     if nearing:
         reporter.budget_nearing(pr_id, role, spend_usd, cap_usd)
 

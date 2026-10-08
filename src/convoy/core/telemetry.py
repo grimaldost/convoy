@@ -93,6 +93,23 @@ class SpawnStart:
 
 
 @dataclass(frozen=True)
+class ExternalWriteLine:
+    """One command a spawn issued that writes outside the workspace — not itself an event.
+
+    A plain nested record inside :class:`SpawnComplete`, like :class:`AdvisoryLine` inside
+    :class:`RunStart`, and for the same reason telemetry's own type rather than
+    ``core.external_writes.ExternalWrite``: the wire model stays independent of the scanner.
+    ``kind`` is ``git_push`` | ``gh_pr_create`` | ``gh_repo_write``; ``failed`` is ``None``
+    when the spawn's stream carried no result for the command.
+    """
+
+    kind: str
+    command: str
+    target: str
+    failed: bool | None
+
+
+@dataclass(frozen=True)
 class SpawnComplete:
     """Emitted once per agent spawn — the per-spawn economy record.
 
@@ -138,6 +155,11 @@ class SpawnComplete:
     # infer it from ``exit_code`` plus the shape of ``output_tail`` — an inference that is
     # wrong exactly when it matters, since a budget cut and an auth failure can both exit 1.
     classification: str = 'ok'
+    # The commands this spawn issued that write outside the workspace — a push, a PR, a write
+    # to a named GitHub repository — scanned from its own stream, in stream order; empty when
+    # there were none. A run integrates locally and never pushes, so these are outside what
+    # the run governs and what its gate judged. Recorded, never acted on: no outcome changes.
+    external_writes: tuple[ExternalWriteLine, ...] = ()
 
 
 @dataclass(frozen=True)

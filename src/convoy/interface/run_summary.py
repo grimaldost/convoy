@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from convoy import __version__
+from convoy.core.external_writes import ExternalWrite, external_write_advisory
 from convoy.core.gate import GateUsageError
 from convoy.core.governance import GovernanceError
 from convoy.core.spec import Series, SpecError
@@ -206,6 +207,15 @@ def summarize_run(
     on the implementation line being written before any fix line. It is ``None`` for a PR
     that never ran an implementation spawn (e.g. a skip). The per-spawn breakdown is in the
     trace.
+
+    ``external_writes`` lifts every spawn line's findings to the top level, each with its
+    ``pr_id``, ``role`` and ``attempt`` — ``0`` for the implementation spawn and ``n`` for
+    the nth fix spawn of that PR in this run, the numbering ``gate_complete`` uses for the
+    gate that judged it. The spawn line carries no attempt of its own; it is counted here
+    from ledger order. Each finding also adds one ``external_write`` advisory after the
+    pre-flight ones, so ``advisories`` holds what the run should be reviewed with, from
+    before it started and from what its spawns did. A line written before the field existed
+    reads as no writes.
     """
     economy = {
         'total_cost_usd': 0.0,
@@ -218,6 +228,10 @@ def summarize_run(
     prs: dict[str, dict[str, Any]] = {}
     halt: dict[str, Any] | None = None
     advisories: list[dict[str, Any]] = []
+    external_writes: list[dict[str, Any]] = []
+    write_advisories: list[dict[str, Any]] = []
+    # Spawns seen per (pr_id, role) so far: the attempt number of a fix spawn's findings.
+    role_spawns: dict[tuple[str, str], int] = {}
 
     def _pr(pr_id: str) -> dict[str, Any]:
         return prs.setdefault(
@@ -266,6 +280,32 @@ def summarize_run(
                 # order — a fix spawn's model never overwrites it, whatever the line order.
                 if entry['role'] == 'implementation' and pr['effective_model'] is None:
                     pr['effective_model'] = entry['effective_model']
+                key = (entry['pr_id'], entry['role'])
+                role_spawns[key] = role_spawns.get(key, 0) + 1
+                attempt = 0 if entry['role'] == 'implementation' else role_spawns[key]
+                for raw in entry.get('external_writes') or []:
+                    write = _external_write(raw)
+                    if write is None:
+                        continue
+                    external_writes.append(
+                        {
+                            'pr_id': entry['pr_id'],
+                            'role': entry['role'],
+                            'attempt': attempt,
+                            'kind': write.kind,
+                            'command': write.command,
+                            'target': write.target,
+                            'failed': write.failed,
+                        }
+                    )
+                    advisory = external_write_advisory(entry['pr_id'], entry['role'], write)
+                    write_advisories.append(
+                        {
+                            'kind': advisory.kind,
+                            'where': advisory.where,
+                            'message': advisory.message,
+                        }
+                    )
             elif event == 'gate_complete':
                 _pr(entry['pr_id'])['gate'] = {
                     'attempt': entry['attempt'],
@@ -316,7 +356,13 @@ def summarize_run(
         'halt': halt,
         # Always present, empty when there is nothing to say, so a consumer reads the key
         # unconditionally — the same shape and the same guarantee as the dry-run envelope.
-        'advisories': advisories,
+        # Two sources, in this order: what pre-flight said before the run started (from
+        # ``run_start``), then one ``external_write`` per command a spawn issued that writes
+        # outside the workspace (from the spawn lines).
+        'advisories': advisories + write_advisories,
+        # Every command a spawn issued that writes outside the workspace, in ledger order;
+        # empty when there were none. Never affects ``ok``, ``outcome`` or ``exit_code``.
+        'external_writes': external_writes,
         'telemetry_path': str(telemetry_path),
         'truncated': {'any': len(pr_list) > pr_cap, 'prs': max(0, len(pr_list) - pr_cap)},
         # Names the engine that folded this envelope, exactly as the gate envelope already
@@ -335,6 +381,19 @@ def summarize_run(
             'then re-run with --resume to continue from the PRs that already integrated'
         )
     return envelope
+
+
+def _external_write(raw: object) -> ExternalWrite | None:
+    """One recorded finding read back from a spawn line, or ``None`` if it is not an object."""
+    if not isinstance(raw, dict):
+        return None
+    failed = raw.get('failed')
+    return ExternalWrite(
+        kind=str(raw.get('kind', '')),
+        command=str(raw.get('command', '')),
+        target=str(raw.get('target', '')),
+        failed=failed if isinstance(failed, bool) else None,
+    )
 
 
 def status_of(
