@@ -35,6 +35,12 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   commands the agent typed that match these patterns, skipping comments, heredoc bodies and
   PowerShell here-strings; it does not see a push made by a script the agent ran.
 
+- **A dated note on the hook under the Workflow tool.**
+  [`docs/notes/2026-10-08-subagentstop-under-workflow.md`](docs/notes/2026-10-08-subagentstop-under-workflow.md)
+  records a probe: `SubagentStop` fires for agents the Workflow tool starts, with and without
+  worktree isolation, and the judge ran the project gate in the session project root even for
+  the worktree-isolated agent. Docs only.
+
 ### Changed
 
 - **A hook firing with no gate to run no longer starts `convoy`.** The plugin registers its

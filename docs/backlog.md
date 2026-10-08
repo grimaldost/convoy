@@ -103,7 +103,8 @@ table as CONV-B73.
   CHANGELOG entry and tests. `L` — needs an ADR, a new document, or a design first.
 - **Source.** `[triage]` (dogfooding evidence), `[review]` (the 2026-08-11 feature review),
   `[research]` (the landscape and ecosystem briefs), `[cross-review]` (the 2026-08-11
-  cross-project consistency pass), `operator observation` for a direct report with no
+  cross-project consistency pass), `[probe]` (a dated observation note under
+  [docs/notes/](notes/README.md)), `operator observation` for a direct report with no
   artifact behind it.
 - **Consumer-affecting** rows must carry the CHANGELOG marker convention from
   [docs/design/02-formats.md](design/02-formats.md) when built.
@@ -1180,6 +1181,37 @@ after the dispatch decision.
 
 **Effort** S · **Source** [triage] · **Row** T61a
 
+### CONV-B75 — A worktree-isolated subagent is judged against the main checkout, not the worktree that holds its changes.
+
+**Cause / evidence.** The 2026-10-08 probe ([the note](notes/2026-10-08-subagentstop-under-workflow.md))
+ran two agents the Workflow tool started, one with `isolation: 'worktree'`. The isolated agent's
+`SubagentStop` payload carried its own worktree as `cwd`
+(`<project>\.claude\worktrees\wf_7edbbf40-6d1-2`), yet the hook log records `spec`
+`<project>\.convoy\gate.toml` and `workspace` `<project>`, and the check ran with `check_cwd`
+`<project>`. The cause is the discovery order in `gate_service.find_gate_spec`:
+`$CLAUDE_PROJECT_DIR/.convoy/gate.toml` is tried before the walk up from the payload `cwd`, and
+the session project always has the spec when the spec is committed, so the worktree's own
+tree is never the one judged. A check that reads the working tree therefore passes or fails on
+the main checkout's files, not on the edits the isolated agent made. The probe's agents wrote
+outside their worktrees, so the note shows the tree the gate ran in, not a missed red; no red
+was observed. [probe 2026-10-08]
+
+**Change.** Not chosen. The options on the table: (a) discovery prefers the walk from the
+payload `cwd` when that `cwd` is a git worktree of the `$CLAUDE_PROJECT_DIR` project, so the
+gate runs in the worktree that holds the agent's changes (this changes which tree a check
+executes in, and needs the trust rule to say whether a worktree inherits its main checkout's
+entry); (b) the hook names the tree it judged in its record and in the repair brief, so a
+mismatch between the agent's `cwd` and the judged `workspace` is visible without changing what
+runs; (c) both. Whatever is chosen, an isolated agent's `cwd` and the judged `workspace` should
+not differ silently.
+
+**Status.** Proposed, not built. `find_gate_spec` still orders `$CLAUDE_PROJECT_DIR` before the
+payload `cwd`, and `hook.log` already records both `cwd` and `workspace`, which is how the
+probe saw the difference. Option (a) changes which tree a check runs in, and trust is keyed on the project root and the
+spec's hash (`gate_service.trust_status`), so the trust rule needs reading before it is chosen.
+
+**Effort** M · **Source** [probe 2026-10-08]
+
 ## Later
 
 ### CONV-B18 — Measure whether per-PR governance overrides are used, before keeping the machinery that serves them.
@@ -1759,6 +1791,7 @@ Built from the 2026-10-07 review rather than from a triage pass, on one branch p
 | CONV-B72 | The plugin hook exits early when no gate can be found. Cause: `hooks/hooks.json` started `uv run --project ... convoy hook` on every `SubagentStop` and every `Agent`/`Task` `PostToolUse`, so every installing session paid uv's environment check, an interpreter and the whole CLI import per firing, although the hook does nothing without a trusted `.convoy/gate.toml`. Change: both handlers run `src/convoy/interface/hook_guard.py` first (standard library only, `uv run --frozen --no-sync`, still shell form), which exits 0 without starting `convoy` when no spec is found or its project is untrusted, and delegates everything else to `convoy hook` with the same stdin. `tests/test_hook_guard.py` holds every skip against `hook.decide`. No-gate firing over five back-to-back pairs on one Windows 11 machine (10 runs each after one warm-up): median 173-233 ms after, 501-687 ms at v0.16.1 (`scripts/hook_latency.py`). | unreleased |
 | CONV-B73 (T67a) | The run result records the remote refs and PRs a spawn created. A pure scanner (`core/external_writes.py`) reads each spawn's own stream-json — the `tool_use` blocks whose `input.command` is a string, paired by id with their `tool_result` — and reports `git ... push` (`git_push`), `gh pr create` (`gh_pr_create`) and a writing `gh` verb against a repository named with `-R` / `--repo` (`gh_repo_write`), each as `{kind, command, target, failed}`. The driver scans every implementation and fix spawn and writes the findings on its `spawn_complete` line as `external_writes`; the result envelope lifts them to a top-level `external_writes` list with `pr_id`, `role` and `attempt`, and adds one `external_write` advisory per finding after the pre-flight ones; the run prints one stderr line per finding and `convoy status` shows a count. Report, not enforce: no outcome, exit code or integration changes. It cannot see a push made by a script the agent ran. **(consumer-affecting: a new telemetry field, a new envelope field, a new advisory kind)** | unreleased |
 | CONV-B14 (skill half) | `skills/convoy/SKILL.md` names no model id: the resolution-order bullet says "an explicit `model` (an API model id)" and points at `convoy validate` / `dry_run`, the `lineup` advisory and `effective_model`; the example series uses `tier = "weak"`; the cost figure keeps its provenance as the `weak` tier at v0.1.0. `tests/test_doc_claims.py::test_the_skill_names_no_model_id` fails if an id returns. The skill's advisory paragraph also lists the `lineup` kind and the two producers it had omitted. Two mirror sites remain (`core/governance.py`, `interface/scaffold.py`); the README's example series is introduced as a close variant of the `convoy init` output until the scaffold half lands. | unreleased |
+| CONV-B74 | A dated note, `docs/notes/2026-10-08-subagentstop-under-workflow.md`, records how the hook behaves under the Workflow tool: `SubagentStop` fires for its agents with and without worktree isolation (`agent_type` `workflow-subagent`); the judge found the project spec at `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` and ran the gate in the session project root for both, so a worktree-isolated agent was judged against the main checkout; the messenger leg left no record. `docs/notes/` is new (append-only, dated). Docs only. The finding it produced is CONV-B75, proposed. | unreleased |
 
 ### Built in the 2026-10-06 maintenance round (served by 0.16.0)
 

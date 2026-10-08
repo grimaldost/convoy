@@ -317,7 +317,9 @@ JSON object, an unexpected trust file) is delegated. `--frozen
 as before. The handlers stay in shell form because exec form (`args`) needs a recent
 Claude Code, and on an older client a bare `uv` would exit 2 and block every subagent. The
 hook is inert until a project has a `.convoy/gate.toml`, and config isolation keeps it out
-of every scored spawn.
+of every scored spawn. How the hook behaves for agents the Workflow tool starts (it fires,
+judges a worktree-isolated agent against the session project, and does not reach the
+messenger leg) is recorded in [the 2026-10-08 note](../notes/2026-10-08-subagentstop-under-workflow.md).
 
 ## CLI ↔ MCP parity
 
