@@ -334,7 +334,7 @@ any implementer: the judge is appointed before the defendant. Only `${CONVOY_*}`
 names expand, and a value carrying shell syntax is refused at load.
 
 **The hook: the gate the orchestrator never has to think about.** Installing the plugin
-registers `convoy hook` on two events. `SubagentStop` is the judge: when a subagent
+registers `convoy hook`, behind a guard (below), on two events. `SubagentStop` is the judge: when a subagent
 tries to finish, the gate runs in the tree the spec governs; a blocking red exits 2 with
 the repair brief on stderr, which Claude Code hands to the *subagent* as the reason it
 may not stop yet — the implementer repairs its own work, the same shape as a governed
@@ -366,8 +366,9 @@ handler runs a standard-library guard (`src/convoy/interface/hook_guard.py`) bef
 `convoy hook`: when no spec is found, or one is found in a project this machine does not
 trust, it exits 0 without starting `convoy`, so a firing with nothing to gate costs uv's
 start-up and one short Python run (a median of 225 ms on one Windows 11 machine, against
-747 ms for the full hook; `scripts/hook_latency.py` measures it). Everything else, including anything the guard does not
-understand, goes to `convoy hook` unchanged. The operator's
+747 ms for v0.16.1's handler, which started `convoy hook` on every firing;
+`scripts/hook_latency.py` measures it). Everything else, including anything the guard does
+not understand, goes to `convoy hook` unchanged. The operator's
 trust is the per-machine switch: `convoy gate --trust` records the project root **and
 the spec's hash** in `CONVOY_HOME/hook-trust.toml` (default `~/.convoy/`); an untrusted
 project is recorded in the hook's own process and nothing is written into it, and a spec

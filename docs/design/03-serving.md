@@ -303,9 +303,10 @@ python -I "${CLAUDE_PLUGIN_ROOT}/src/convoy/interface/hook_guard.py"`. The guard
 standard library only and reads the event; when the full hook would be silent and write
 nothing — no gate spec found, or one in a project neither vouched for in
 `CONVOY_TRUSTED_ROOTS` nor on the trust list — it exits 0 without starting `convoy`.
-Otherwise it runs `uv run --project <plugin root> convoy hook` with the same stdin bytes and
-returns its exit code; anything it does not understand (an explicit `CONVOY_GATE_SPEC`, a
-payload that is not a JSON object, an unexpected trust file) is delegated. `--frozen
+Otherwise it runs `uv run --project <plugin root> convoy hook` with the same stdin bytes,
+passes on a SIGTERM or SIGINT it receives while that runs, and returns its exit code;
+anything it does not understand (an explicit `CONVOY_GATE_SPEC`, a payload that is not a
+JSON object, an unexpected trust file) is delegated. `--frozen
 --no-sync` keeps uv from locking or syncing on the fast path; the delegated `uv run` syncs
 as before. The handlers stay in shell form because exec form (`args`) needs a recent
 Claude Code, and on an older client a bare `uv` would exit 2 and block every subagent. The

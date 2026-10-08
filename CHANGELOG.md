@@ -32,7 +32,9 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   measured back to back). Reproduce with `uv run python scripts/hook_latency.py` on this
   tree, and with `git worktree add <tmp> v0.16.1` followed by `uv run python
   scripts/hook_latency.py --plugin-root <tmp>` for the earlier release. An armed firing now
-  starts uv twice, once for the guard and once for `convoy hook`.
+  starts uv twice, once for the guard and once for `convoy hook`; a SIGTERM or SIGINT the
+  guard receives while `convoy hook` runs is passed on to it, so a hook ended at its timeout
+  does not leave `convoy hook` running behind it.
 
 ## [0.16.1] - 2026-10-07
 
