@@ -12,7 +12,8 @@ the event and decides:
   project that is neither vouched for in ``CONVOY_TRUSTED_ROOTS`` nor listed in the trust
   file (or there is no trust file at all);
 - **delegate** otherwise: ``uv run --project <plugin root> convoy hook`` with the same stdin
-  bytes, its stdout and stderr inherited, its exit code returned.
+  bytes, its stdout and stderr inherited, a SIGTERM or SIGINT the guard receives passed on
+  to it, its exit code returned.
 
 The decision mirrors the full hook's discovery and trust (``gate_service.find_gate_spec``,
 ``gate_service.trust_status``, ``hook.decide``, ``hook.run_hook``) and errs one way only:
@@ -32,9 +33,12 @@ import sys
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 
-# ``shutil``, ``subprocess`` and ``tomllib`` are imported where they are used: a firing that
-# finds no spec needs none of them, and together they were about a third of this script's
-# own start-up.
+# ``shutil``, ``signal``, ``subprocess`` and ``tomllib`` are imported where they are used: a
+# firing that finds no spec needs none of them, and together they were about a third of this
+# script's own start-up.
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    import subprocess
 
 # Mirrors of the names ``gate_service`` defines; this module cannot import them.
 _GATE_SPEC = ('.convoy', 'gate.toml')
@@ -47,6 +51,10 @@ _TRUSTED_ROOTS_ENV = 'CONVOY_TRUSTED_ROOTS'
 # The hook protocol's loud answer: stderr is feedback. Used when the full hook is needed and
 # cannot be started, the same answer as a gate that cannot run.
 _EXIT_FEEDBACK = 2
+
+# The signals that end a hook early, passed on to the delegate while it runs. SIGTERM and
+# SIGINT carry these numbers on every platform; ``signal`` is not imported to name them.
+_FORWARDED_SIGNALS = (15, 2)
 
 # ``<root>/src/convoy/interface/hook_guard.py``: the plugin root is four levels up. Derived
 # from this file, not from the environment, so the delegate runs the plugin this guard
@@ -157,6 +165,29 @@ def delegate_argv(uv: str) -> list[str]:
     return [uv, 'run', '--project', str(PLUGIN_ROOT), 'convoy', 'hook']
 
 
+def wait_forwarding_signals(child: subprocess.Popen[bytes], raw: bytes) -> int:
+    """Hand *raw* to *child* on its stdin, wait for it, and pass SIGTERM and SIGINT on to it.
+
+    The guard is one more process between Claude Code and ``convoy hook``. A hook that runs
+    past its timeout is ended by a signal to the process Claude Code started; ``uv run``
+    passes it to its child, this guard, and the guard passes it to its own. Without that the
+    guard would die and leave ``convoy hook`` running, holding the judge lock, after the
+    firing ended. The previous handlers are restored once the child has exited.
+    """
+    import signal
+
+    def forward(signum: int, _frame: object) -> None:
+        child.send_signal(signum)
+
+    previous = [(signum, signal.signal(signum, forward)) for signum in _FORWARDED_SIGNALS]
+    try:
+        child.communicate(raw)
+    finally:
+        for signum, handler in previous:
+            signal.signal(signum, handler)
+    return child.returncode
+
+
 def run_delegate(raw: bytes, env: Mapping[str, str]) -> int:
     """Run ``convoy hook`` with *raw* on a dedicated stdin pipe; its streams are inherited."""
     uv = find_uv(env)
@@ -166,11 +197,11 @@ def run_delegate(raw: bytes, env: Mapping[str, str]) -> int:
     import subprocess
 
     try:
-        done = subprocess.run(delegate_argv(uv), input=raw, check=False)
+        child = subprocess.Popen(delegate_argv(uv), stdin=subprocess.PIPE)
     except OSError as exc:
         sys.stderr.write(f'convoy hook: could not start the hook through uv: {exc}\n')
         return _EXIT_FEEDBACK
-    return done.returncode
+    return wait_forwarding_signals(child, raw)
 
 
 def _entry() -> int:

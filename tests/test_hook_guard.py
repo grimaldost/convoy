@@ -11,6 +11,7 @@ import ast
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
@@ -449,6 +450,59 @@ def test_no_uv_at_all_is_a_loud_exit_2(
     assert hook_guard.run_delegate(b'{}', {}) == 2
     err = capsys.readouterr().err
     assert err.count('\n') == 1 and 'uv' in err
+
+
+class _Child:
+    """A stand-in for the delegate process: *arrives* are signals delivered while it runs."""
+
+    returncode = 143
+
+    def __init__(self, arrives: list[int]) -> None:
+        self.arrives = arrives
+        self.signals: list[int] = []
+        self.stdin: bytes | None = None
+
+    def communicate(self, raw: bytes) -> tuple[None, None]:
+        self.stdin = raw
+        for signum in self.arrives:
+            signal.raise_signal(signum)
+        return None, None
+
+    def send_signal(self, signum: int) -> None:
+        self.signals.append(signum)
+
+
+@pytest.mark.parametrize('signum', [signal.SIGTERM, signal.SIGINT], ids=['SIGTERM', 'SIGINT'])
+def test_a_termination_signal_while_the_delegate_runs_is_passed_on_to_it(signum: int) -> None:
+    # Claude Code ending a hook that ran past its timeout signals the process it started. The
+    # guard sits between that process and ``convoy hook``; dying without passing the signal
+    # on would leave the full hook running (and holding the judge lock) after the firing ended.
+    before = signal.getsignal(signum)
+    child = _Child([signum])
+    assert hook_guard.wait_forwarding_signals(child, b'{"x": 1}') == 143
+    assert child.stdin == b'{"x": 1}'
+    assert child.signals == [signum]
+    assert signal.getsignal(signum) is before  # the guard's own handling is restored after
+
+
+def test_the_delegate_is_waited_on_with_signals_forwarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received = tmp_path / 'stdin.bin'
+    child = f'import sys; open({str(received)!r}, "wb").write(sys.stdin.buffer.read()); sys.exit(5)'
+    monkeypatch.setattr(hook_guard, 'delegate_argv', lambda _uv: [sys.executable, '-c', child])
+    waited: list[object] = []
+    real_wait = hook_guard.wait_forwarding_signals
+
+    def recording_wait(proc: Any, raw: bytes) -> int:
+        waited.append(proc)
+        return real_wait(proc, raw)
+
+    monkeypatch.setattr(hook_guard, 'wait_forwarding_signals', recording_wait)
+    raw = b'{"hook_event_name": "SubagentStop"}'
+    assert hook_guard.run_delegate(raw, {'UV': sys.executable}) == 5
+    assert received.read_bytes() == raw
+    assert len(waited) == 1
 
 
 # --- end to end ---------------------------------------------------------------------------------
