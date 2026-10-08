@@ -781,9 +781,12 @@ CONV-B29 removed the price-table mirror in the same release.
 Against the row's own asks: the `[governance.tier_models]` override shipped; the sync stamp
 shipped as `LINEUP_RECONCILED`, feeding the advisory rather than a failing age test; the
 maintainer note (T39a) is declined as superseded (see Declined); and point (b) is settled
-outside this repository — the three mirror sites that remain (`core/governance.py`,
-`skills/convoy/SKILL.md`, `interface/scaffold.py`) are registered with the lineup-refresh
-walk. The 2026-09-26 lineup change (`strong` → `claude-opus-5-5`, served by 0.16.0) touched
+outside this repository — the three mirror sites that remained (`core/governance.py`,
+`skills/convoy/SKILL.md`, `interface/scaffold.py`) were registered with the lineup-refresh
+walk. **The skill is no longer a mirror site** (2026-10-08, unreleased): `SKILL.md` names no
+model id, the example series uses `tier = "weak"`, and the manual points at the resolution
+chain and the `lineup` advisory instead; `tests/test_doc_claims.py` fails if an id returns.
+Two sites remain, `core/governance.py` and `interface/scaffold.py`. The 2026-09-26 lineup change (`strong` → `claude-opus-5-5`, served by 0.16.0) touched
 the floor table, its stamp, its test and the CHANGELOG, and missed no site. Earlier history:
 point (a) was resolved on 2026-08-11, when the canonical lineup was reconciled and convoy's
 mirrors re-synced against it, shipping in 0.9.0 as the `strong` tier resolving to
@@ -1752,6 +1755,7 @@ Built from the 2026-10-07 review rather than from a triage pass, on one branch p
 |---|---|---|
 | CONV-B72 | The plugin hook exits early when no gate can be found. Cause: `hooks/hooks.json` started `uv run --project ... convoy hook` on every `SubagentStop` and every `Agent`/`Task` `PostToolUse`, so every installing session paid uv's environment check, an interpreter and the whole CLI import per firing, although the hook does nothing without a trusted `.convoy/gate.toml`. Change: both handlers run `src/convoy/interface/hook_guard.py` first (standard library only, `uv run --frozen --no-sync`, still shell form), which exits 0 without starting `convoy` when no spec is found or its project is untrusted, and delegates everything else to `convoy hook` with the same stdin. `tests/test_hook_guard.py` holds every skip against `hook.decide`. No-gate firing over five back-to-back pairs on one Windows 11 machine (10 runs each after one warm-up): median 173-233 ms after, 501-687 ms at v0.16.1 (`scripts/hook_latency.py`). | unreleased |
 | CONV-B73 (T67a) | The run result records the remote refs and PRs a spawn created. A pure scanner (`core/external_writes.py`) reads each spawn's own stream-json — the `tool_use` blocks whose `input.command` is a string, paired by id with their `tool_result` — and reports `git ... push` (`git_push`), `gh pr create` (`gh_pr_create`) and a writing `gh` verb against a repository named with `-R` / `--repo` (`gh_repo_write`), each as `{kind, command, target, failed}`. The driver scans every implementation and fix spawn and writes the findings on its `spawn_complete` line as `external_writes`; the result envelope lifts them to a top-level `external_writes` list with `pr_id`, `role` and `attempt`, and adds one `external_write` advisory per finding after the pre-flight ones; the run prints one stderr line per finding and `convoy status` shows a count. Report, not enforce: no outcome, exit code or integration changes. It cannot see a push made by a script the agent ran. **(consumer-affecting: a new telemetry field, a new envelope field, a new advisory kind)** | unreleased |
+| CONV-B14 (skill half) | `skills/convoy/SKILL.md` names no model id: the resolution-order bullet says "an explicit `model` (an API model id)" and points at `convoy validate` / `dry_run`, the `lineup` advisory and `effective_model`; the example series uses `tier = "weak"`; the cost figure keeps its provenance as the `weak` tier at v0.1.0. `tests/test_doc_claims.py::test_the_skill_names_no_model_id` fails if an id returns. The skill's advisory paragraph also lists the `lineup` kind and the two producers it had omitted. Two mirror sites remain (`core/governance.py`, `interface/scaffold.py`). | unreleased |
 
 ### Built in the 2026-10-06 maintenance round (served by 0.16.0)
 

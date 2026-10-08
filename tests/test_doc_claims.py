@@ -289,3 +289,24 @@ def test_the_required_status_check_context_is_a_plain_job_named_gate() -> None:
         'without `if: always()` a red leg leaves the aggregate SKIPPED, and a skipped '
         'required check never fails a pull request — it just never arrives'
     )
+
+
+# A model id: a family name (`claude-haiku-4-5`, `claude-opus-5-5`) or a numbered id
+# (`claude-3-5-sonnet`). `claude-plugin` and `claude -p` are not model ids.
+_MODEL_ID = re.compile(r'claude-(?:haiku|sonnet|opus|\d|[a-z]+-\d)')
+
+
+def test_the_skill_names_no_model_id() -> None:
+    """The manual points at the resolution chain; it does not copy the lineup.
+
+    ADR-0010: a model id written in prose goes stale between releases with nothing to say
+    so. The skill named `claude-haiku-4-5` in three places after that model became a
+    legacy one, which is the drift the ADR describes. The lineup lives in code
+    (`DEFAULT_TIER_MODELS`, which raises a `lineup` advisory when a run resolves through it)
+    and in the series file (`[governance.tier_models]`), and the skill says where to look.
+    """
+    found = _MODEL_ID.findall(_text('skills', 'convoy', 'SKILL.md'))
+    assert found == [], (
+        f'skills/convoy/SKILL.md names model ids {found}; say "an explicit `model`" or use '
+        'a tier, and point at the resolution chain instead (ADR-0010)'
+    )

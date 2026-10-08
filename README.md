@@ -111,7 +111,7 @@ outputs = ".../outputs"    # telemetry lands here, out-of-tree
 effort = "low"
 permission_mode = "acceptEdits"
 timeout_seconds = 1800
-model = "claude-haiku-4-5"
+tier = "weak"              # or an explicit model = "<api model id>"
 
 [governance.budgets]       # USD caps per phase
 implementation = 1.0
