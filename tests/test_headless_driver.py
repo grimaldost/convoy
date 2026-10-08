@@ -2097,16 +2097,18 @@ def test_a_spawns_external_writes_are_recorded_and_change_nothing(harness: Harne
     outcome = run_series(
         series,
         harness.repo,
-        spawn=FakeSpawn([ok_result(output=stream)]),
+        spawn=MarkerSpawn([ok_result(output=stream)], markers_for=['a.txt']),
         git=harness.git,
         gate_runner=harness.gate_runner,
         telemetry=TelemetryWriter(telemetry_path),
         run_id='run-external',
     )
 
-    # Exactly the green arm: same outcome, same branch left out, same event sequence.
+    # Exactly the green arm: same outcome, the PR's work merged, same event sequence.
     assert outcome == RunOutcome('completed', True, EXIT_OK)
     assert harness.git.current_branch() == 'integration'
+    assert harness.git.is_merged_into('pr-1', 'integration')
+    assert (harness.repo / 'a.txt').read_text() == 'a.txt was here\n'
     events = _read_events(harness.outputs)
     assert [e['event'] for e in events] == [
         'run_start',
