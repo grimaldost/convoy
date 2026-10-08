@@ -8,7 +8,7 @@ one source of truth.
 **Which half is developed.** The gate (`convoy gate`, `convoy hook`, the gate spec and the
 trust list) is the product and takes new work. The runner (`convoy run` and everything that
 drives a spawn) is frozen to security fixes, fixes for defects that corrupt data or a
-workspace, and rows that retire parts of it — see
+workspace, the replacement of a legacy floor model id, and rows that retire parts of it — see
 [ADR-0011](docs/adr/0011-the-runner-is-frozen-the-gate-is-the-product.md).
 
 **Audience routing.** If you are *using* convoy to run a series, read

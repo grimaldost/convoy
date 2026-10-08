@@ -36,7 +36,8 @@ fire-and-walk-away, no human checkpoints.
 
 Of the two capabilities, the gate is the one under development. The runner is frozen: it
 still works as documented here, and takes only security fixes, fixes for defects that
-corrupt data or a workspace, and the removal of its parts
+corrupt data or a workspace, the replacement of a legacy floor model id, and the removal of
+its parts
 ([ADR-0011](../../docs/adr/0011-the-runner-is-frozen-the-gate-is-the-product.md)).
 
 The plugin exposes four MCP tools:

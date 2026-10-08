@@ -43,16 +43,20 @@ shipped 11 externally orchestrated PRs verified only by the agents that implemen
 The doctrine the measurement supports is stated, with its limits, in
 `docs/authoring-series.md` §Gate granularity (CONV-B69).
 
-**2. The hook fires for agents the Workflow tool starts, with one caveat.** The dated
+**2. The hook fires for agents the Workflow tool starts, within three limits.** The dated
 note [2026-10-08-subagentstop-under-workflow.md](../notes/2026-10-08-subagentstop-under-workflow.md)
 records a probe: `SubagentStop` fired for agents the Workflow tool started, with and without
 worktree isolation; a `[convoy-phase: <tag>]` marker in the `agent()` prompt reached the
-judge; and the judge ran the gate. The caveat is
+judge; and the judge ran the gate. The first limit is
 [CONV-B75](../backlog.md#conv-b75--a-worktree-isolated-subagent-is-judged-against-the-main-checkout-not-the-worktree-that-holds-its-changes)
 (proposed, not built): a worktree-isolated agent is judged against the main checkout, not the
 worktree that holds its changes, because gate discovery tries
 `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` before the walk up from the payload `cwd`. The note
-observed this with an untracked spec and reads the committed case from the code. The probe's
+observed this with an untracked spec and reads the committed case from the code. The other
+two are in the same note: a gate in a directory other than the session project is not found,
+even when the agent edits that directory; and the messenger leg did not fire for these
+agents, so an orchestrator that started them from a script hears of a residual red only by
+reading `.convoy/hook.log` (read from the hook's code, not observed). The probe's
 agents wrote one file each and both gates were green; no red was observed. It was a probe,
 not a run of a gate recipe: no Workflow script dispatched a series of agents and acted on
 the judge's verdicts.
@@ -71,11 +75,14 @@ freeze the engine." It records a comparison priced at about $152 and calls buyin
 purchase decision, not a scheduling one". The residue it wants measured bundles the gate
 with the repair loop, branch-per-PR integration with resume, and the ledger. The gate is
 the only one of those that fact 1 measures; the others are runner behaviour, and fact 3
-says the runner has not been in use. This record does not adopt or reject the position and
-does not touch the deferral. It narrows one sentence: for the runner, the engine is now
-frozen. Everything else in ADR-0009 stands, including the quarantine of the 9/10 figure and
-the rule that a successor which adopts or rejects the position records the reading it
-names first.
+says the runner has not been in use. This record does not adopt or reject the position,
+which stays a hypothesis. It narrows ADR-0009 in two places. For the runner, the engine is
+now frozen. And the priced comparison is declined for good (below), so ADR-0009's "It
+remains available at a stated price" and its "Revisit when the measurement is bought" no
+longer hold; its other revisit condition, a design that discriminates at a price closer to
+the rail, stands. Everything else in ADR-0009 stands, including the quarantine of the 9/10
+figure and the rule that a successor which adopts or rejects the position records the
+reading it names first.
 
 A paid measurement of the runner against hand-run dispatch, proposed outside this
 repository and priced at US$152, is the comparison ADR-0009 priced. This record declines it
@@ -87,14 +94,14 @@ for good. No reason is given beyond the decision itself.
 
 - **Frozen:** `convoy run` and `convoy_run`, the headless driver, the spawn adapter, the
   seat probe, detached runs, and the run telemetry. A new field, option, advisory, default
-  or behaviour is not a fix and does not land there. Three kinds of change are excepted:
+  or behaviour is not a fix and does not land there. Four kinds of change are excepted:
   - a security fix;
   - a fix for a defect that corrupts data or a workspace;
-  - a backlog row that retires part of the runner.
-
-  A floor model id the platform retires is a defect in a frozen part and takes a fix. The
-  move of the built-in floor lineup to the 5.5 models (the `[Unreleased]` entry in
-  `CHANGELOG.md` for CONV-B14) is that case.
+  - a backlog row that retires part of the runner;
+  - the replacement of a floor model id the platform lists as legacy or retires, as the
+    owner's decision of the same date does for `claude-haiku-4-5` and `claude-sonnet-5`
+    (backlog row `CONV-B14 (lineup 5.5)`, whose CHANGELOG entry moves the floor's `weak`
+    and `mid` tiers to the 5.5 models).
 - **Developed:** `convoy gate`, `convoy hook` with the trust check that guards what it
   executes, the gate spec, the trust list, and the gate-only file shape (a `[series]` id
   plus `[[checks]]`, accepted without a full series).
@@ -107,8 +114,9 @@ for good. No reason is given beyond the decision itself.
   end-to-end run in which the judge fires for agents a Workflow recipe starts. That run is
   a precondition, not a trigger: it permits a retirement and does not schedule one. The
   2026-10-08 probe (fact 2) showed the hook firing for Workflow agents in a probe; it is not
-  that run. Until a retirement, the frozen runner stays installed, documented and tested;
-  the freeze limits what is added to it, not what it does.
+  that run. Until a retirement, the frozen runner stays installed, documented and tested,
+  except for the parts an excepted retire row removes; the freeze limits what is added to
+  it, not what it does.
 
 ## Consequences
 
@@ -125,14 +133,16 @@ for good. No reason is given beyond the decision itself.
   - run telemetry: advisory counts, CONV-B20; the stream-vocabulary marker, CONV-B46, whose
     trigger is a change to the run stream and which gates CONV-B43(b);
   - watch rows that name the driver, the run telemetry, the reporter, the seat probe or the
-    scaffold: T3a, T4b, T6a, T6b, T15c, T17, T18, T54b, T60b, T66b, T68a.
+    scaffold: T3a, T4b, T6a, T6b, T15c, T17, T18, T54b, T66b, T68a.
 
   T67a is no longer among them: it shipped as CONV-B73 in 0.17.0.
 - **Rows that retire parts of the runner are excepted** and may land during the freeze:
   CONV-B30 (the reserved `[review]` lane), CONV-B33 (the per-model seat-probe fan-out and
-  the `effective_model` folding), CONV-B34 (the credential-copy isolation), CONV-B35 (the
-  hand-rolled stream parser), and the two measurements that gate them, CONV-B18 (for
-  CONV-B33) and CONV-B19 (for CONV-B34).
+  the `effective_model` folding), CONV-B34 (the credential-copy isolation) and CONV-B35 (the
+  hand-rolled stream parser).
+- **Rows that add nothing to the runner are not held by the freeze:** CONV-B18 and
+  CONV-B19, the measurements that gate CONV-B33 and CONV-B34, and the watch row T60b, one
+  sentence documenting the seat probe's existing behaviour.
 - **Rows for the owner to classify.** CONV-B38, CONV-B39, CONV-B40, T54a, T64a and T64b
   touch the gate and the run loop or the series file both. CONV-B16 and CONV-B44 wait as
   listed, but may be defects that corrupt a workspace (telemetry left dangling after
