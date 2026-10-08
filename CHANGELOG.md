@@ -13,6 +13,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-08
+
+**Minor**, by the test in `docs/design/02-formats.md`: one entry below carries
+**(consumer-affecting)** — a new telemetry field, a new envelope field and a new advisory kind
+for the remote refs and PRs a spawn created.
+
+A run now reports what a spawned agent pushed or opened outside the workspace, the plugin hook
+stops paying for a full `convoy` start on a firing that has no gate to run, the skill no longer
+names a model id, and a dated note records how the hook behaves under the Workflow tool.
+
 ### Added
 
 - **The run result records the remote refs and PRs a spawn created.**
