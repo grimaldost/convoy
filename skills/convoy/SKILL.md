@@ -150,10 +150,12 @@ neither a `model` nor a known `tier`.
 The dry run also returns **`advisories`** — located `{kind, where, message}` remarks
 that do **not** make the series invalid, so they never change `ok` or `outcome` (and on
 the CLI, `convoy validate` prints them to stderr and still exits `0`). Today there are
-three: a PR that no blocking check gates, which therefore integrates unverified; a check
-declaring an `asset` on a lane that will never read it; and a blocking gate that is
+four: a PR that no blocking check gates, which therefore integrates unverified; a check
+declaring an `asset` on a lane that will never read it; a blocking gate that is
 path-scoped away from test files present in the workspace, so a green gate is a narrower
-claim than the tree warrants. Read them; they are the things that are legal and probably
+claim than the tree warrants; and a model resolved through convoy's built-in tier table
+rather than from the series file (kind `lineup`, naming the table's `LINEUP_RECONCILED`
+date). Read them; they are the things that are legal and probably
 not what you meant.
 
 ### `convoy_init`
@@ -215,11 +217,11 @@ Every tool returns a single JSON object.
   Read this first on a non-`completed` run: it answers which PR and how close to which cap
   without opening the trace.
 - `advisories` — always present, empty when there is nothing to say. Two sources, in this
-  order: what pre-flight remarked on without stopping the run (today, a PR no blocking check
-  gates, which therefore integrated **unverified**), recorded on the run's `run_start`
-  telemetry line; then one `external_write` advisory per command a spawn issued that writes
-  outside the workspace, naming the PR and role, the command and its target, and saying the
-  run did not gate it. `convoy_status` reports both. They never affect `ok` or `outcome`.
+  order: what pre-flight remarked on without stopping the run (for example a PR no blocking
+  check gates, which therefore integrated **unverified**, or a model that came from the
+  built-in tier table), recorded on the run's `run_start` telemetry line; then one
+  `external_write` advisory per command a spawn issued that writes outside the workspace,
+  naming the PR and role, the command and its target, and saying the run did not gate it. `convoy_status` reports both. They never affect `ok` or `outcome`.
 - `external_writes` — always present, `[]` when there were none: every `git push`,
   `gh pr create`, or writing `gh` command against a named repository (`-R` / `--repo`) a
   spawn issued, scanned from its own stream, as `{ pr_id, role, attempt, kind, command,
@@ -239,10 +241,12 @@ is one of `governance`, `dag`, `paths`, `prompt`, `isolation`, `phases`, `resume
 `run_id`, `seat`, `workspace`, and `where` locates the offending section or entry, e.g.
 `[[prs]] 'pr-2'`; a `workspace` problem — uncommitted changes in the tree — is located at
 the workspace path). `advisories` is a list of the same shape, always present and often
-empty; it is **non-blocking** and never affects `ok` or `outcome` (`kind` is `gate`
-today). Two producers: a PR that phase scoping leaves with no blocking check, and a check
+empty; it is **non-blocking** and never affects `ok` or `outcome` (`kind` is `gate` or
+`lineup`). Four producers: a PR that phase scoping leaves with no blocking check; a check
 declaring an `asset` while not being both `blocking` and `independent` — the isolation
-guard is that field's only consumer, so anywhere else it is accepted and read by nothing.
+guard is that field's only consumer, so anywhere else it is accepted and read by nothing;
+test files in the workspace that no blocking check runs; and (`lineup`) a model resolved
+through convoy's built-in tier table rather than from the series file.
 
 **`convoy_run`, could-not-start** — a real run returns this same `outcome: "usage"`
 (`ok: false`) shape if it cannot start, never a raised exception. It carries `problems` (a
@@ -475,13 +479,21 @@ least one entry.
 | `[[prs]]` | `id`, `branch`, `prompt` (file under `[paths].prompts`), `phase` (tag), `depends_on` (array of PR ids, default `[]`), `model` / `tier` / `effort` (optional, inherit `[governance]`) | the PR DAG |
 
 - **`model` vs `tier`, and where the lineup comes from.** Resolution order, strongest
-  first: an explicit `model` (e.g. `claude-haiku-4-5`); the `[governance.tier_models]`
+  first: an explicit `model` (an API model id); the `[governance.tier_models]`
   table **this series carries**; then convoy's built-in table. The first two live in the
   artefact, so the run is reproducible from its own file. The third is a **floor** —
-  carried so convoy runs for someone with no access to whatever maintains a lineup, only
-  as fresh as the release you installed, and it says so: any tier it resolves raises a
-  pre-flight advisory naming the model and the table's `LINEUP_RECONCILED` date. That is
-  advice, not a refusal. `model` wins if both are set. A
+  `DEFAULT_TIER_MODELS` in `src/convoy/core/governance.py`, carried so convoy runs for
+  someone with no access to whatever maintains a lineup, only as fresh as the release you
+  installed, and it says so: any tier it resolves raises a pre-flight advisory of kind
+  `lineup` naming the model and the table's `LINEUP_RECONCILED` date. That is advice, not
+  a refusal. To check whether a series' models come from its own file or from the
+  floor before spending, run `convoy validate` or `convoy_run` with `dry_run: true`: a
+  floor-resolved model appears in the `lineup` advisory, while an explicit or series-table
+  model is the one written in the file and produces no advisory. After a real run each PR's
+  `effective_model` reports what its spawn ran under. This manual names no model ids, because a copy in prose goes stale
+  between releases; the reasoning is in
+  [ADR-0010](../../docs/adr/0010-the-artefact-carries-the-lineup.md). `model` wins if both
+  are set. A
   `[[prs]]` table may set its own `model` / `tier` / `effort`, falling back to
   `[governance]` when absent; a PR that sets `model` or `tier` supplies both (the series
   pair is not consulted), and both spawns of a PR — implementation and fix — resolve the
@@ -605,7 +617,7 @@ integration = "integration"
 prompts = "/abs/demo/prompts"
 outputs = "/abs/demo/outputs"
 [governance]
-model = "claude-haiku-4-5"
+tier = "weak"
 effort = "low"
 permission_mode = "acceptEdits"
 timeout_seconds = 1800
@@ -632,6 +644,11 @@ prompt = "implement.md"
 phase = "core"
 depends_on = []
 ```
+
+`tier = "weak"` names no model. With no `[governance.tier_models]` table in the file it
+resolves through convoy's built-in floor, so a dry run of this series prints a `lineup`
+advisory naming the model it picked. Add a `[governance.tier_models]` table, or replace
+`tier` with an explicit `model`, to make the run reproducible from its own file.
 
 ## Limits and re-runs
 
@@ -694,8 +711,9 @@ plus up to `max_fix_attempts` fix spawns when a gate goes red. It scales with th
 **model tier** (an Opus run costs far more than Haiku), effort, brief size, and PR
 count. The gate checks themselves are local commands (near-free).
 
-- **Cost (MEASURED):** roughly **$0.04 per spawn** at `model = claude-haiku-4-5`,
-  `effort = low`, on small briefs (13 spawns totalled ~$0.54 in a dogfooding run). A
+- **Cost (MEASURED):** roughly **$0.04 per spawn** at the `weak` tier, `effort = low`, on
+  small briefs (13 spawns totalled ~$0.54 in a dogfooding run on the model the `weak` tier
+  resolved to in v0.1.0, July 2026; not re-measured since). A
   clean single-implementation PR is about one spawn; budget a few spawns per PR if
   the fix loop engages. A stronger tier multiplies this by a lot.
 - **Latency (ESTIMATE):** each spawn is a full headless agent run — tens of seconds

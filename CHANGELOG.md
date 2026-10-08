@@ -58,6 +58,15 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   guard receives while `convoy hook` runs is passed on to it, so a hook ended at its timeout
   does not leave `convoy hook` running behind it.
 
+- **The skill names no model id; it points at the resolution chain.** `skills/convoy/SKILL.md`
+  no longer writes `claude-haiku-4-5` in the resolution-order bullet, the example series or the
+  cost figure, which went stale when that model became a legacy one. The bullet now says where
+  a resolved model is reported (`convoy validate` or `dry_run`, the `lineup` advisory, and each
+  PR's `effective_model`) and points at ADR-0010; the example series and the README's use
+  `tier = "weak"`; the cost figure is stated for the `weak` tier as measured at v0.1.0. A test in
+  `tests/test_doc_claims.py` fails if the skill names a model id again. The skill's advisory
+  paragraph also now lists the `lineup` kind and all four advisory producers.
+
 ## [0.16.1] - 2026-10-07
 
 **Patch**, by the test in `docs/design/02-formats.md`: no entry below carries

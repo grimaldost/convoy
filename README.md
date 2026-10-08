@@ -88,7 +88,7 @@ Everything the run did — spawns, costs, gate verdicts, skips, outcome — is i
 
 ## The series file
 
-`convoy init` emits a correct, copyable exemplar. Trimmed:
+A correct, copyable series file (`convoy init` emits a close variant). Trimmed:
 
 ```toml
 prs = [
@@ -111,7 +111,7 @@ outputs = ".../outputs"    # telemetry lands here, out-of-tree
 effort = "low"
 permission_mode = "acceptEdits"
 timeout_seconds = 1800
-model = "claude-haiku-4-5"
+tier = "weak"              # or an explicit model = "<api model id>"
 
 [governance.budgets]       # USD caps per phase
 implementation = 1.0
