@@ -296,11 +296,22 @@ needed, and the plugin runs from its own cache clone so local edits never
 perturb it. A reference skill (`skills/convoy/SKILL.md`) ships alongside,
 documenting the tool arguments, the result envelope, cost and latency, when not
 to use the tools, and the full series.toml schema. `hooks/hooks.json` ships `convoy
-hook` on `SubagentStop` (every agent type) and on `PostToolUse` for `Agent|Task` (`uv
-run --project ${CLAUDE_PLUGIN_ROOT} convoy hook`, timeout 1800 s), auto-registered when
-the plugin is enabled; it is inert until
-a project has a `.convoy/gate.toml`, and config isolation keeps it out of every
-scored spawn.
+hook` on `SubagentStop` (every agent type) and on `PostToolUse` for `Agent|Task`,
+auto-registered when the plugin is enabled, timeout 1800 s. Both handlers run a guard
+first, in shell form: `uv run --project "${CLAUDE_PLUGIN_ROOT}" --frozen --no-sync --
+python -I "${CLAUDE_PLUGIN_ROOT}/src/convoy/interface/hook_guard.py"`. The guard is
+standard library only and reads the event; when the full hook would be silent and write
+nothing — no gate spec found, or one in a project neither vouched for in
+`CONVOY_TRUSTED_ROOTS` nor on the trust list — it exits 0 without starting `convoy`.
+Otherwise it runs `uv run --project <plugin root> convoy hook` with the same stdin bytes,
+passes on a SIGTERM or SIGINT it receives while that runs, and returns its exit code;
+anything it does not understand (an explicit `CONVOY_GATE_SPEC`, a payload that is not a
+JSON object, an unexpected trust file) is delegated. `--frozen
+--no-sync` keeps uv from locking or syncing on the fast path; the delegated `uv run` syncs
+as before. The handlers stay in shell form because exec form (`args`) needs a recent
+Claude Code, and on an older client a bare `uv` would exit 2 and block every subagent. The
+hook is inert until a project has a `.convoy/gate.toml`, and config isolation keeps it out
+of every scored spawn.
 
 ## CLI ↔ MCP parity
 

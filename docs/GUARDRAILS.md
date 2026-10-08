@@ -96,18 +96,22 @@ of the above is re-derived: the four `run_gate` refusals fixed in
 ### Every subprocess is hermetic
 
 No child inherits the caller's stdin — `stdin=DEVNULL` at every subprocess site
-except the agent spawn, which gets a dedicated pipe closed at launch — and every
+except the agent spawn, which gets a dedicated pipe closed at launch, and the plugin hook
+guard's delegate, which gets the event bytes on a dedicated pipe — and every
 git invocation carries the hermetic flags (`core.fsmonitor=false`,
 `maintenance.auto=false`, `gc.auto=0`).
 
 *Why:* under a stdio MCP server, a child that inherits the JSON-RPC stdin — or a
 git background daemon holding an inherited pipe — hangs the client forever.
 
-*Enforced by:* per-site discipline at the four launch sites (`interface/proc.py`
+*Enforced by:* per-site discipline at the five launch sites (`interface/proc.py`
 for gate checks and the kill helper, `interface/git.py`, `interface/scaffold.py`,
-`interface/headless_spawn.py`), verified end-to-end by
-`tests/test_mcp_stdio_integration.py`, which drives the tools over a real stdio
-server subprocess and asserts they return.
+`interface/headless_spawn.py`, `interface/hook_guard.py`). The first four are
+verified end-to-end by `tests/test_mcp_stdio_integration.py`, which drives the tools
+over a real stdio server subprocess and asserts they return; the guard runs as a hook
+script, not under the server, and `tests/test_hook_guard.py` runs the script as a
+subprocess through to a real `convoy hook` and checks the exact bytes a delegate process
+reads from its stdin pipe.
 
 ### Scored spawns run under config isolation
 
@@ -146,8 +150,10 @@ model to enforce, not this guardrail's.
 
 *Enforced by:* `interface/hook.py` (`trust_status` before any load or run) +
 `tests/test_hook.py` (an untrusted spec with a side-effecting check leaves no trace and
-no log; a changed spec is refused) + autouse fixture `_no_real_convoy_home`
-(in `tests/conftest.py`), which prevents tests from writing live trust entries into
+no log; a changed spec is refused) + `tests/test_hook_guard.py` (the plugin's guard,
+`interface/hook_guard.py`, skips a firing only where `hook.decide` is silent and writes
+nothing, and delegates every trusted or changed spec to `convoy hook`) + autouse fixture
+`_no_real_convoy_home` (in `tests/conftest.py`), which prevents tests from writing live trust entries into
 the real `~/.convoy/hook-trust.toml`.
 
 ### Telemetry is append-only and versioned

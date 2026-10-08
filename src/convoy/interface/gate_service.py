@@ -83,8 +83,9 @@ TRUSTED_ROOTS_ENV = 'CONVOY_TRUSTED_ROOTS'
 # ``tests/test_manifest.py`` pins the two together.
 HOOK_TIMEOUT_SECONDS = 1800
 
-# Held back from the hook timeout for the hook's own start-up (uv resolving the environment)
-# and its log append, which are not part of the gate's worst case.
+# Held back from the hook timeout for the hook's own start-up and its log append, which are
+# not part of the gate's worst case. On an armed firing the start-up runs uv twice: once for
+# the plugin's guard (``hook_guard.py``), once more for ``convoy hook`` it delegates to.
 HOOK_MARGIN_SECONDS = 30
 
 # How much of the hook timeout a gate's worst case (checks x ``timeout_seconds``) may take:
