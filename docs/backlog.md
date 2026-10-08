@@ -90,6 +90,10 @@ row the round's own miss earned (CONV-B64). CONV-B53's measurement — iteration
 multiagent-composition experiment — closed and was blind-reviewed on 2026-09-03; its row
 carries the result.
 
+**A build round ran on 2026-10-08**, from the 2026-10-07 review rather than from a triage
+pass. It mints CONV-B72 through CONV-B75 and re-statuses CONV-B14; T67a leaves the watch
+table as CONV-B73.
+
 ## Reading this backlog
 
 - **ID.** `CONV-Bnn` is the stable build ID used from this pass forward. `T<cluster><letter>`
@@ -1740,6 +1744,14 @@ the one thing not to do is discover the answer from a broken scored arm. [cross-
 ---
 
 ## Shipped
+
+### Built in the 2026-10-08 round (unreleased; served by the next tag)
+
+Built from the 2026-10-07 review rather than from a triage pass, on one branch per row.
+
+| Row | Promotion | Shipped by |
+|---|---|---|
+| CONV-B72 | The plugin hook exits early when no gate can be found. Cause: `hooks/hooks.json` started `uv run --project ... convoy hook` on every `SubagentStop` and every `Agent`/`Task` `PostToolUse`, so every installing session paid uv's environment check, an interpreter and the whole CLI import per firing, although the hook does nothing without a trusted `.convoy/gate.toml`. Change: both handlers run `src/convoy/interface/hook_guard.py` first (standard library only, `uv run --frozen --no-sync`, still shell form), which exits 0 without starting `convoy` when no spec is found or its project is untrusted, and delegates everything else to `convoy hook` with the same stdin. `tests/test_hook_guard.py` holds every skip against `hook.decide`. No-gate firing on one Windows 11 machine, 10 runs: median 747 ms at v0.16.1, 225 ms after (`scripts/hook_latency.py`). | unreleased |
 
 ### Built in the 2026-10-06 maintenance round (served by 0.16.0)
 

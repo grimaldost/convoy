@@ -361,7 +361,13 @@ read as silence.
 Three switches, all before anything executes. The project spec is the per-project
 switch — `$CONVOY_GATE_SPEC`, then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then
 `.convoy/gate.toml` from the event's `cwd` upward — and with none found the hook exits 0
-silently, so installing the plugin arms nothing until a project opts in. The operator's
+silently, so installing the plugin arms nothing until a project opts in. The plugin's
+handler runs a standard-library guard (`src/convoy/interface/hook_guard.py`) before
+`convoy hook`: when no spec is found, or one is found in a project this machine does not
+trust, it exits 0 without starting `convoy`, so a firing with nothing to gate costs uv's
+start-up and one short Python run (a median of 225 ms on one Windows 11 machine, against
+747 ms for the full hook; `scripts/hook_latency.py` measures it). Everything else, including anything the guard does not
+understand, goes to `convoy hook` unchanged. The operator's
 trust is the per-machine switch: `convoy gate --trust` records the project root **and
 the spec's hash** in `CONVOY_HOME/hook-trust.toml` (default `~/.convoy/`); an untrusted
 project is recorded in the hook's own process and nothing is written into it, and a spec
@@ -389,7 +395,8 @@ exists for that agent and session, or the record is older than an hour. The hook
 timeout is 1800 s; each check is bounded by the spec's `timeout_seconds`, and a gate
 whose checks together exceed the hook timeout is killed by Claude Code — the one path on
 which nothing is said. Keep the sum within 1500 s, the gate budget, which leaves 30 s for
-the hook itself and at least 270 s for a firing to wait its turn (below); `convoy validate`
+the hook itself (on an armed firing uv starts twice: once for the guard, once for `convoy
+hook`) and at least 270 s for a firing to wait its turn (below); `convoy validate`
 warns past it, and `convoy gate --init` scaffolds inside it. Plugin hooks live under the config directory, and convoy's own spawns run under config isolation, so the plugin's
 hooks never fire inside a governed run; a hook a project wires in its own
 `.claude/settings.json` survives isolation and would fire inside one — the lock
