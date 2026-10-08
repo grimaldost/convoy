@@ -32,7 +32,8 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   envelope's `advisories` now holds the pre-flight advisories and then these. The run prints
   one line per finding on stderr when the spawn finishes, and `convoy status` shows a count.
   Report, not enforce: no outcome, exit code or integration changes. The scan sees the
-  commands the agent typed, not a push made by a script it ran.
+  commands the agent typed that match these patterns, skipping comments, heredoc bodies and
+  PowerShell here-strings; it does not see a push made by a script the agent ran.
 
 ### Changed
 

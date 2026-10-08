@@ -12,8 +12,10 @@ What it reads: every ``tool_use`` block of an ``assistant`` message whose ``inpu
 is a string — which covers the Bash and PowerShell tools without keying on a tool name —
 paired with the later ``tool_result`` block of the same id to learn whether it errored. What
 it cannot see: a push made by a script the agent ran (``./release.sh``), by a tool with no
-``command`` input, or by a process that outlived the spawn. The scan is a record of the
-commands the agent typed, not of the network.
+``command`` input, or by a process that outlived the spawn; and a typed write outside the
+three patterns (``gh api -X POST ...``, a ``gh repo create`` naming its repository
+positionally). The scan is a record of matching commands the agent typed, not of the
+network.
 """
 
 import json
@@ -68,8 +70,38 @@ _GH_HEAD_OPTIONS = frozenset({'-H', '--head'})
 
 _ENV_ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
 # Leading tokens that run the command after them rather than being it: PowerShell's call
-# operator, and the POSIX prefixes an agent puts in front of a command.
-_PREFIX_TOKENS = frozenset({'&', 'command', 'exec', 'time', 'env', 'nohup'})
+# operator, the POSIX prefixes an agent puts in front of a command, and the shell keywords
+# that open a compound statement's body (``for d in a b; do git -C $d push; done``).
+_PREFIX_TOKENS = frozenset(
+    {
+        '!',
+        '&',
+        'command',
+        'do',
+        'elif',
+        'else',
+        'env',
+        'exec',
+        'if',
+        'nohup',
+        'then',
+        'time',
+        'until',
+        'while',
+    }
+)
+# A redirection token (``>``, ``2>&1``, ``>>log``, ``2>$null``, ``*>&1``): never a remote or a
+# refspec. When nothing follows the operator, the next token is its operand.
+_REDIRECTION = re.compile(r'^(?:\d+|&|\*)?(?:>>?|<)[&|]?(.*)$', re.DOTALL)
+# The opening of a POSIX heredoc: ``<<EOF``, ``<<-EOF``, ``<< 'EOF'``, ``<<"EOF"``. A bare
+# delimiter starts with a letter or underscore, so the shift in ``$((1<<2))`` is not one.
+_HEREDOC = re.compile(r"""<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|([A-Za-z_][A-Za-z0-9_.-]*))""")
+# The characters after which an unquoted ``#`` starts a comment (it must begin a word).
+_COMMENT_AFTER = frozenset(' \t\r\n;|&(')
+# The characters after which ``\"`` inside double quotes closes the quote rather than
+# escaping it: a Windows path ending in a backslash (``"C:\dep\"``), which PowerShell, having
+# no backslash escape, reads that way.
+_CLOSES_AFTER_BACKSLASH = frozenset(' \t\r\n;|&)')
 
 _PHRASES = {
     GIT_PUSH: 'pushes to a remote',
@@ -85,7 +117,8 @@ class ExternalWrite:
     ``kind`` is one of ``git_push``, ``gh_pr_create``, ``gh_repo_write``. ``command`` is the
     simple command as issued, whitespace collapsed and cut to :data:`COMMAND_MAX_CHARS`.
     ``target`` is what it wrote to, as far as the command line says — for a push the ``-C``
-    directory and then the remote and refspec tokens, for ``gh`` the ``-R`` / ``--repo``
+    directory and then the remote (or ``--repo`` value) and refspec tokens, redirections
+    left out, for ``gh`` the ``-R`` / ``--repo``
     value (plus ``--head`` on a PR) — and empty when the command names none (the current
     repository). ``failed`` is ``True`` when the paired tool result reported an error,
     ``False`` when it did not, and ``None`` when the stream carries no result for it.
@@ -173,7 +206,7 @@ def _writes_in(command: str) -> list[ExternalWrite]:
     """The external writes among ``command``'s simple commands (``failed`` left unknown)."""
     writes: list[ExternalWrite] = []
     for simple in _simple_commands(command):
-        tokens = _tokens(simple)
+        tokens = _without_redirections(_tokens(simple))
         while tokens and (_ENV_ASSIGNMENT.match(tokens[0]) or tokens[0] in _PREFIX_TOKENS):
             tokens = tokens[1:]
         if not tokens:
@@ -193,43 +226,149 @@ def _writes_in(command: str) -> list[ExternalWrite]:
 
 
 def _simple_commands(command: str) -> list[str]:
-    """``command`` split on the shell separators (newline, ``;``, ``&&``, ``||``, ``|``).
+    """``command`` split on the shell separators (newline, ``;``, ``&&``, ``||``, ``|``, ``&``).
 
-    Quote-aware, so a separator inside a quoted commit message does not split it, and a
-    newline inside a quoted heredoc substitution stays with its command. A backslash
-    outside single quotes escapes the next character, as in a POSIX shell. Leading ``(`` /
-    ``{`` and trailing ``)`` / ``}`` are stripped, so a subshell's commands are seen.
+    Quote-aware, so a separator inside a quoted commit message does not split it. Inside
+    double quotes a backslash escapes the next character, except that ``\\"`` followed by
+    whitespace, a separator or the end closes the quote (a Windows path ending in a
+    backslash); outside quotes a backslash is literal. A quote that never closes is read as
+    a literal character, so a stray apostrophe does not swallow the rest of the command.
+
+    What is data rather than commands is dropped: an unquoted ``#`` that begins a word runs
+    to the end of its line, and a heredoc body (``<<EOF`` to the line ``EOF``) and a
+    PowerShell here-string body (``@'`` to a line starting ``'@``) are skipped. A lone ``&``
+    separates (a background job) except at the start of a command, where it is PowerShell's
+    call operator, and inside a redirection (``2>&1``). Leading ``(`` / ``{`` and trailing
+    ``)`` / ``}`` are stripped, so a subshell's commands are seen.
+    """
+    literal: set[int] = set()
+    while True:
+        parts, unclosed = _split(command, literal)
+        if unclosed is None:
+            stripped = (part.strip().lstrip('({').rstrip(')}').strip() for part in parts)
+            return [part for part in stripped if part]
+        literal.add(unclosed)
+
+
+def _split(command: str, literal: set[int]) -> tuple[list[str], int | None]:
+    """One splitting pass: the parts, and where a quote opened that never closed (or ``None``).
+
+    A quote character at a position in ``literal`` is read as an ordinary character.
     """
     parts: list[str] = []
     current: list[str] = []
+    heredocs: list[tuple[str, bool]] = []
     quote = ''
+    opened = 0
+    size = len(command)
     i = 0
-    while i < len(command):
+    while i < size:
         char = command[i]
         if quote:
             current.append(char)
             if char == quote:
                 quote = ''
-            elif char == '\\' and quote == '"' and i + 1 < len(command):
-                current.append(command[i + 1])
-                i += 1
-        elif char in '\'"':
-            quote = char
+            elif char == '\\' and quote == '"' and i + 1 < size:
+                after = command[i + 2] if i + 2 < size else '\n'
+                if command[i + 1] != '"' or after not in _CLOSES_AFTER_BACKSLASH:
+                    current.append(command[i + 1])
+                    i += 1
+            i += 1
+            continue
+        here_end = _here_string_end(command, i) if char == '@' else None
+        if here_end is not None:
+            current.append(command[i:here_end])
+            i = here_end
+        elif char in '\'"' and i not in literal:
+            quote, opened = char, i
             current.append(char)
-        elif char in '\n;' or (char in '&|' and command[i : i + 2] in ('&&', '||')):
+            i += 1
+        elif char == '#' and (i == 0 or command[i - 1] in _COMMENT_AFTER):
+            newline = command.find('\n', i)
+            i = size if newline == -1 else newline
+        elif command.startswith('<<<', i):
+            current.append('<<<')
+            i += 3
+        elif char == '<' and (match := _HEREDOC.match(command, i)):
+            heredocs.append((match.group(2) or match.group(3) or match.group(4), match[1] == '-'))
+            current.append(match.group(0))
+            i = match.end()
+        elif char == '\n':
             parts.append(''.join(current))
             current = []
-            if char in '&|':
-                i += 1
-        elif char == '|':
+            i = _after_heredocs(command, i + 1, heredocs)
+            heredocs = []
+        elif char == ';' or command[i : i + 2] in ('&&', '||'):
             parts.append(''.join(current))
             current = []
+            i += 1 if char == ';' else 2
+        elif char == '|' or (char == '&' and _separates(command, i, current)):
+            parts.append(''.join(current))
+            current = []
+            i += 1
         else:
             current.append(char)
-        i += 1
+            i += 1
+    if quote:
+        return parts, opened
     parts.append(''.join(current))
-    stripped = (part.strip().lstrip('({').rstrip(')}').strip() for part in parts)
-    return [part for part in stripped if part]
+    return parts, None
+
+
+def _separates(command: str, i: int, current: list[str]) -> bool:
+    """Whether the lone ``&`` at ``i`` ends a command (a background job)."""
+    if command[i + 1 : i + 2] == '>' or (i > 0 and command[i - 1] in '<>'):
+        return False  # a redirection: ``&>file``, ``2>&1``, ``<&3``
+    return bool(''.join(current).strip())  # at a command's start it is the call operator
+
+
+def _after_heredocs(command: str, i: int, heredocs: list[tuple[str, bool]]) -> int:
+    """The index after the bodies of ``heredocs``, which start at ``i``, each to its delimiter.
+
+    ``heredocs`` holds ``(delimiter, strip_tabs)`` pairs in the order they opened. A body
+    whose delimiter never comes runs to the end, as in a POSIX shell.
+    """
+    for delimiter, strip_tabs in heredocs:
+        while i < len(command):
+            newline = command.find('\n', i)
+            end = len(command) if newline == -1 else newline
+            line = command[i:end].rstrip('\r')
+            i = end + 1
+            if (line.lstrip('\t') if strip_tabs else line) == delimiter:
+                break
+    return min(i, len(command))
+
+
+def _here_string_end(command: str, i: int) -> int | None:
+    """The index after the PowerShell here-string opening at ``i``, or ``None`` if none opens.
+
+    A here-string opens with ``@'`` or ``@"`` at the end of a line and closes at a line
+    starting ``'@`` or ``"@``; what is between is data. One that never closes runs to the end.
+    """
+    quote = command[i + 1 : i + 2]
+    if quote not in ('"', "'"):
+        return None
+    body = i + 2
+    if command.startswith('\r\n', body):
+        body += 1
+    if not command.startswith('\n', body):
+        return None
+    close = command.find(f'\n{quote}@', body)
+    return len(command) if close == -1 else close + 3
+
+
+def _without_redirections(tokens: list[str]) -> list[str]:
+    """``tokens`` without redirection operators and their operands."""
+    kept: list[str] = []
+    operand_next = False
+    for token in tokens:
+        if operand_next:
+            operand_next = False
+        elif match := _REDIRECTION.match(token):
+            operand_next = not match.group(1)
+        else:
+            kept.append(token)
+    return kept
 
 
 def _tokens(simple: str) -> list[str]:

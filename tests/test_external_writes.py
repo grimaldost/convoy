@@ -297,3 +297,115 @@ def test_the_advisory_says_when_the_command_reported_an_error() -> None:
     advisory = external_write_advisory('pr-2', 'fix', write)
     assert advisory.where == "[[prs]] 'pr-2' fix"
     assert 'error' in advisory.message
+
+
+# --- comments, heredocs and here-strings ---------------------------------------------------
+
+
+def test_an_apostrophe_in_a_comment_does_not_hide_a_later_push() -> None:
+    (write,) = _one("# don't push from the wrong dir\ncd ../dep\ngit push origin feat/x")
+    assert write.command == 'git push origin feat/x'
+
+
+def test_a_trailing_comment_is_not_part_of_the_target() -> None:
+    (write,) = _one("git push origin x # it's fine")
+    assert write.command == 'git push origin x'
+    assert write.target == 'origin x'
+
+
+def test_a_hash_inside_a_word_is_not_a_comment() -> None:
+    (write,) = _one('git push origin feat/x#2')
+    assert write.target == 'origin feat/x#2'
+
+
+def test_an_apostrophe_in_a_heredoc_body_does_not_hide_a_later_push() -> None:
+    (write,) = _one("cat > NOTES.md <<'EOF'\nit's done\nEOF\ngit push origin feat/x")
+    assert write.command == 'git push origin feat/x'
+
+
+def test_a_heredoc_body_is_data_not_commands() -> None:
+    assert (
+        _one("cat > deploy.sh <<'EOF'\ngit push origin main\ngh pr create -R o/r --fill\nEOF") == ()
+    )
+    assert _one('cat <<EOF\ngit push\nEOF') == ()
+    assert _one('cat <<-"END"\n\tgit push\n\tEND\necho done') == ()
+
+
+def test_a_command_after_a_heredoc_on_its_own_line_is_scanned() -> None:
+    (write,) = _one('git commit -F - <<EOF\nmsg; git push\nEOF\ngit push origin b')
+    assert write.target == 'origin b'
+
+
+def test_a_shift_in_arithmetic_is_not_a_heredoc() -> None:
+    (write,) = _one('echo $((1<<2))\ngit push origin b')
+    assert write.target == 'origin b'
+
+
+def test_a_powershell_here_string_body_is_data_not_commands() -> None:
+    command = "@'\nit's done; git push\n'@ | Set-Content notes.md\ngit push origin b"
+    (write,) = _one(command, name='PowerShell')
+    assert write.target == 'origin b'
+
+
+def test_a_quote_that_never_closes_is_read_as_a_literal() -> None:
+    (write,) = _one("echo it's\ngit push origin b")
+    assert write.target == 'origin b'
+
+
+def test_a_windows_path_ending_in_a_backslash_inside_quotes() -> None:
+    (write,) = _one(r'cd "C:\dep\"; git push origin x', name='PowerShell')
+    assert write.target == 'origin x'
+
+
+def test_an_escaped_quote_inside_double_quotes_still_escapes() -> None:
+    assert _one(r'git commit -m "say \"hi; git push\" now"') == ()
+
+
+# --- compound statements -------------------------------------------------------------------
+
+
+def test_a_push_inside_a_loop_is_found() -> None:
+    writes = _one('for d in a b; do git -C $d push; done')
+    assert [w.target for w in writes] == ['$d']
+
+
+def test_a_push_inside_a_conditional_is_found() -> None:
+    assert [w.kind for w in _one('if true; then git push; fi')] == ['git_push']
+    assert [w.kind for w in _one('if git push; then echo ok; else git push -f; fi')] == [
+        'git_push',
+        'git_push',
+    ]
+    assert [w.kind for w in _one('! git push')] == ['git_push']
+    assert [w.kind for w in _one('while false; do :; done; until git push; do sleep 1; done')] == [
+        'git_push'
+    ]
+
+
+# --- redirections and background jobs -----------------------------------------------------
+
+
+def test_redirections_are_not_part_of_the_target() -> None:
+    (write,) = _one('git push origin feat/x 2>&1 | tail -5')
+    assert write.target == 'origin feat/x'
+    (write,) = _one('git push > out.txt')
+    assert write.target == ''
+    (write,) = _one('cd ../dep; git push origin feat/x 2>$null', name='PowerShell')
+    assert write.target == 'origin feat/x'
+    (write,) = _one('git push origin x >>log 2>>err &>all *>&1')
+    assert write.target == 'origin x'
+
+
+def test_a_background_ampersand_separates_commands() -> None:
+    writes = _one('git push origin x & git push other y')
+    assert [w.target for w in writes] == ['origin x', 'other y']
+
+
+def test_the_powershell_call_operator_is_not_a_separator() -> None:
+    (write,) = _one('& git push origin x', name='PowerShell')
+    assert write.command == '& git push origin x'
+    assert write.target == 'origin x'
+
+
+def test_a_pipe_ampersand_still_splits() -> None:
+    (write,) = _one('git push origin x |& tee log')
+    assert write.target == 'origin x'

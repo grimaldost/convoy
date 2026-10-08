@@ -271,8 +271,9 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   the orchestrator learned of it from a commit body. This records it. It does not enforce:
   no outcome, exit code or integration changes. `kind` is one of:
   - `git_push` — a `git ... push ...`, global options before `push` included
-    (`git -C <dir> push`); `target` is the `-C` directory when present, then the remote and
-    refspec tokens.
+    (`git -C <dir> push`); `target` is the `-C` directory when present, then the remote
+    (a `--repo` value counts as the remote) and refspec tokens. Redirections (`2>&1`,
+    `> out.txt`) are not part of it.
   - `gh_pr_create` — a `gh pr create`; `target` is the `-R` / `--repo` value (empty: the
     current repository), then the `--head` / `-H` value when present.
   - `gh_repo_write` — any other `gh` command that names a repository with `-R` / `--repo`
@@ -283,14 +284,21 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
     `gh pr create` is recorded.
 
   `command` is the simple command as issued — the shell command split on newline, `;`,
-  `&&`, `||` and `|` outside quotes — with its whitespace collapsed and cut to 300
-  characters. `failed` is `true` when the paired tool result reported an error, `false` when
-  it did not, and `null` when the stream carries no result for it. **The scan reads the
-  spawn's own stream**: the `tool_use` blocks whose `input.command` is a string (the Bash and
-  PowerShell tools, without keying on a tool name), paired by id with their `tool_result`.
-  It cannot see a push made by a script the agent ran (`./release.sh`), by a tool without a
-  `command` input, or by a process that outlived the spawn: it is a record of the commands
-  the agent typed, not of the network. The result envelope lifts these to a top-level
+  `&&`, `||`, `|` and a background `&` outside quotes, with a leading compound keyword
+  (`do`, `then`, `else`, `if`, `!`, ...) kept — with its whitespace collapsed and cut to 300
+  characters. What is data rather than commands is not scanned: a `#` comment, a heredoc
+  body (`<<EOF` ... `EOF`), and a PowerShell here-string body (`@'` ... `'@`). A quote that
+  never closes is read as a literal character, so a stray apostrophe does not hide the
+  commands after it. `failed` is `true` when the paired tool result reported an error,
+  `false` when it did not, and `null` when the stream carries no result for it. **The scan
+  reads the spawn's own stream**: the `tool_use` blocks whose `input.command` is a string
+  (the Bash and PowerShell tools, without keying on a tool name), paired by id with their
+  `tool_result`. It cannot see a push made by a script the agent ran (`./release.sh`), by a
+  tool without a `command` input, or by a process that outlived the spawn; and of the
+  commands the agent did type, it records only the three patterns above, so a write such as
+  `gh api -X POST ...` or a `gh repo create` / `gh repo fork` that names its repository
+  positionally is not recorded. It is a record of matching commands the agent typed, not of
+  the network. The result envelope lifts these to a top-level
   `external_writes` list — each finding plus its `pr_id`, `role` and `attempt` (`0` for the
   implementation spawn, `n` for the nth fix spawn of that PR in the run, counted from ledger
   order, the numbering `gate_complete.attempt` uses) — and adds one advisory per finding to
