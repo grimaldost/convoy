@@ -50,7 +50,7 @@ def _series(
         version='1',
         branches=Branches(base='base', integration='integration'),
         paths=Paths(prompts='/tmp/p', outputs='/tmp/o'),
-        governance=governance or _gov(model='claude-haiku-4-5'),
+        governance=governance or _gov(model='claude-haiku-5-5'),
         review=Review(blocking=False, max_fix_attempts=0),
         checks=checks,
         prs=prs,

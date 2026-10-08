@@ -29,7 +29,7 @@ from convoy.interface.spawn import (
 )
 
 
-def _governance(model: str = 'claude-sonnet-5') -> Governance:
+def _governance(model: str = 'claude-sonnet-5-5') -> Governance:
     return Governance(
         effort='high',
         permission_mode='acceptEdits',
@@ -40,7 +40,7 @@ def _governance(model: str = 'claude-sonnet-5') -> Governance:
     )
 
 
-def _series(model: str = 'claude-sonnet-5', *, prs: tuple[PR, ...] | None = None) -> Series:
+def _series(model: str = 'claude-sonnet-5-5', *, prs: tuple[PR, ...] | None = None) -> Series:
     """A one-model, one-PR series by default; ``prs`` overrides the PR list.
 
     The default PR inherits ``[governance]``, so a plain ``_series()`` probes exactly the
@@ -70,7 +70,7 @@ def _infra_result(output: str) -> SpawnResult:
             num_turns=0,
             duration_s=0.1,
             cost_usd=0.0,
-            effective_model='claude-sonnet-5',
+            effective_model='claude-sonnet-5-5',
         ),
         classification='infrastructure',
     )
@@ -86,7 +86,7 @@ def test_dead_seat_returns_a_located_problem_carrying_the_output(tmp_path: Path)
     assert problem is not None
     assert problem.kind == 'seat'
     assert 'Not logged in' in problem.message
-    assert 'claude-sonnet-5' in problem.message  # names the model that was probed
+    assert 'claude-sonnet-5-5' in problem.message  # names the model that was probed
 
 
 def test_probe_request_is_minimal_but_uses_the_run_model(tmp_path: Path) -> None:
@@ -97,7 +97,7 @@ def test_probe_request_is_minimal_but_uses_the_run_model(tmp_path: Path) -> None
     assert len(spawn.calls) == 1
     request, cwd = spawn.calls[0]
     assert isinstance(request, SpawnRequest)
-    assert request.model == 'claude-sonnet-5'  # the governed model — probes real access
+    assert request.model == 'claude-sonnet-5-5'  # the governed model — probes real access
     assert request.tools == ()  # tool-less: nothing can touch the workspace
     assert 0 < request.budget_usd <= 0.05  # near-zero spend cap
     assert cwd == tmp_path
@@ -234,10 +234,10 @@ def test_probe_covers_every_distinct_per_pr_model(tmp_path: Path) -> None:
     )
     spawn = FakeSpawn([ok_result(), ok_result()])  # exactly two healthy probes
 
-    assert seat_problem(spawn, _series('claude-haiku-4-5', prs=prs), tmp_path) is None
+    assert seat_problem(spawn, _series('claude-haiku-5-5', prs=prs), tmp_path) is None
     # Two distinct models: the series model (pr-a) then opus (pr-b); pr-c's dupe adds nothing.
     assert [request.model for request, _cwd in spawn.calls] == [
-        'claude-haiku-4-5',
+        'claude-haiku-5-5',
         'claude-opus-4-8',
     ]
 
@@ -251,17 +251,17 @@ def test_probe_stops_at_the_first_dead_model(tmp_path: Path) -> None:
     # Only ONE result scripted: a second spawn would trip FakeSpawn's over-call assert.
     spawn = FakeSpawn([_infra_result('claude: Not logged in - please run /login')])
 
-    problem = seat_problem(spawn, _series('claude-haiku-4-5', prs=prs), tmp_path)
+    problem = seat_problem(spawn, _series('claude-haiku-5-5', prs=prs), tmp_path)
     assert problem is not None
-    assert 'claude-haiku-4-5' in problem.message
+    assert 'claude-haiku-5-5' in problem.message
     assert len(spawn.calls) == 1  # the opus model was never reached
 
 
 def test_series_with_no_prs_probes_the_series_model(tmp_path: Path) -> None:
     """A series naming no PRs still probes the [governance] model — no silent zero-probe hole."""
     spawn = FakeSpawn([ok_result()])
-    assert seat_problem(spawn, _series('claude-sonnet-5', prs=()), tmp_path) is None
-    assert [request.model for request, _cwd in spawn.calls] == ['claude-sonnet-5']
+    assert seat_problem(spawn, _series('claude-sonnet-5-5', prs=()), tmp_path) is None
+    assert [request.model for request, _cwd in spawn.calls] == ['claude-sonnet-5-5']
 
 
 # --- the failing model is located at the section that declares it -------------
@@ -270,7 +270,7 @@ def test_series_with_no_prs_probes_the_series_model(tmp_path: Path) -> None:
 def test_dead_series_model_locates_the_problem_at_governance(tmp_path: Path) -> None:
     """A failing inherited/series model points the user at [governance], the section it lives in."""
     spawn = FakeSpawn([_infra_result('claude: Not logged in - please run /login')])
-    problem = seat_problem(spawn, _series('claude-sonnet-5'), tmp_path)
+    problem = seat_problem(spawn, _series('claude-sonnet-5-5'), tmp_path)
     assert problem is not None
     assert problem.where == '[governance]'
 
@@ -287,7 +287,7 @@ def test_dead_per_pr_override_model_locates_the_problem_at_its_pr(tmp_path: Path
         PR(id='b', branch='b', prompt='b.md', phase='p', model='claude-opus-4-8'),  # dies
     )
     spawn = FakeSpawn([ok_result(), _infra_result('claude: Not logged in')])
-    problem = seat_problem(spawn, _series('claude-haiku-4-5', prs=prs), tmp_path)
+    problem = seat_problem(spawn, _series('claude-haiku-5-5', prs=prs), tmp_path)
     assert problem is not None
     assert 'claude-opus-4-8' in problem.message  # still names the failing model
     assert problem.where == "[[prs]] 'b'"

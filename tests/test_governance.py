@@ -18,6 +18,7 @@ from hypothesis import strategies as st
 
 from convoy.core.governance import (
     DEFAULT_TIER_MODELS,
+    LINEUP_RECONCILED,
     GovernanceError,
     effective_governance,
     implementation_model_sources,
@@ -84,6 +85,18 @@ def test_tier_maps_to_its_default_model() -> None:
     """With no model, the tier maps through the default tier→model table."""
     assert resolve_model(_governance(tier='mid')) == DEFAULT_TIER_MODELS['mid']
     assert resolve_model(_governance(tier='strong')) == 'claude-opus-5-5'
+
+
+def test_the_floor_is_the_5_5_lineup_with_the_date_it_was_reconciled() -> None:
+    """The floor and its stamp move together: a changed table with the old stamp would
+    tell the `lineup` advisory the wrong date."""
+    assert DEFAULT_TIER_MODELS == {
+        'weak': 'claude-haiku-5-5',
+        'mid': 'claude-sonnet-5-5',
+        'strong': 'claude-opus-5-5',
+        'frontier': 'claude-fable-5-1',
+    }
+    assert LINEUP_RECONCILED == '2026-10-08'
 
 
 def test_custom_tier_table_is_honored() -> None:

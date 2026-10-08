@@ -36,7 +36,7 @@ _BASE_SPAWN = SpawnComplete(
     num_turns=9,
     duration_s=74.2,
     cost_usd=0.11,
-    effective_model='claude-sonnet-5',
+    effective_model='claude-sonnet-5-5',
 )
 
 
@@ -77,7 +77,7 @@ def test_spawn_complete_json_line_has_schema_tag_and_all_fields() -> None:
         'num_turns': 9,
         'duration_s': 74.2,
         'cost_usd': 0.11,
-        'effective_model': 'claude-sonnet-5',
+        'effective_model': 'claude-sonnet-5-5',
         'effort': '',
         'cost_estimated': False,
         'output_tail': '',

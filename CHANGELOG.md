@@ -13,6 +13,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The floor's `weak` and `mid` tiers resolve to the 5.5 models.** `DEFAULT_TIER_MODELS` now maps
+  `weak` to `claude-haiku-5-5` and `mid` to `claude-sonnet-5-5`, with `LINEUP_RECONCILED` and its
+  `lineup synced` stamp at 2026-10-08; `strong` and `frontier` are unchanged. The two previous
+  ids, `claude-haiku-4-5` and `claude-sonnet-5`, are listed as legacy by the platform model page.
+  The `convoy init` starter model is `claude-haiku-5-5`, and the example series in
+  `docs/design/02-formats.md` follows. A series that reaches the floor for `weak` or `mid` now runs
+  a different model; an explicit `model` or a series `[governance.tier_models]` is unaffected.
+
 ## [0.17.0] - 2026-10-08
 
 **Minor**, by the test in `docs/design/02-formats.md`: one entry below carries

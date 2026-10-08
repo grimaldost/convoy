@@ -134,7 +134,7 @@ prompts = "/abs/series/prompts"        # the series root holds prompts/, oracles
 outputs = "/abs/series/outputs"        # outputs/ — and the scored workspace/ as a subdir
 
 [governance]
-model = "claude-sonnet-5"
+model = "claude-sonnet-5-5"
 effort = "medium"
 permission_mode = "default"
 timeout_seconds = 1800
@@ -345,6 +345,9 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
   frozen one. A future zero-cost provider gets `cost_usd: null`, not a price table.
 
 ### Worked example
+
+The lines below are dated 2026-07-03 (see the `run_id`) and show the model that served
+then; the `model` in the series example above is the current floor, not what these runs used.
 
 ```json
 {"schema_version": 1, "event": "run_start", "run_id": "20260703T142210Z-a1", "series_id": "add-comparison-ops", "advisories": []}

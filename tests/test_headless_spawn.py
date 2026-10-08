@@ -85,7 +85,7 @@ def _result_line(**overrides: object) -> str:
         'total_cost_usd': 0.0123,
         'num_turns': 4,
         'duration_ms': 2500,
-        'model': 'claude-sonnet-5',
+        'model': 'claude-sonnet-5-5',
         'usage': {'input_tokens': 1200, 'output_tokens': 340},
     }
     event.update(overrides)
@@ -99,7 +99,7 @@ def _result_line(**overrides: object) -> str:
 
 def test_normal_completion_parses_economy(tmp_path: Path) -> None:
     """A valid ``result`` event → ok classification, exit 0, and a fully parsed economy."""
-    init = json.dumps({'type': 'system', 'subtype': 'init', 'model': 'claude-sonnet-5'})
+    init = json.dumps({'type': 'system', 'subtype': 'init', 'model': 'claude-sonnet-5-5'})
     result = _result_line()
     body = f'print({init!r})\nprint({result!r})\nsys.exit(0)\n'
     spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
@@ -114,7 +114,7 @@ def test_normal_completion_parses_economy(tmp_path: Path) -> None:
     assert got.economy.num_turns == 4
     assert got.economy.duration_s == 2.5
     assert got.economy.cost_usd == 0.0123
-    assert got.economy.effective_model == 'claude-sonnet-5'
+    assert got.economy.effective_model == 'claude-sonnet-5-5'
     assert 'done' in got.output
 
 
@@ -436,20 +436,20 @@ def test_effective_model_falls_back_to_request_when_stream_has_none(tmp_path: Pa
     body = f'print({result!r})\nsys.exit(0)\n'
     spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
 
-    got = spawn.spawn(_request(model='claude-haiku-4-5'), cwd=tmp_path)
+    got = spawn.spawn(_request(model='claude-haiku-5-5'), cwd=tmp_path)
 
-    assert got.economy.effective_model == 'claude-haiku-4-5'
+    assert got.economy.effective_model == 'claude-haiku-5-5'
 
 
 def test_effective_model_prefers_the_streamed_model_over_the_request(tmp_path: Path) -> None:
     """When the stream reports a model it wins over the requested one (the resolved model)."""
-    result = _result_line(model='claude-sonnet-5')
+    result = _result_line(model='claude-sonnet-5-5')
     body = f'print({result!r})\nsys.exit(0)\n'
     spawn = HeadlessSpawn(claude_bin=_write_stub(tmp_path, body))
 
     got = spawn.spawn(_request(model='test-model'), cwd=tmp_path)
 
-    assert got.economy.effective_model == 'claude-sonnet-5'
+    assert got.economy.effective_model == 'claude-sonnet-5-5'
 
 
 # ---------------------------------------------------------------------------

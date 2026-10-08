@@ -42,7 +42,7 @@ prompts = "/abs/assets/prompts"
 outputs = "/abs/assets/outputs"
 
 [governance]
-model = "claude-sonnet-5"
+model = "claude-sonnet-5-5"
 effort = "medium"
 permission_mode = "default"
 timeout_seconds = 1800
@@ -138,7 +138,7 @@ def test_valid_full_example_parses_to_expected_series() -> None:
                 review=('Read', 'Grep', 'Glob'),
                 fix=('Read', 'Edit', 'Write', 'Bash'),
             ),
-            model='claude-sonnet-5',
+            model='claude-sonnet-5-5',
             tier=None,
         ),
         review=Review(blocking=True, max_fix_attempts=2),
@@ -525,13 +525,15 @@ def test_small_positive_budget_parses() -> None:
 
 
 def test_empty_model_is_rejected() -> None:
-    toml = VALID_TOML.replace('model = "claude-sonnet-5"', 'model = ""')
+    toml = VALID_TOML.replace('model = "claude-sonnet-5-5"', 'model = ""')
     with pytest.raises(SpecError, match='non-empty'):
         load_series(toml)
 
 
 def test_empty_tier_is_rejected() -> None:
-    toml = VALID_TOML.replace('model = "claude-sonnet-5"', 'model = "claude-sonnet-5"\ntier = ""')
+    toml = VALID_TOML.replace(
+        'model = "claude-sonnet-5-5"', 'model = "claude-sonnet-5-5"\ntier = ""'
+    )
     with pytest.raises(SpecError, match='non-empty'):
         load_series(toml)
 
