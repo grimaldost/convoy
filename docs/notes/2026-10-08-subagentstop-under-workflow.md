@@ -74,8 +74,8 @@ Each probe agent was started with `agent()` from a Workflow script, model `haiku
 and a prompt that began with `[convoy-phase: <tag>]`, then: use the Write tool to create the file
 `T/probe-<tag>.txt` containing the single line `<tag>`, and reply with the single word `done`.
 In each round one agent ran with no isolation and one with `isolation: 'worktree'`. The agents
-were told to write into `T` by absolute path, so the isolated agent's own worktree stayed
-unchanged.
+wrote into `T` by absolute path (the reply of probe-b1 names the absolute file), so the isolated
+agent's own worktree stayed unchanged.
 
 ## Round 1 — only T's gate armed
 
@@ -86,8 +86,9 @@ Workflow run `wf_b6974ce7-711`, two agents:
 | probe-a1 | `a5d6783b1437d67dc` | none | `done` |
 | probe-b1 | `ac464b171d308e67d` | worktree | `done` (preceded by one line naming the file it wrote) |
 
-Both files exist in `T`. `T/.convoy/hook.log` does not exist and `probe-evidence.ndjson` was not
-created: the judge never ran T's gate.
+Both files exist in `T`. `T/.convoy/hook.log` does not exist and `probe-evidence.ndjson` was
+absent after the round (the by-hand validation line had been moved to
+`probe-evidence.validation.ndjson` before it): the judge never ran T's gate.
 
 Round 1 alone cannot say whether the hook fired. With no gate spec reachable from the payload
 `cwd` or from `$CLAUDE_PROJECT_DIR`, the hook exits 0 and writes nothing (`hook.py::decide`
@@ -112,8 +113,8 @@ Workflow run `wf_7edbbf40-6d1`, two agents:
 | probe-b2 | `ab829481fc36b2f43` | worktree | `done` |
 
 Both files exist in `T`. `<project>/.convoy/hook.log` holds two lines, one per agent (values as
-recorded; `session_id`, `tool_name`, `tool_use_id`, `convoy_version` and the per-check detail
-are left out):
+recorded; `session_id`, `tool_name`, `tool_use_id`, `convoy_version`, the empty `repair_brief` and the
+per-check detail are left out):
 
 ```json
 {"ts": "2026-10-08T16:33:11.082+00:00", "event": "SubagentStop", "leg": "judge", "agent_id": "aac2c6440a7448fdc", "agent_type": "workflow-subagent", "model": "claude-haiku-5-5", "stop_hook_active": false, "cwd": "<project>", "outcome": "completed", "series_id": "probe-root", "phases": ["probe-a2"], "blocking_red": false, "independent_red": false, "counts": {"selected": 1, "passed": 1, "failed": 0}, "gate_ms": 136, "spec": "<project>\\.convoy\\gate.toml", "spec_sha256": "d927eba45ecd795138d89bc7f25f06504a7e02478683a939fa1e7d3345facd1f", "workspace": "<project>", "exit_code": 0}
@@ -131,8 +132,7 @@ with `check_cwd` `<project>` and `CLAUDE_PROJECT_DIR` `<project>`:
 Agent ids to labels, from the two Workflow run journals: `a5d6783b1437d67dc` probe-a1,
 `ac464b171d308e67d` probe-b1, `aac2c6440a7448fdc` probe-a2, `ab829481fc36b2f43` probe-b2. The ids
 in `hook.log` are the journal ids, so each line is tied to its agent. Each evidence timestamp
-precedes its log line by about 10 ms and 11 ms, which is the gate running before the record is
-written.
+precedes its log line by about 10 ms and 11 ms.
 
 What round 2 shows:
 

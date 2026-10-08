@@ -1189,10 +1189,11 @@ ran two agents the Workflow tool started, one with `isolation: 'worktree'`. The 
 (`<project>\.claude\worktrees\wf_7edbbf40-6d1-2`), yet the hook log records `spec`
 `<project>\.convoy\gate.toml` and `workspace` `<project>`, and the check ran with `check_cwd`
 `<project>`. The cause is the discovery order in `gate_service.find_gate_spec`:
-`$CLAUDE_PROJECT_DIR/.convoy/gate.toml` is tried before the walk up from the payload `cwd`, and
-the session project always has the spec when the spec is committed, so the worktree's own
-tree is never the one judged. A check that reads the working tree therefore passes or fails on
-the main checkout's files, not on the edits the isolated agent made. The probe's agents wrote
+`$CLAUDE_PROJECT_DIR/.convoy/gate.toml` is tried before the walk up from the payload `cwd`.
+With a committed spec and no `$CONVOY_GATE_SPEC`, the worktree's own tree is therefore not the
+one judged (read from the code; the probe observed the untracked case). A check that reads the
+working tree therefore passes or fails on the main checkout's files, not on the edits the
+isolated agent made. The probe's agents wrote
 outside their worktrees, so the note shows the tree the gate ran in, not a missed red; no red
 was observed. [probe 2026-10-08]
 
@@ -1200,15 +1201,16 @@ was observed. [probe 2026-10-08]
 payload `cwd` when that `cwd` is a git worktree of the `$CLAUDE_PROJECT_DIR` project, so the
 gate runs in the worktree that holds the agent's changes (this changes which tree a check
 executes in, and needs the trust rule to say whether a worktree inherits its main checkout's
-entry); (b) the hook names the tree it judged in its record and in the repair brief, so a
-mismatch between the agent's `cwd` and the judged `workspace` is visible without changing what
-runs; (c) both. Whatever is chosen, an isolated agent's `cwd` and the judged `workspace` should
-not differ silently.
+entry); (b) the hook names the judged tree in the repair brief and on stderr (the record already
+carries `cwd` and `workspace`), so a mismatch between the agent's `cwd` and the judged
+`workspace` is visible without changing what runs; (c) both. The skill's advice to give each
+concurrent writing subagent a worktree (`skills/convoy/SKILL.md`, the paragraph on the judge
+lock) assumes each gate judges that agent's own tree, so the chosen fix must revisit it.
 
 **Status.** Proposed, not built. `find_gate_spec` still orders `$CLAUDE_PROJECT_DIR` before the
 payload `cwd`, and `hook.log` already records both `cwd` and `workspace`, which is how the
-probe saw the difference. Option (a) changes which tree a check runs in, and trust is keyed on the project root and the
-spec's hash (`gate_service.trust_status`), so the trust rule needs reading before it is chosen.
+probe saw the difference. Trust is keyed on the project root and the spec's hash
+(`gate_service.trust_status`), so the trust rule needs reading before option (a) is chosen.
 
 **Effort** M · **Source** [probe 2026-10-08]
 
