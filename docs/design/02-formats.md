@@ -346,6 +346,9 @@ Every line carries `schema_version` and an `event`. v1 defines five events:
 
 ### Worked example
 
+The lines below are dated 2026-07-03 (see the `run_id`) and show the model that served
+then; the `model` in the series example above is the current floor, not what these runs used.
+
 ```json
 {"schema_version": 1, "event": "run_start", "run_id": "20260703T142210Z-a1", "series_id": "add-comparison-ops", "advisories": []}
 {"schema_version": 1, "event": "spawn_complete", "run_id": "20260703T142210Z-a1", "pr_id": "pr-1-lexer", "role": "implementation", "exit_code": 0, "input_tokens": 18422, "output_tokens": 3110, "num_turns": 9, "duration_s": 74.2, "cost_usd": 0.11, "effective_model": "claude-sonnet-5"}
