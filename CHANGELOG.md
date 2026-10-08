@@ -13,6 +13,27 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **A hook firing with no gate to run no longer starts `convoy`.** The plugin registers its
+  hook on every `SubagentStop` and every `Agent`/`Task` `PostToolUse`, so every session that
+  installs it paid for uv's environment check, an interpreter and the whole CLI import on
+  each subagent stop, although the hook does nothing until a project has a
+  `.convoy/gate.toml` this machine trusts. Both handlers in `hooks/hooks.json` now run a
+  standard-library guard first (`uv run --project "${CLAUDE_PLUGIN_ROOT}" --frozen
+  --no-sync -- python -I "${CLAUDE_PLUGIN_ROOT}/src/convoy/interface/hook_guard.py"`, still
+  in shell form, timeout unchanged). It exits 0 silently when no spec is found or the spec's
+  project is neither in `CONVOY_TRUSTED_ROOTS` nor on the trust list, and otherwise runs
+  `uv run --project <plugin root> convoy hook` with the same stdin and returns its exit
+  code; an explicit `CONVOY_GATE_SPEC`, a payload that is not a JSON object, and a trust file
+  it cannot read are all handed to `convoy hook`. `convoy hook` itself is unchanged. A
+  synthetic `SubagentStop` in a directory with no gate took a median of 747 ms with v0.16.1
+  and 225 ms with this change (one Windows 11 machine, 10 runs each after one warm-up,
+  measured back to back). Reproduce with `uv run python scripts/hook_latency.py` on this
+  tree, and with `git worktree add <tmp> v0.16.1` followed by `uv run python
+  scripts/hook_latency.py --plugin-root <tmp>` for the earlier release. An armed firing now
+  starts uv twice, once for the guard and once for `convoy hook`.
+
 ## [0.16.1] - 2026-10-07
 
 **Patch**, by the test in `docs/design/02-formats.md`: no entry below carries

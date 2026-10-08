@@ -36,6 +36,11 @@ the whole tree. A gate that cannot run (an unreadable or invalid spec, a refused
 invocation, a dead workspace) is exit 2 with a one-line reason — the loud answer,
 because a hook that swallowed its own misconfiguration would look like a green gate.
 
+The plugin does not start this process for the first two switches. Its handler runs
+``hook_guard.py`` first, a standard-library script that exits 0 by itself when no spec is
+found or the spec's project is not trusted, and delegates every other firing here with the
+same stdin. Invoked directly, ``convoy hook`` still decides every case as described above.
+
 Firings that gate one tree take turns. Several subagents stopping at once each fire the
 judge, and two suites running in one tree share its caches and build output. A firing
 that runs a gate holds ``.convoy/judge.lock`` from just before the gate until its log line

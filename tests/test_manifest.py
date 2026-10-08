@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 
 import convoy
+import convoy.interface.hook_guard as hook_guard
 from convoy.interface.gate_service import HOOK_TIMEOUT_SECONDS
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -75,20 +76,44 @@ def test_marketplace_lists_the_convoy_plugin_from_this_repo() -> None:
     assert plugins[0]['source'] == '.'  # the repo is its own plugin
 
 
+_GUARD_RELPATH = 'src/convoy/interface/hook_guard.py'
+
+
 def test_hooks_json_pins_the_hook_timeout() -> None:
     """``hooks/hooks.json`` sits outside the package, so the package constant is pinned to it.
 
     The gate scaffold and ``convoy validate`` compare a spec against ``HOOK_TIMEOUT_SECONDS``;
     this is the test that keeps that number the one Claude Code actually enforces.
+
+    Both events run the stdlib-only guard, which starts ``convoy hook`` only when a gate could
+    be found. The handlers stay in shell form (no ``args``): exec form is recent, and on an
+    older client a bare ``uv`` would exit 2 and block every subagent. ``--frozen --no-sync``
+    keeps uv from locking or syncing on the path that finds nothing to run.
     """
     data = json.loads((_ROOT / 'hooks' / 'hooks.json').read_text(encoding='utf-8'))
     events = data['hooks']
     assert {'SubagentStop', 'PostToolUse'} <= events.keys()
+    assert (_ROOT / _GUARD_RELPATH).is_file()
+    expected = (
+        'uv run --project "${CLAUDE_PLUGIN_ROOT}" --frozen --no-sync -- '
+        f'python -I "${{CLAUDE_PLUGIN_ROOT}}/{_GUARD_RELPATH}"'
+    )
     for event in ('SubagentStop', 'PostToolUse'):
         commands = [hook for entry in events[event] for hook in entry['hooks']]
         assert commands, event
-        assert all(' convoy hook' in hook['command'] for hook in commands), event
+        for hook in commands:
+            assert hook['type'] == 'command', event
+            assert 'args' not in hook, event
+            assert hook['command'] == expected, event
     timeouts = {
         hook['timeout'] for entries in events.values() for e in entries for hook in e['hooks']
     }
     assert timeouts == {HOOK_TIMEOUT_SECONDS}
+
+
+def test_the_hook_guard_delegates_to_convoy_hook() -> None:
+    """What the guard starts when a gate is found is the full hook, from the plugin root."""
+    argv = hook_guard.delegate_argv('uv')
+    assert argv[:3] == ['uv', 'run', '--project']
+    assert Path(argv[3]) == _ROOT
+    assert argv[-2:] == ['convoy', 'hook']

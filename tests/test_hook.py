@@ -343,7 +343,8 @@ def test_the_plugin_ships_the_hook() -> None:
     assert entry['matcher'] == 'Agent|Task'
     (command,) = entry['hooks']
     assert command['type'] == 'command'
-    assert 'convoy hook' in command['command']
+    # The handler runs the guard, which delegates to `convoy hook` (tests/test_manifest.py).
+    assert '/src/convoy/interface/hook_guard.py' in command['command']
     assert '${CLAUDE_PLUGIN_ROOT}' in command['command']
     assert command['timeout'] > 600
 
@@ -536,7 +537,8 @@ def test_the_plugin_ships_the_judge_too() -> None:
     (entry,) = hooks['hooks']['SubagentStop']
     assert 'matcher' not in entry
     (command,) = entry['hooks']
-    assert 'convoy hook' in command['command']
+    # The handler runs the guard, which delegates to `convoy hook` (tests/test_manifest.py).
+    assert '/src/convoy/interface/hook_guard.py' in command['command']
     assert command['timeout'] > 600
 
 
