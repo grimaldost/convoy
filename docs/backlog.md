@@ -791,7 +791,10 @@ Two sites remain, `core/governance.py` and `interface/scaffold.py`; the scaffold
 emits `model = "<id>"`, so the README's example series, which shows `tier = "weak"`, is
 introduced as a close variant of the `convoy init` output until that half lands. The
 2026-09-26 lineup change (`strong` → `claude-opus-5-5`, served by 0.16.0) touched
-the floor table, its stamp, its test and the CHANGELOG, and missed no site. Earlier history:
+the floor table, its stamp, its test and the CHANGELOG, and missed no site. The 2026-10-08
+lineup change (`weak` → `claude-haiku-5-5`, `mid` → `claude-sonnet-5-5`, stamp 2026-10-08, the two
+ids having become legacy) touched the floor table, its stamp, the scaffold's starter model, the
+formats doc's example series, their tests and the CHANGELOG, and missed no site. Earlier history:
 point (a) was resolved on 2026-08-11, when the canonical lineup was reconciled and convoy's
 mirrors re-synced against it, shipping in 0.9.0 as the `strong` tier resolving to
 `claude-opus-5`.
@@ -1783,6 +1786,14 @@ the one thing not to do is discover the answer from a broken scored arm. [cross-
 ---
 
 ## Shipped
+
+### Built in the 2026-10-08 follow-up (unreleased; served by the next tag)
+
+Built from the owner's written decisions of 2026-10-08, on one branch per concern.
+
+| Row | Promotion | Shipped by |
+|---|---|---|
+| CONV-B14 (lineup 5.5) | The floor lineup moved to the 5.5 models: `DEFAULT_TIER_MODELS` resolves `weak` to `claude-haiku-5-5` and `mid` to `claude-sonnet-5-5` (`strong` and `frontier` unchanged), stamped `LINEUP_RECONCILED = '2026-10-08'`, because `claude-haiku-4-5` and `claude-sonnet-5` are listed as legacy by the platform model page. The `convoy init` starter model is `claude-haiku-5-5` and the formats doc's example series follows. `tests/test_governance.py` and `tests/test_scaffold.py` pin the new values. A series that reaches the floor for `weak` or `mid` now runs a different model; an explicit `model` or a series `[governance.tier_models]` is unaffected. | unreleased |
 
 ### Built in the 2026-10-08 round (served by 0.17.0)
 

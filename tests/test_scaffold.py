@@ -25,6 +25,10 @@ def test_scaffold_writes_expected_files(tmp_path: Path) -> None:
     assert set(written) == {series_file, prompt, oracle, workspace}
 
 
+def test_the_starter_series_names_a_current_model(tmp_path: Path) -> None:
+    assert build_starter_series(tmp_path / 'proj').governance.model == 'claude-haiku-5-5'
+
+
 def test_scaffolded_series_loads(tmp_path: Path) -> None:
     root = tmp_path / 'proj'
     scaffold(root)

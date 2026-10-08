@@ -20,8 +20,8 @@ from convoy.core.spec import PR, Governance, Series
 # list -- not the date this file was edited. Stamping the edit would date the wrong
 # thing: a table copied from an already-stale source would certify itself fresh, and
 # an age check would then be measuring the stamp rather than the lineup.
-# lineup synced 2026-09-26
-LINEUP_RECONCILED = '2026-09-26'
+# lineup synced 2026-10-08
+LINEUP_RECONCILED = '2026-10-08'
 
 # A FLOOR, not the answer. A series file that resolves its own tier -- an explicit
 # ``model``, or a tier the authoring side already resolved -- never reaches this table.
@@ -30,8 +30,8 @@ LINEUP_RECONCILED = '2026-09-26'
 # design. Correct it locally rather than waiting for one: set ``model`` on the series
 # or on the PR.
 DEFAULT_TIER_MODELS: dict[str, str] = {
-    'weak': 'claude-haiku-4-5',
-    'mid': 'claude-sonnet-5',
+    'weak': 'claude-haiku-5-5',
+    'mid': 'claude-sonnet-5-5',
     'strong': 'claude-opus-5-5',
     'frontier': 'claude-fable-5-1',
 }

@@ -134,7 +134,7 @@ prompts = "/abs/series/prompts"        # the series root holds prompts/, oracles
 outputs = "/abs/series/outputs"        # outputs/ — and the scored workspace/ as a subdir
 
 [governance]
-model = "claude-sonnet-5"
+model = "claude-sonnet-5-5"
 effort = "medium"
 permission_mode = "default"
 timeout_seconds = 1800

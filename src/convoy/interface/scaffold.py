@@ -79,7 +79,7 @@ def build_starter_series(root: Path) -> Series:
                 review=('Read', 'Grep', 'Glob'),
                 fix=('Read', 'Edit', 'Write', 'Bash'),
             ),
-            model='claude-haiku-4-5',
+            model='claude-haiku-5-5',
         ),
         review=Review(blocking=False, max_fix_attempts=1),
         checks=(
