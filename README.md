@@ -163,8 +163,9 @@ gate standalone — without shelling out:
   envelope, never a narrowed green.
 - **`convoy_run(series_file, workspace, dry_run=false, config_isolation=true,
   reset=false, resume=false, detach=false)`** — run a series and return a
-  structured summary: outcome, exit code, per-spawn economy totals, and a per-PR
-  gate view, with the full trace referenced by path. `dry_run=true` preflights for
+  structured summary: outcome, exit code, per-spawn economy totals, a per-PR gate
+  view, and any push or PR a spawn made outside the workspace, with the full trace
+  referenced by path. `dry_run=true` preflights for
   free; `reset=true` resets the workspace to base first (CLI: `--fresh`);
   `resume=true` continues a halted run's integration branch (CLI: `--resume`).
 - **`convoy_status(series_file, run_id='', workspace='')`** — report a run's state and economy so

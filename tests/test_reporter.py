@@ -8,6 +8,7 @@ import io
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from convoy.core.external_writes import ExternalWrite
 from convoy.core.gate import CheckResult, GateVerdict, decide
 from convoy.core.preflight import Advisory
 from convoy.core.spec import Check
@@ -35,6 +36,9 @@ class RecordingReporter:
 
     def budget_nearing(self, pr_id: str, role: str, spend_usd: float, cap_usd: float) -> None:
         self.calls.append(('budget_nearing', pr_id, role, spend_usd, cap_usd))
+
+    def external_writes(self, pr_id: str, role: str, writes: Sequence[ExternalWrite]) -> None:
+        self.calls.append(('external_writes', pr_id, role, len(writes)))
 
     def gate_result(self, pr_id: str, attempt: int, verdict: GateVerdict) -> None:
         self.calls.append(('gate_result', pr_id, attempt, verdict.blocking_red))
@@ -92,6 +96,25 @@ def test_budget_nearing_line_shows_the_spend_against_the_cap() -> None:
     assert '$19.4000' in out
     assert '$20.00' in out
     assert '97%' in out
+
+
+_WRITE = ExternalWrite(
+    kind='git_push', command='git push origin feat/x', target='origin feat/x', failed=False
+)
+
+
+def test_external_writes_print_one_advisory_line_each() -> None:
+    buf = io.StringIO()
+    other = ExternalWrite(
+        kind='gh_pr_create', command='gh pr create -R o/r', target='o/r', failed=None
+    )
+    StderrReporter(buf).external_writes('pr-1', 'implementation', [_WRITE, other])
+    lines = buf.getvalue().splitlines()
+    assert len(lines) == 2
+    assert lines[0].startswith("convoy: advisory [external_write] [[prs]] 'pr-1' implementation ")
+    assert 'git push origin feat/x' in lines[0]
+    assert 'not gated by this run' in lines[0]
+    assert 'gh pr create -R o/r' in lines[1]
 
 
 def test_gate_pass_line() -> None:
@@ -160,6 +183,7 @@ def test_null_reporter_writes_nothing_and_never_raises() -> None:
     reporter.run_start('s', 'r', 1)
     reporter.spawn_done('p', 'implementation', ok_result())
     reporter.budget_nearing('p', 'implementation', 0.9, 1.0)
+    reporter.external_writes('p', 'implementation', [_WRITE])
     reporter.gate_result('p', 0, _verdict(passed=True))
     reporter.fix_attempt('p', 1, 2)
     reporter.pr_skipped('p', 'x')

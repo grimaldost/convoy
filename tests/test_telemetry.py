@@ -10,6 +10,7 @@ from convoy.core.telemetry import (
     _EVENT_TAGS,
     BUDGET_NEARING_FRACTION,
     SCHEMA_VERSION,
+    ExternalWriteLine,
     GateCheckLine,
     GateComplete,
     HaltDetail,
@@ -21,6 +22,7 @@ from convoy.core.telemetry import (
     budget_is_nearing,
     to_json_line,
 )
+from convoy.interface.run_summary import summarize_run
 from convoy.interface.telemetry_writer import TelemetryWriter
 
 # A complete spawn_complete event; ``_spawn`` clones it with per-field overrides.
@@ -82,6 +84,8 @@ def test_spawn_complete_json_line_has_schema_tag_and_all_fields() -> None:
         'classification': 'ok',
         'budget_cap_usd': None,
         'budget_nearing': False,
+        # Always emitted, empty when the spawn wrote nothing outside the workspace.
+        'external_writes': [],
     }
 
 
@@ -331,3 +335,42 @@ def test_run_start_carries_the_spec_the_series_was_decomposed_from() -> None:
     parsed = json.loads(to_json_line(event))
     assert parsed['spec_path'] == 'docs/specs/comparison-ops.md'
     assert parsed['spec_sha256'] == 'a' * 64
+
+
+# --- external writes on the spawn line ------------------------------------------------------
+
+
+def test_a_spawn_line_keeps_its_external_writes_through_the_writer(tmp_path: Path) -> None:
+    path = tmp_path / 'spawns.jsonl'
+    writes = (
+        ExternalWriteLine(
+            kind='git_push', command='git push origin x', target='origin x', failed=False
+        ),
+        ExternalWriteLine(kind='gh_pr_create', command='gh pr create', target='', failed=None),
+    )
+    TelemetryWriter(path).write(_spawn(external_writes=writes))
+
+    (line,) = path.read_text(encoding='utf-8').splitlines()
+    assert json.loads(line)['external_writes'] == [
+        {'kind': 'git_push', 'command': 'git push origin x', 'target': 'origin x', 'failed': False},
+        {'kind': 'gh_pr_create', 'command': 'gh pr create', 'target': '', 'failed': None},
+    ]
+
+    envelope = summarize_run(path, run_id=_BASE_SPAWN.run_id, series_id='s', outcome=None)
+    assert [(w['kind'], w['failed']) for w in envelope['external_writes']] == [
+        ('git_push', False),
+        ('gh_pr_create', None),
+    ]
+
+
+def test_a_spawn_line_from_before_the_field_reads_as_no_writes(tmp_path: Path) -> None:
+    """An older engine wrote no ``external_writes`` key; the fold reads that as none."""
+    path = tmp_path / 'spawns.jsonl'
+    old_line = json.loads(to_json_line(_spawn()))
+    del old_line['external_writes']
+    path.write_text(json.dumps(old_line) + '\n', encoding='utf-8')
+
+    envelope = summarize_run(path, run_id=_BASE_SPAWN.run_id, series_id='s', outcome=None)
+
+    assert envelope['external_writes'] == []
+    assert envelope['advisories'] == []

@@ -249,9 +249,15 @@ overwrites it — and is `null` for a PR that never ran an implementation spawn.
 The envelope also carries **`halt`** — `null` on a clean run, else the located reason the
 run stopped, read from the `run_complete` line rather than threaded through `RunOutcome`
 so the envelope stays reconstructible from the ledger alone. It also carries
-**`advisories`** — always present, empty when there is nothing to say — read from the
-`run_start` line the same way, so a run reports what its pre-flight said and
-`convoy_status` can too, without having been the process that pre-flighted it. The per-PR list is
+**`advisories`** — always present, empty when there is nothing to say — from two sources,
+in this order. The first is the `run_start` line, read the same way, so a run reports what
+its pre-flight said and `convoy_status` can too, without having been the process that
+pre-flighted it. The second is the spawn lines: one advisory of kind `external_write` per
+command a spawn issued that writes outside the workspace (a push, a PR, a write to a named
+GitHub repository), which the run did not gate. The same findings, with their `pr_id`, `role`
+and `attempt`, are listed in **`external_writes`**, always present and empty when there were
+none (see [02-formats.md](02-formats.md) for the scan and its limits). Neither source
+affects `ok`, `outcome` or `exit_code`. The per-PR list is
 capped at 50 with a `truncated` report; the complete per-line trace stays on
 disk at the returned `telemetry_path`, referenced and never inlined. `ok` is
 true exactly when `outcome` is `completed`, and the envelope carries the same

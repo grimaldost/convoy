@@ -205,8 +205,8 @@ Every tool returns a single JSON object.
   `pr_skipped` / `run_complete`). A `spawn_complete` line carries `run_id`, `pr_id`, `role`
   (`implementation` / `fix`), `exit_code`, `classification` (`ok` / `infrastructure` /
   `budget`), `input_tokens`, `output_tokens`, `num_turns`,
-  `duration_s`, `cost_usd`, `effective_model`, `cost_estimated`; the full telemetry contract
-  is in `docs/design/02-formats.md`.
+  `duration_s`, `cost_usd`, `effective_model`, `cost_estimated`, `external_writes`; the full
+  telemetry contract is in `docs/design/02-formats.md`.
 - `halt` — `null` on a clean run; on any halt, `{ pr_id, phase, role, spend_usd, cap_usd }`
   saying where the run stopped. `role` is the spawn role that hit it (`implementation` /
   `fix`) or `gate` when the bounded fix loop was exhausted. `spend_usd` / `cap_usd` are
@@ -214,11 +214,21 @@ Every tool returns a single JSON object.
   they are `null` for `blocked` and `infrastructure`, where no ceiling caused the halt.
   Read this first on a non-`completed` run: it answers which PR and how close to which cap
   without opening the trace.
-- `advisories` — always present, empty when there is nothing to say: what pre-flight
-  remarked on without stopping the run (today, a PR no blocking check gates, which
-  therefore integrated **unverified**). Read on a real run, not only on `dry_run` —
-  they are recorded on the run's `run_start` telemetry line, so `convoy_status` reports
-  them too. They never affect `ok` or `outcome`.
+- `advisories` — always present, empty when there is nothing to say. Two sources, in this
+  order: what pre-flight remarked on without stopping the run (today, a PR no blocking check
+  gates, which therefore integrated **unverified**), recorded on the run's `run_start`
+  telemetry line; then one `external_write` advisory per command a spawn issued that writes
+  outside the workspace, naming the PR and role, the command and its target, and saying the
+  run did not gate it. `convoy_status` reports both. They never affect `ok` or `outcome`.
+- `external_writes` — always present, `[]` when there were none: every `git push`,
+  `gh pr create`, or writing `gh` command against a named repository (`-R` / `--repo`) a
+  spawn issued, scanned from its own stream, as `{ pr_id, role, attempt, kind, command,
+  target, failed }`. A run never pushes, so these were sent to a remote outside the run and
+  its gate — review them with the run. `failed` is `true` when the command reported an
+  error, `false` when it did not, `null` when no result was seen; `attempt` is `0` for the
+  implementation spawn and `n` for the nth fix. The scan sees only those three patterns among
+  the commands the agent typed, not a push a script made for it (the full limits are in
+  `docs/design/02-formats.md`). Recorded only: nothing is blocked or undone.
 - `truncated` — `{ any, prs }`: how many PRs the `prs` list dropped past its cap. If
   `any` is `true`, read `telemetry_path` for the full set.
 

@@ -50,6 +50,7 @@ from convoy.interface.drivers.headless import (
 )
 from convoy.interface.gate_runner import SubprocessGateRunner
 from convoy.interface.git import Git
+from convoy.interface.run_summary import summarize_run
 from convoy.interface.spawn import (
     FakeSpawn,
     SpawnEconomy,
@@ -2053,3 +2054,197 @@ def test_an_unpinned_series_records_empty_pin_fields(harness: Harness) -> None:
     (start,) = _events_of(_read_events(harness.outputs), 'run_start')
     assert start['spec_path'] == ''
     assert start['spec_sha256'] == ''
+
+
+# ---------------------------------------------------------------------------
+# External writes: what a spawn wrote outside the workspace is recorded, never acted on
+# ---------------------------------------------------------------------------
+
+
+def _tool_use(tool_id: str, command: str) -> str:
+    block = {'type': 'tool_use', 'id': tool_id, 'name': 'Bash', 'input': {'command': command}}
+    return json.dumps({'type': 'assistant', 'message': {'content': [block]}})
+
+
+def _tool_ok(tool_id: str) -> str:
+    block = {'type': 'tool_result', 'tool_use_id': tool_id, 'is_error': False, 'content': ''}
+    return json.dumps({'type': 'user', 'message': {'content': [block]}})
+
+
+def _stream_of(*commands: str) -> str:
+    """A stream-json text in which the agent ran each command and each succeeded."""
+    lines = [json.dumps({'type': 'system', 'subtype': 'init', 'model': 'test-model'})]
+    for index, command in enumerate(commands):
+        lines += [_tool_use(f'toolu_{index}', command), _tool_ok(f'toolu_{index}')]
+    lines.append(json.dumps({'type': 'result', 'subtype': 'success', 'total_cost_usd': 0.01}))
+    return '\n'.join(lines) + '\n'
+
+
+_PR_COMMAND = 'gh pr create -R other-owner/other-repo --head feat/x --fill'
+_PUSH_COMMAND = 'git -C ../dependency push origin feat/x'
+
+
+def test_a_spawns_external_writes_are_recorded_and_change_nothing(harness: Harness) -> None:
+    """The acceptance case: an implementer opened a PR and pushed a branch elsewhere.
+
+    The run completes and integrates exactly as a run without them; the spawn's telemetry
+    line, the envelope's ``external_writes`` and its ``advisories`` all carry both.
+    """
+    series = _one_pr_series(harness.series)
+    stream = _stream_of('uv run pytest -q', _PR_COMMAND, _PUSH_COMMAND)
+    telemetry_path = harness.outputs / 'spawns.jsonl'
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=MarkerSpawn([ok_result(output=stream)], markers_for=['a.txt']),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(telemetry_path),
+        run_id='run-external',
+    )
+
+    # Exactly the green arm: same outcome, the PR's work merged, same event sequence.
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    assert harness.git.current_branch() == 'integration'
+    assert harness.git.is_merged_into('pr-1', 'integration')
+    assert (harness.repo / 'a.txt').read_text() == 'a.txt was here\n'
+    events = _read_events(harness.outputs)
+    assert [e['event'] for e in events] == [
+        'run_start',
+        'spawn_start',
+        'spawn_complete',
+        'gate_complete',
+        'run_complete',
+    ]
+
+    (spawn_line,) = _events_of(events, 'spawn_complete')
+    assert spawn_line['external_writes'] == [
+        {
+            'kind': 'gh_pr_create',
+            'command': _PR_COMMAND,
+            'target': 'other-owner/other-repo feat/x',
+            'failed': False,
+        },
+        {
+            'kind': 'git_push',
+            'command': _PUSH_COMMAND,
+            'target': '../dependency origin feat/x',
+            'failed': False,
+        },
+    ]
+
+    envelope = summarize_run(
+        telemetry_path, run_id='run-external', series_id=series.id, outcome=outcome
+    )
+    assert envelope['ok'] is True
+    assert envelope['exit_code'] == EXIT_OK
+    assert [
+        (w['pr_id'], w['role'], w['attempt'], w['kind'], w['command'])
+        for w in envelope['external_writes']
+    ] == [
+        ('pr-1', 'implementation', 0, 'gh_pr_create', _PR_COMMAND),
+        ('pr-1', 'implementation', 0, 'git_push', _PUSH_COMMAND),
+    ]
+    advisories = [a for a in envelope['advisories'] if a['kind'] == 'external_write']
+    assert len(advisories) == 2
+    assert all(a['where'] == "[[prs]] 'pr-1' implementation" for a in advisories)
+    assert _PR_COMMAND in advisories[0]['message']
+    assert _PUSH_COMMAND in advisories[1]['message']
+    assert all('not gated by this run' in a['message'] for a in advisories)
+
+
+def test_reads_and_local_commands_record_no_external_write(harness: Harness) -> None:
+    series = _one_pr_series(harness.series)
+    stream = _stream_of('git status', 'gh pr view -R x')
+    telemetry_path = harness.outputs / 'spawns.jsonl'
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=FakeSpawn([ok_result(output=stream)]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(telemetry_path),
+        run_id='run-reads',
+    )
+
+    (spawn_line,) = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert spawn_line['external_writes'] == []
+    envelope = summarize_run(
+        telemetry_path, run_id='run-reads', series_id=series.id, outcome=outcome
+    )
+    assert envelope['external_writes'] == []
+    assert not [a for a in envelope['advisories'] if a['kind'] == 'external_write']
+
+
+def test_a_fix_spawns_external_write_is_recorded_under_its_role_and_attempt(
+    harness: Harness,
+) -> None:
+    marker_series = _make_series(harness.repo, Check(name='marker', run=_MARKER_CMD, blocking=True))
+    series = replace(
+        _one_pr_series(marker_series), review=Review(blocking=True, max_fix_attempts=1)
+    )
+    telemetry_path = harness.outputs / 'spawns.jsonl'
+    spawn = FixMarkerSpawn(
+        [ok_result(), ok_result(output=_stream_of('git push origin pr-1'))],
+        fix_creates_marker=True,
+    )
+
+    outcome = run_series(
+        series,
+        harness.repo,
+        spawn=spawn,
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(telemetry_path),
+        run_id='run-fix-write',
+    )
+
+    assert outcome == RunOutcome('completed', True, EXIT_OK)
+    spawn_lines = _events_of(_read_events(harness.outputs), 'spawn_complete')
+    assert [len(cast(list[object], line['external_writes'])) for line in spawn_lines] == [0, 1]
+    envelope = summarize_run(
+        telemetry_path, run_id='run-fix-write', series_id=series.id, outcome=outcome
+    )
+    assert [(w['role'], w['attempt'], w['target']) for w in envelope['external_writes']] == [
+        ('fix', 1, 'origin pr-1')
+    ]
+    (advisory,) = envelope['advisories']
+    assert advisory['where'] == "[[prs]] 'pr-1' fix"
+
+
+def test_the_reporter_hears_external_writes_when_the_spawn_finishes(harness: Harness) -> None:
+    rec = RecordingReporter()
+
+    run_series(
+        _one_pr_series(harness.series),
+        harness.repo,
+        spawn=FakeSpawn([ok_result(output=_stream_of(_PR_COMMAND, _PUSH_COMMAND))]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-narrate-writes',
+        reporter=rec,
+    )
+
+    names = rec.names()
+    assert names[names.index('spawn_done') + 1] == 'external_writes'
+    assert ('external_writes', 'pr-1', 'implementation', 2) in rec.calls
+
+
+def test_a_spawn_with_no_external_writes_fires_no_hook(harness: Harness) -> None:
+    rec = RecordingReporter()
+
+    run_series(
+        _one_pr_series(harness.series),
+        harness.repo,
+        spawn=FakeSpawn([ok_result()]),
+        git=harness.git,
+        gate_runner=harness.gate_runner,
+        telemetry=TelemetryWriter(harness.outputs / 'spawns.jsonl'),
+        run_id='run-no-writes',
+        reporter=rec,
+    )
+
+    assert 'external_writes' not in rec.names()

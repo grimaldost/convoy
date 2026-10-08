@@ -1535,7 +1535,6 @@ the promotion gate.
 | T64b | A schema stamp in `[series]` (for example `schema = "convoy/1"`), written and checked. An engine older than 0.13.0 reading a file that carries `[governance.tier_models]` drops it in silence; 0.13.0's allow-list stops unknown keys from then on, but nothing stamps a file's schema generation. Makes the next skew loud, not the shipped ones. **(consumer-affecting)** if built. A hazard, not an incident. | `core/spec.py` |
 | T65a | The schema documentation for `[governance] effort` says the knob is inert for models with no effort dimension, naming the weak tier's floor model as the case a default lineup produces. Singleton, LOW. | `docs/design/02-formats.md`, `skills/convoy/SKILL.md` schema table |
 | T66b | An `--allow-dirty` override that records the paths already dirty before the first spawn and keeps them out of every commit the run makes, so a deliberate dirty start never sweeps them. Only if a legitimate dirty-start case appears; CONV-B70 ships the refusal with no override, the smaller shape. | `interface/git.py::commit_all`, `interface/drivers/headless.py` |
-| T67a | The run result records every remote ref and PR a spawn created outside the workspace — scanned from the stream's shell tool calls (`git push`, `gh pr create`, `gh ... -R`) — and raises an advisory naming them, so the operator reviews them with the run. Report, not enforce. In the 2026-09-26 run an implementer opened a branch and a PR in a repository the workspace depends on, unreviewed and ungated, and the orchestrator learned of it from a commit body. Singleton (MED); the fix shape is open. | `interface/drivers/headless.py`, `interface/run_summary.py` |
 | T68a | Each `prs[]` entry carries `cost_usd`, `num_turns`, `input_tokens` and `output_tokens`, summed over its spawns in the fold that already computes the run totals; co-lands with CONV-B43(c). Today a per-PR economy table needs a second parse of `spawns.jsonl`. **(consumer-affecting)** if built. Singleton, LOW. | `interface/run_summary.py` |
 
 ---
@@ -1752,6 +1751,7 @@ Built from the 2026-10-07 review rather than from a triage pass, on one branch p
 | Row | Promotion | Shipped by |
 |---|---|---|
 | CONV-B72 | The plugin hook exits early when no gate can be found. Cause: `hooks/hooks.json` started `uv run --project ... convoy hook` on every `SubagentStop` and every `Agent`/`Task` `PostToolUse`, so every installing session paid uv's environment check, an interpreter and the whole CLI import per firing, although the hook does nothing without a trusted `.convoy/gate.toml`. Change: both handlers run `src/convoy/interface/hook_guard.py` first (standard library only, `uv run --frozen --no-sync`, still shell form), which exits 0 without starting `convoy` when no spec is found or its project is untrusted, and delegates everything else to `convoy hook` with the same stdin. `tests/test_hook_guard.py` holds every skip against `hook.decide`. No-gate firing over five back-to-back pairs on one Windows 11 machine (10 runs each after one warm-up): median 173-233 ms after, 501-687 ms at v0.16.1 (`scripts/hook_latency.py`). | unreleased |
+| CONV-B73 (T67a) | The run result records the remote refs and PRs a spawn created. A pure scanner (`core/external_writes.py`) reads each spawn's own stream-json — the `tool_use` blocks whose `input.command` is a string, paired by id with their `tool_result` — and reports `git ... push` (`git_push`), `gh pr create` (`gh_pr_create`) and a writing `gh` verb against a repository named with `-R` / `--repo` (`gh_repo_write`), each as `{kind, command, target, failed}`. The driver scans every implementation and fix spawn and writes the findings on its `spawn_complete` line as `external_writes`; the result envelope lifts them to a top-level `external_writes` list with `pr_id`, `role` and `attempt`, and adds one `external_write` advisory per finding after the pre-flight ones; the run prints one stderr line per finding and `convoy status` shows a count. Report, not enforce: no outcome, exit code or integration changes. It cannot see a push made by a script the agent ran. **(consumer-affecting: a new telemetry field, a new envelope field, a new advisory kind)** | unreleased |
 
 ### Built in the 2026-10-06 maintenance round (served by 0.16.0)
 
@@ -2092,7 +2092,8 @@ shipped (see above) or carried forward unchanged in the watch table.
 | T66a | CONV-B70 (shipped 0.16.0) |
 | T70a | CONV-B71 (this reconciliation) |
 | T71a | CONV-B09 (a) (shipped 0.16.0; supersedes T34a's wording) |
-| T58c, T59c, T60b, T61b, T62b, T64a, T64b, T65a, T66b, T67a, T68a | watch table |
+| T67a | CONV-B73 (unreleased) |
+| T58c, T59c, T60b, T61b, T62b, T64a, T64b, T65a, T66b, T68a | watch table |
 
 Rows received from the 2026-08-11 cross-project pass resolve as **KEEL-B16 → CONV-B36**
 (the spec pin). CONV-B37 was routed here from the collection's review with no foreign row
