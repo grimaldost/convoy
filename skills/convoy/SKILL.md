@@ -223,9 +223,12 @@ Every tool returns a single JSON object.
 - `external_writes` — always present, `[]` when there were none: every `git push`,
   `gh pr create`, or writing `gh` command against a named repository (`-R` / `--repo`) a
   spawn issued, scanned from its own stream, as `{ pr_id, role, attempt, kind, command,
-  target, failed }`. A run never pushes, so these reached a remote outside the run and its
-  gate — review them with the run. The scan sees the commands the agent typed, not a push a
-  script made for it. Recorded only: nothing is blocked or undone.
+  target, failed }`. A run never pushes, so these were sent to a remote outside the run and
+  its gate — review them with the run. `failed` is `true` when the command reported an
+  error, `false` when it did not, `null` when no result was seen; `attempt` is `0` for the
+  implementation spawn and `n` for the nth fix. The scan sees only those three patterns among
+  the commands the agent typed, not a push a script made for it (the full limits are in
+  `docs/design/02-formats.md`). Recorded only: nothing is blocked or undone.
 - `truncated` — `{ any, prs }`: how many PRs the `prs` list dropped past its cap. If
   `any` is `true`, read `telemetry_path` for the full set.
 

@@ -49,8 +49,11 @@ class Advisory:
 
     Same located shape as :class:`Problem` and deliberately a distinct type: an advisory
     can never reach the list that decides runnability, so no surface can turn advice into
-    a failure (or lose a failure among advice) by accident. ``kind`` is a coarse category
-    (``gate`` today); ``where`` names the section it concerns; ``message`` explains it.
+    a failure (or lose a failure among advice) by accident. The type is shared with the
+    post-run external-write advisory (:mod:`convoy.core.external_writes`). ``kind`` is a
+    coarse category: ``gate`` from pre-flight, ``external_write`` after a spawn; ``where``
+    names the section it concerns (for an external write, the PR and the spawn role);
+    ``message`` explains it.
     """
 
     kind: str
