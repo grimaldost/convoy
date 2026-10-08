@@ -150,10 +150,12 @@ neither a `model` nor a known `tier`.
 The dry run also returns **`advisories`** — located `{kind, where, message}` remarks
 that do **not** make the series invalid, so they never change `ok` or `outcome` (and on
 the CLI, `convoy validate` prints them to stderr and still exits `0`). Today there are
-three: a PR that no blocking check gates, which therefore integrates unverified; a check
-declaring an `asset` on a lane that will never read it; and a blocking gate that is
+four: a PR that no blocking check gates, which therefore integrates unverified; a check
+declaring an `asset` on a lane that will never read it; a blocking gate that is
 path-scoped away from test files present in the workspace, so a green gate is a narrower
-claim than the tree warrants. Read them; they are the things that are legal and probably
+claim than the tree warrants; and a model resolved through convoy's built-in tier table
+rather than from the series file (kind `lineup`, naming the table's `LINEUP_RECONCILED`
+date). Read them; they are the things that are legal and probably
 not what you meant.
 
 ### `convoy_init`
@@ -215,11 +217,11 @@ Every tool returns a single JSON object.
   Read this first on a non-`completed` run: it answers which PR and how close to which cap
   without opening the trace.
 - `advisories` — always present, empty when there is nothing to say. Two sources, in this
-  order: what pre-flight remarked on without stopping the run (today, a PR no blocking check
-  gates, which therefore integrated **unverified**), recorded on the run's `run_start`
-  telemetry line; then one `external_write` advisory per command a spawn issued that writes
-  outside the workspace, naming the PR and role, the command and its target, and saying the
-  run did not gate it. `convoy_status` reports both. They never affect `ok` or `outcome`.
+  order: what pre-flight remarked on without stopping the run (for example a PR no blocking
+  check gates, which therefore integrated **unverified**, or a model that came from the
+  built-in tier table), recorded on the run's `run_start` telemetry line; then one
+  `external_write` advisory per command a spawn issued that writes outside the workspace,
+  naming the PR and role, the command and its target, and saying the run did not gate it. `convoy_status` reports both. They never affect `ok` or `outcome`.
 - `external_writes` — always present, `[]` when there were none: every `git push`,
   `gh pr create`, or writing `gh` command against a named repository (`-R` / `--repo`) a
   spawn issued, scanned from its own stream, as `{ pr_id, role, attempt, kind, command,
@@ -484,10 +486,11 @@ least one entry.
   someone with no access to whatever maintains a lineup, only as fresh as the release you
   installed, and it says so: any tier it resolves raises a pre-flight advisory of kind
   `lineup` naming the model and the table's `LINEUP_RECONCILED` date. That is advice, not
-  a refusal. To see which model a series resolves to before spending, run
-  `convoy validate` or `convoy_run` with `dry_run: true`: a floor-resolved model appears in
-  the `lineup` advisory, and after a real run each PR's `effective_model` reports what its
-  spawn ran under. This manual names no model ids, because a copy in prose goes stale
+  a refusal. To check whether a series' models come from its own file or from the
+  floor before spending, run `convoy validate` or `convoy_run` with `dry_run: true`: a
+  floor-resolved model appears in the `lineup` advisory, while an explicit or series-table
+  model is the one written in the file and produces no advisory. After a real run each PR's
+  `effective_model` reports what its spawn ran under. This manual names no model ids, because a copy in prose goes stale
   between releases; the reasoning is in
   [ADR-0010](../../docs/adr/0010-the-artefact-carries-the-lineup.md). `model` wins if both
   are set. A

@@ -88,7 +88,7 @@ Everything the run did — spawns, costs, gate verdicts, skips, outcome — is i
 
 ## The series file
 
-`convoy init` emits a correct, copyable exemplar. Trimmed:
+A correct, copyable series file (`convoy init` emits a close variant). Trimmed:
 
 ```toml
 prs = [
