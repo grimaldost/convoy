@@ -1,7 +1,6 @@
 # Contributing
 
-convoy is developed largely by coding agents working under the playbook in
-[AGENTS.md](AGENTS.md); humans follow the same rules. This file adds the
+Contributors follow the playbook in [AGENTS.md](AGENTS.md). This file adds the
 mechanics: setup, workflow, and the release discipline.
 
 ## Setup
