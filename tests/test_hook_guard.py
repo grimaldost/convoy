@@ -236,7 +236,7 @@ def test_an_unexpected_error_delegates_rather_than_skipping(
 # --- discovery: the full hook's order ---------------------------------------------------------
 
 
-def test_the_project_dir_spec_is_found_before_the_walk(tmp_path: Path) -> None:
+def test_the_project_dir_spec_is_the_fallback_when_the_walk_finds_none(tmp_path: Path) -> None:
     project = tmp_path / 'project'
     _spec(project)
     elsewhere = tmp_path / 'elsewhere'
@@ -246,6 +246,19 @@ def test_the_project_dir_spec_is_found_before_the_walk(tmp_path: Path) -> None:
     delegate = _Recorder()
     _guard(_raw(_stop(elsewhere)), env, elsewhere, delegate)
     assert len(delegate.calls) == 1
+
+
+def test_the_walk_wins_over_the_project_dir(tmp_path: Path) -> None:
+    """A spec on the walk from the payload cwd is found first, untrusted here: a skip."""
+    project = tmp_path / 'project'
+    _spec(project)
+    nearer = tmp_path / 'nearer'
+    _spec(nearer)
+    env = {**_home(tmp_path), 'CLAUDE_PROJECT_DIR': str(project)}
+    trust_project(project, env)
+    delegate = _Recorder()
+    _guard(_raw(_stop(nearer)), env, nearer, delegate)
+    assert delegate.calls == []
 
 
 def test_the_walk_finds_a_parents_spec(tmp_path: Path) -> None:
@@ -269,6 +282,74 @@ def test_a_relative_payload_cwd_resolves_against_the_process_cwd(tmp_path: Path)
         delegate = _Recorder()
         _guard(_raw(_stop(cwd_field)), env, root, delegate)
         assert len(delegate.calls) == 1, cwd_field
+
+
+# --- a worktree of a trusted project (CONV-B75) -------------------------------------------------
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.com', *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _worktree_of(project: Path, run: str = _OK) -> Path:
+    """Commit a spec in *project* and add a linked worktree under it; return the worktree."""
+    _spec(project, run)
+    _git(project, 'init', '-q', '-b', 'main')
+    _git(project, 'add', '-A')
+    _git(project, 'commit', '-q', '-m', 'spec')
+    worktree = project / '.claude' / 'worktrees' / 'agent'
+    _git(project, 'worktree', 'add', '-q', '-b', 'agent', str(worktree))
+    return worktree
+
+
+def test_a_worktree_whose_main_checkout_is_listed_delegates(tmp_path: Path) -> None:
+    project = tmp_path / 'project'
+    worktree = _worktree_of(project)
+    env = {**_home(tmp_path), 'CLAUDE_PROJECT_DIR': str(project)}
+    delegate = _Recorder()
+    _guard(_raw(_stop(worktree)), env, worktree, delegate)
+    assert delegate.calls == []
+    trust_project(project, env)
+    _guard(_raw(_stop(worktree)), env, worktree, delegate)
+    assert len(delegate.calls) == 1
+
+
+@pytest.mark.parametrize('trust', ['none', 'listed', 'vouched', 'unpinned', 'changed'])
+def test_a_skipped_worktree_firing_is_one_the_full_hook_is_silent_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trust: str
+) -> None:
+    project = tmp_path / 'project'
+    worktree = _worktree_of(project, _SIDE_EFFECT)
+    env = {**_home(tmp_path), 'CLAUDE_PROJECT_DIR': str(project)}
+    match trust:
+        case 'listed':
+            trust_project(project, env)
+        case 'vouched':
+            env['CONVOY_TRUSTED_ROOTS'] = str(project)
+        case 'unpinned':
+            _write_trust(env, f'[[projects]]\nroot = {json.dumps(project.resolve().as_posix())}\n')
+        case 'changed':
+            trust_project(project, env)
+            spec = worktree / '.convoy' / 'gate.toml'
+            spec.write_text(spec.read_text(encoding='utf-8') + '\n', encoding='utf-8')
+    monkeypatch.chdir(worktree)
+    raw = _raw(_stop(worktree))
+    delegate = _Recorder()
+    _guard(raw, env, Path.cwd(), delegate)
+    assert bool(delegate.calls) == (trust in ('listed', 'unpinned', 'changed'))
+    if delegate.calls:
+        return
+    payload = parse_event(raw)
+    assert not isinstance(payload, str)
+    result = decide(payload, env)
+    assert result.exit_code == 0 and result.stderr == ''
+    assert result.record is None or result.record.get('outcome') == 'untrusted'
+    assert not (worktree / 'side-effect.txt').exists()
 
 
 # --- parity with the full hook ------------------------------------------------------------------

@@ -1094,3 +1094,104 @@ def test_two_judges_under_the_six_check_scaffold_take_turns(
     by_agent = {line['agent_id']: line for line in _log_lines(root)}
     assert by_agent['agent-a']['outcome'] == by_agent['agent-b']['outcome'] == 'completed'
     assert by_agent['agent-b']['counts'] == {'selected': 6, 'passed': 6, 'failed': 0}
+
+
+# --- a worktree-isolated subagent is judged in its own worktree (CONV-B75) -------------------
+
+# Red only where ``broken.txt`` exists in the tree the gate runs in.
+_RED_IF_BROKEN = (
+    f'"{sys.executable}" -c "import pathlib, sys; '
+    "sys.exit(1 if pathlib.Path('broken.txt').exists() else 0)\""
+)
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.com', *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _project_with_worktree(tmp_path: Path, *checks: str) -> tuple[Path, Path]:
+    """A git project whose committed spec carries *checks*, and a linked worktree under it.
+
+    The worktree sits where Claude Code puts an isolated agent's:
+    ``<project>/.claude/worktrees/<id>``.
+    """
+    project = tmp_path / 'project'
+    _project(project, *checks)
+    _git(project, 'init', '-q', '-b', 'main')
+    _git(project, 'add', '-A')
+    _git(project, 'commit', '-q', '-m', 'spec')
+    worktree = project / '.claude' / 'worktrees' / 'agent-1'
+    _git(project, 'worktree', 'add', '-q', '-b', 'agent-1', str(worktree))
+    return project, worktree
+
+
+def test_a_worktree_agent_is_judged_in_its_own_worktree(tmp_path: Path) -> None:
+    """The probe's case: payload cwd is the worktree, ``$CLAUDE_PROJECT_DIR`` the project.
+
+    The only red is in the worktree, so a gate run in the main checkout passes it.
+    """
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(worktree, transcript), env)
+    assert result.record is not None
+    assert result.record['workspace'] == str(worktree.resolve())
+    assert result.record['spec'] == str(worktree.resolve() / '.convoy' / 'gate.toml')
+    assert result.record['outcome'] == 'blocked'
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    # The brief names the tree it judged, so a reader can tell which one that was.
+    assert str(worktree.resolve()) in result.stderr
+    assert str(worktree.resolve() / '.convoy' / 'gate.toml') in result.stderr
+
+
+def test_the_main_checkout_agent_is_still_judged_in_the_main_checkout(tmp_path: Path) -> None:
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(project, transcript), env)
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None
+    assert result.record['workspace'] == str(project.resolve())
+
+
+def test_a_worktree_that_rewrote_its_gate_is_refused_loudly(tmp_path: Path) -> None:
+    """A worktree inherits its main checkout's trust only for the spec hash that was pinned."""
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    spec = worktree / '.convoy' / 'gate.toml'
+    spec.write_text(spec.read_text(encoding='utf-8').replace('"clean"', '"lax"'), encoding='utf-8')
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(worktree, transcript), env)
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    assert 'changed since' in result.stderr
+    assert result.record is not None and result.record['outcome'] == 'spec_changed'
+
+
+def test_a_worktree_of_an_untrusted_project_is_not_judged(tmp_path: Path) -> None:
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_home(tmp_path), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(worktree, transcript), env)
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and result.record['outcome'] == 'untrusted'
+
+
+def test_run_hook_logs_a_worktree_verdict_in_the_worktree(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    raw = json.dumps(_stop_payload(worktree, transcript)).encode()
+    assert run_hook(raw, env) == HOOK_EXIT_FEEDBACK
+    assert f'judged {worktree.resolve()}' in capsys.readouterr().err
+    assert [line['outcome'] for line in _log_lines(worktree)] == ['blocked']
+    assert _log_lines(project) == []

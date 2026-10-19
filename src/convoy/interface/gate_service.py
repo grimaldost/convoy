@@ -108,11 +108,13 @@ def find_gate_spec(start: Path, env: Mapping[str, str]) -> Path | None:
     ``$CONVOY_GATE_SPEC`` first when set — an explicit file the launching process names,
     refused (:class:`GateSpecNotFoundError`) when it does not exist, because a caller
     that set it and got a walk-up result instead would never learn its file is missing.
-    Then ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` — the root Claude Code hands a hook
-    or an MCP server, which may differ from the process cwd — then ``.convoy/gate.toml``
-    in *start* and each of its parents, so a gate invoked from a subdirectory finds the
-    project's spec the way git finds ``.git``. An env root without a spec falls through
-    to the walk rather than ending it.
+    Then ``.convoy/gate.toml`` in *start* and each of its parents, nearest first, so a
+    gate invoked from a subdirectory finds the project's spec the way git finds ``.git``,
+    and a subagent working in a worktree of the project (Claude Code puts an isolated
+    agent's under ``<project>/.claude/worktrees/<id>``) finds the worktree's own spec, not
+    the main checkout's. Only when the walk finds none,
+    ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` — the root Claude Code hands a hook or an
+    MCP server, which may lie outside *start*'s ancestry.
     """
     explicit = env.get(GATE_SPEC_ENV)
     if explicit:
@@ -120,12 +122,11 @@ def find_gate_spec(start: Path, env: Mapping[str, str]) -> Path | None:
         if not named.is_file():
             raise GateSpecNotFoundError(f'${GATE_SPEC_ENV}={explicit} is not an existing file')
         return named
-    candidates: list[Path] = []
+    resolved = Path(start).resolve()
+    candidates = [directory / GATE_SPEC_RELPATH for directory in (resolved, *resolved.parents)]
     project_dir = env.get(PROJECT_DIR_ENV)
     if project_dir:
         candidates.append(Path(project_dir) / GATE_SPEC_RELPATH)
-    resolved = Path(start).resolve()
-    candidates.extend(directory / GATE_SPEC_RELPATH for directory in (resolved, *resolved.parents))
     for candidate in candidates:
         if candidate.is_file():
             return candidate
@@ -145,8 +146,8 @@ def resolve_gate_spec(series_file: Path | None, start: Path, env: Mapping[str, s
         project_dir = env.get(PROJECT_DIR_ENV) or 'unset'
         raise GateSpecNotFoundError(
             f'no series file given and no {GATE_SPEC_RELPATH.as_posix()} found — searched '
-            f'${PROJECT_DIR_ENV} ({project_dir}), then {Path(start).resolve()} and its '
-            f'parents; pass a series file, or create the project spec'
+            f'{Path(start).resolve()} and its parents, then ${PROJECT_DIR_ENV} '
+            f'({project_dir}); pass a series file, or create the project spec'
         )
     return found
 
@@ -166,6 +167,34 @@ def gate_root(spec_path: Path, workspace: Path) -> Path:
     what the trust list is checked against and where the hook log goes.
     """
     return project_root_of(spec_path) or Path(workspace).resolve()
+
+
+def main_checkout_of(root: Path) -> Path | None:
+    """The main checkout of the linked git worktree at *root*; ``None`` for anything else.
+
+    Read from the files git writes rather than by running git: the hook's guard mirrors
+    this with the standard library alone, and a firing should not start a process to
+    learn it. A linked worktree's ``.git`` is a file naming its own git directory, whose
+    ``commondir`` names the repository's shared one and whose ``gitdir`` names the
+    worktree back; the main checkout is that shared directory's parent. A submodule (no
+    ``commondir``), a bare repository (no checkout) or a ``.git`` file the git directory
+    does not name back is not a worktree of anything.
+    """
+    dot_git = Path(root) / '.git'
+    try:
+        if not dot_git.is_file():
+            return None
+        pointer = dot_git.read_text(encoding='utf-8').strip()
+        if not pointer.startswith('gitdir:'):
+            return None
+        own = (Path(root) / pointer.removeprefix('gitdir:').strip()).resolve()
+        common = (own / (own / 'commondir').read_text(encoding='utf-8').strip()).resolve()
+        back = (own / (own / 'gitdir').read_text(encoding='utf-8').strip()).resolve()
+    except OSError, UnicodeDecodeError:
+        return None
+    if back != dot_git.resolve() or common.name != '.git':
+        return None
+    return common.parent
 
 
 def convoy_home(env: Mapping[str, str]) -> Path:
@@ -248,6 +277,12 @@ def trust_status(root: Path, spec_path: Path | None, env: Mapping[str, str]) -> 
     rewrite is no gate. The claim is only as strong as the environment the hook runs in;
     a project's own settings can set these variables, which is Claude Code's trust model
     to enforce, not this function's.
+
+    A linked git worktree that is not itself listed or vouched for inherits its main
+    checkout's entry, for the pinned hash only: its spec is ``trusted`` when its hash is
+    the one the main checkout's entry pins, and ``changed`` when it is not, so a worktree
+    cannot arm a different gate by itself. An entry with no pin, and a vouched-for root,
+    pass nothing on: neither names a spec a worktree's could be compared with.
     """
     resolved = Path(root).resolve()
     vouched = env.get(TRUSTED_ROOTS_ENV, '')
@@ -263,6 +298,13 @@ def trust_status(root: Path, spec_path: Path | None, env: Mapping[str, str]) -> 
         ):
             return 'changed'
         return 'trusted'
+    main = main_checkout_of(resolved)
+    if main is None or spec_path is None:
+        return 'untrusted'
+    for entry in trusted_projects(env):
+        if entry.root.resolve() != main or not entry.spec_sha256:
+            continue
+        return 'trusted' if spec_digest(spec_path) == entry.spec_sha256 else 'changed'
     return 'untrusted'
 
 

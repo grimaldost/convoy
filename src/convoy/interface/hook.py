@@ -433,6 +433,16 @@ def _verdict_record(
     )
 
 
+def _judged(spec_path: Path, workspace: Path) -> str:
+    """The line that names the tree a verdict is about and the spec it was judged by.
+
+    An agent working in a worktree and its orchestrator in the main checkout may each be
+    shown a verdict; this says which tree it judged, so a mismatch with the tree the
+    reader worked in is visible.
+    """
+    return f'convoy gate: judged {workspace} against {spec_path}\n'
+
+
 def _decide_stop(
     payload: Mapping[str, Any],
     spec_path: Path,
@@ -496,7 +506,11 @@ def _decide_stop(
         f"convoy gate: BLOCKED{scope} — your work fails the project's gate. Repair it before "
         f'finishing; the gate re-runs when you stop again.\n'
     )
-    return HookResult(HOOK_EXIT_FEEDBACK, header + repair_brief(outcome.verdict), record)
+    return HookResult(
+        HOOK_EXIT_FEEDBACK,
+        header + _judged(spec_path, workspace) + repair_brief(outcome.verdict),
+        record,
+    )
 
 
 def _orchestrator_header(agent_id: str, phases: tuple[str, ...]) -> str:
@@ -544,7 +558,9 @@ def _decide_dispatch(
         if judged['outcome'] != 'blocked':
             return HookResult(HOOK_EXIT_SILENT, '', record)
         return HookResult(
-            HOOK_EXIT_FEEDBACK, _orchestrator_header(agent_id, phases) + brief, record
+            HOOK_EXIT_FEEDBACK,
+            _orchestrator_header(agent_id, phases) + _judged(spec_path, workspace) + brief,
+            record,
         )
     phases = parse_phase_markers(_string(payload.get('tool_input'), 'prompt'))
     gated = _gate(payload, spec_path, workspace, phases, env, hold)
@@ -556,7 +572,9 @@ def _decide_dispatch(
         return HookResult(HOOK_EXIT_SILENT, '', record)
     return HookResult(
         HOOK_EXIT_FEEDBACK,
-        _orchestrator_header(agent_id, phases) + repair_brief(outcome.verdict),
+        _orchestrator_header(agent_id, phases)
+        + _judged(spec_path, workspace)
+        + repair_brief(outcome.verdict),
         record,
     )
 

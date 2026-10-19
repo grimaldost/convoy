@@ -10,7 +10,8 @@ the event and decides:
 - **skip** (exit 0, nothing on stdout or stderr, no process started) when the full hook would
   certainly be silent and write nothing: no gate spec can be found, or one is found in a
   project that is neither vouched for in ``CONVOY_TRUSTED_ROOTS`` nor listed in the trust
-  file (or there is no trust file at all);
+  file (or there is no trust file at all), and is not a linked git worktree whose main
+  checkout is listed;
 - **delegate** otherwise: ``uv run --project <plugin root> convoy hook`` with the same stdin
   bytes, its stdout and stderr inherited, a SIGTERM or SIGINT the guard receives passed on
   to it, its exit code returned.
@@ -19,8 +20,9 @@ The decision mirrors the full hook's discovery and trust (``gate_service.find_ga
 ``gate_service.trust_status``, ``hook.decide``, ``hook.run_hook``) and errs one way only:
 anything it does not fully understand — an explicit ``CONVOY_GATE_SPEC``, stdin that is not
 a UTF-8 JSON object, a trust file it cannot read or whose shape is unexpected, any exception
-of its own — is delegated, so the full hook gives its answer. A listed root is delegated
-whatever its spec hash: a changed spec is a loud refusal only the full hook gives.
+of its own — is delegated, so the full hook gives its answer. A listed root, or a
+worktree whose main checkout is listed, is delegated whatever its spec hash: a changed spec
+is a loud refusal only the full hook gives.
 ``tests/test_hook_guard.py`` holds the skip side against the full hook's own ``decide``.
 
 Standard library only, and nothing from ``convoy``: the plugin's environment may not have
@@ -67,16 +69,35 @@ def _spec_candidates(
 ) -> Iterator[Path]:
     """Where the full hook looks for a gate spec, in its order.
 
-    ``$CLAUDE_PROJECT_DIR`` first, then the payload's ``cwd`` (``.`` when absent or empty)
-    and each of its parents. Relative paths resolve against *cwd*, the process directory.
+    The payload's ``cwd`` (``.`` when absent or empty) and each of its parents, then
+    ``$CLAUDE_PROJECT_DIR``. Relative paths resolve against *cwd*, the process directory.
     """
-    project_dir = env.get(_PROJECT_DIR_ENV)
-    if project_dir:
-        yield cwd.joinpath(project_dir, *_GATE_SPEC)
     raw_cwd = payload.get('cwd')
     start = (cwd / (raw_cwd if isinstance(raw_cwd, str) and raw_cwd else '.')).resolve()
     for directory in (start, *start.parents):
         yield directory.joinpath(*_GATE_SPEC)
+    project_dir = env.get(_PROJECT_DIR_ENV)
+    if project_dir:
+        yield cwd.joinpath(project_dir, *_GATE_SPEC)
+
+
+def _main_checkout_of(root: Path) -> Path | None:
+    """Mirror of ``gate_service.main_checkout_of``: a linked worktree's main checkout."""
+    dot_git = root / '.git'
+    try:
+        if not dot_git.is_file():
+            return None
+        pointer = dot_git.read_text(encoding='utf-8').strip()
+        if not pointer.startswith('gitdir:'):
+            return None
+        own = (root / pointer.removeprefix('gitdir:').strip()).resolve()
+        common = (own / (own / 'commondir').read_text(encoding='utf-8').strip()).resolve()
+        back = (own / (own / 'gitdir').read_text(encoding='utf-8').strip()).resolve()
+    except OSError, UnicodeDecodeError:
+        return None
+    if back != dot_git.resolve() or common.name != '.git':
+        return None
+    return common.parent
 
 
 def _listed_roots(env: Mapping[str, str], cwd: Path) -> list[Path] | None:
@@ -135,7 +156,7 @@ def should_delegate(raw: bytes, env: Mapping[str, str], cwd: Path) -> bool:
     listed = _listed_roots(env, cwd)
     if listed is None:
         return True
-    return root in listed
+    return root in listed or _main_checkout_of(root) in listed
 
 
 def main(raw: bytes, env: Mapping[str, str], cwd: Path, delegate: Callable[[bytes], int]) -> int:

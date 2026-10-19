@@ -8,6 +8,7 @@ the same way the gate runner's own tests do.
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from convoy.interface.gate_service import (
     gate_spec_env,
     gate_usage_envelope,
     is_trusted,
+    main_checkout_of,
     oracles_dir_for,
     resolve_gate_spec,
     run_gate,
@@ -314,9 +316,19 @@ def _project_with_spec(root: Path) -> Path:
     return spec
 
 
-def test_find_gate_spec_prefers_the_project_dir_from_the_environment(tmp_path: Path) -> None:
+def test_find_gate_spec_prefers_the_walk_over_the_project_dir(tmp_path: Path) -> None:
+    """The nearest spec wins: a worktree's own, not the main checkout's (CONV-B75)."""
+    _project_with_spec(tmp_path / 'project')
+    worktree_spec = _project_with_spec(tmp_path / 'project' / '.claude' / 'worktrees' / 'a')
+    env = {'CLAUDE_PROJECT_DIR': str(tmp_path / 'project')}
+    assert find_gate_spec(tmp_path / 'project' / '.claude' / 'worktrees' / 'a', env) == (
+        worktree_spec
+    )
+
+
+def test_find_gate_spec_falls_back_to_the_project_dir(tmp_path: Path) -> None:
     project_spec = _project_with_spec(tmp_path / 'project')
-    _project_with_spec(tmp_path / 'elsewhere')
+    (tmp_path / 'elsewhere').mkdir()
     env = {'CLAUDE_PROJECT_DIR': str(tmp_path / 'project')}
     assert find_gate_spec(tmp_path / 'elsewhere', env) == project_spec
 
@@ -444,6 +456,79 @@ def test_vouched_roots_carry_no_pin(tmp_path: Path) -> None:
     spec.write_text('x = 1\n', encoding='utf-8')
     env = {'CONVOY_HOME': str(tmp_path / 'home'), 'CONVOY_TRUSTED_ROOTS': str(workspace)}
     assert trust_status(workspace, spec, env) == 'trusted'
+
+
+# --- a linked git worktree inherits its main checkout's pinned spec (CONV-B75) -----------------
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.com', *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _repo_with_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """A repository with a committed spec, and a linked worktree under it."""
+    project = tmp_path / 'proj'
+    spec = _project_with_spec(project)
+    spec.write_text('[series]\nid = "a"\n', encoding='utf-8')
+    _git(project, 'init', '-q', '-b', 'main')
+    _git(project, 'add', '-A')
+    _git(project, 'commit', '-q', '-m', 'spec')
+    worktree = project / '.claude' / 'worktrees' / 'agent'
+    _git(project, 'worktree', 'add', '-q', '-b', 'agent', str(worktree))
+    return project, worktree
+
+
+def test_main_checkout_of_names_a_linked_worktrees_main_checkout(tmp_path: Path) -> None:
+    project, worktree = _repo_with_worktree(tmp_path)
+    assert main_checkout_of(worktree) == project.resolve()
+    assert main_checkout_of(project) is None
+    assert main_checkout_of(tmp_path) is None
+
+
+def test_a_git_file_its_git_dir_does_not_name_back_is_no_worktree(tmp_path: Path) -> None:
+    """A ``.git`` file copied elsewhere points at a real worktree's git dir, which disowns it."""
+    _project, worktree = _repo_with_worktree(tmp_path)
+    impostor = tmp_path / 'impostor'
+    impostor.mkdir()
+    gitdir = (worktree / '.git').read_text(encoding='utf-8').removeprefix('gitdir:').strip()
+    (impostor / '.git').write_text(f'gitdir: {(worktree / gitdir).resolve()}\n', encoding='utf-8')
+    assert main_checkout_of(impostor) is None
+
+
+def test_a_worktree_inherits_the_main_checkouts_pinned_spec(tmp_path: Path) -> None:
+    project, worktree = _repo_with_worktree(tmp_path)
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    spec = worktree / '.convoy' / 'gate.toml'
+    assert trust_status(worktree, spec, env) == 'untrusted'
+    trust_project(project, env)
+    assert trust_status(worktree, spec, env) == 'trusted'
+    spec.write_text('[series]\nid = "b"\n', encoding='utf-8')
+    assert trust_status(worktree, spec, env) == 'changed'
+    # Trusting the worktree itself is its own entry, with its own pin.
+    trust_project(worktree, env)
+    assert trust_status(worktree, spec, env) == 'trusted'
+
+
+def test_an_unpinned_or_vouched_main_checkout_passes_nothing_on(tmp_path: Path) -> None:
+    project, worktree = _repo_with_worktree(tmp_path)
+    spec = worktree / '.convoy' / 'gate.toml'
+    home = tmp_path / 'home'
+    vouched = {'CONVOY_HOME': str(home), 'CONVOY_TRUSTED_ROOTS': str(project)}
+    assert trust_status(project, project / '.convoy' / 'gate.toml', vouched) == 'trusted'
+    assert trust_status(worktree, spec, vouched) == 'untrusted'
+    home.mkdir()
+    (home / 'hook-trust.toml').write_text(
+        f'[[projects]]\nroot = "{project.resolve().as_posix()}"\nspec_sha256 = ""\n',
+        encoding='utf-8',
+    )
+    unpinned = {'CONVOY_HOME': str(home)}
+    assert trust_status(project, project / '.convoy' / 'gate.toml', unpinned) == 'trusted'
+    assert trust_status(worktree, spec, unpinned) == 'untrusted'
 
 
 def test_a_malformed_trust_list_is_a_spec_error(tmp_path: Path) -> None:

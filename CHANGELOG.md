@@ -13,6 +13,26 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A worktree-isolated subagent is judged in its own worktree, not the main checkout.**
+  **(consumer-affecting)** — the gate spec discovery order changes. `find_gate_spec` tried
+  `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` before the walk up from the starting directory, so
+  a subagent working in `<project>/.claude/worktrees/<id>` was judged against the main
+  checkout's files: a red that existed only in the worktree passed. Discovery now walks up
+  from the event's `cwd` (the workspace, for `convoy gate` and `convoy_gate`) and uses the
+  nearest `.convoy/gate.toml`; `$CLAUDE_PROJECT_DIR` is the fallback when the walk finds
+  none. A directory that has its own spec under a `$CLAUDE_PROJECT_DIR` that also has one now
+  runs its own. A linked git worktree that is not on the trust list runs on its main
+  checkout's entry, only while its spec has the hash that entry pins: a worktree spec that
+  differs is refused loudly as `spec_changed`, and an entry with no pin or a root in
+  `CONVOY_TRUSTED_ROOTS` passes nothing on. The plugin's guard mirrors both. A blocked
+  verdict, to the subagent or to the orchestrator, now carries a line naming the tree it
+  judged and the spec it used (`convoy gate: judged <tree> against <spec>`). A spec that is
+  untracked in the main checkout is not in the worktree, so such a worktree is still judged
+  in the main checkout, and so is the messenger leg, which runs in the orchestrator's
+  `cwd`; the new line makes both visible.
+
 ## [0.17.1] - 2026-10-08
 
 **Patch**, by the test in `docs/design/02-formats.md`: no entry below carries
