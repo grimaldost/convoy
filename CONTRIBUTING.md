@@ -9,27 +9,32 @@ Requires Python 3.14 and [uv](https://docs.astral.sh/uv/):
 
 ```
 uv sync
-git config core.hooksPath scripts/git-hooks
+git config core.hooksPath .githooks
 ```
 
-The second line arms the commit-time lane: tracked hook scripts that run the
-fast half of the gate (`uv lock --check`, both ruff checks) before each commit,
-and check the message shape (conventional subject, no attribution trailers) at
-commit time. The scripts go through `uv run python -m pre_commit`, never the
-bare `pre-commit` shim — on a machine that blocks unmanaged executable shims,
-the shim-installed form silently never runs (see `.pre-commit-config.yaml`).
-Run the whole lane by hand with `uv run python -m pre_commit run --all-files`.
+The second line arms the commit-time lane (`railform arm` does the same): tracked
+hook wrappers that run the fast half of the gate (`uv lock --check`, both ruff
+checks) before each commit, and check the message shape (conventional subject,
+no attribution trailers), the branch name and private references. The wrappers go
+through `uv run --frozen python -m pre_commit`, never the bare `pre-commit` shim —
+on a machine that blocks unmanaged executable shims, the shim-installed form
+silently never runs (see `.pre-commit-config.yaml`). A clone armed to the old
+`scripts/git-hooks` directory fails its commits with a message that says to
+re-arm. Run the whole lane by hand with
+`uv run python -m pre_commit run --all-files`.
 
 ## Quality gates
 
 Every one of these must pass locally before opening a PR. This is the same set CI
-runs, **in this order**:
+runs, **in this order** (CI runs it through [railform](https://github.com/grimaldost/railform),
+whose pipeline for this repository is `railform.toml` over the `python-package`
+preset; `railform frame` prints it):
 
 ```
 uv lock --check
 uv sync
-uv run ruff check src tests
 uv run ruff format --check src tests
+uv run ruff check src tests
 uv run ty check src
 uv run pytest
 ```
@@ -42,7 +47,9 @@ old.
 
 The unit suite spends no money and spawns no real agent — if it suddenly takes
 much longer than ~30 s, a real spawn has leaked past the `tests/conftest.py`
-guard; treat the runtime jump as a failure.
+guard; treat the runtime jump as a failure. The tests in `tests/test_doc_claims.py`
+that read the pipeline run `railform` at the commit `ci.yml` pins, through
+`uv run --with`, so the first run on a machine needs the network.
 
 ## Workflow
 
@@ -54,19 +61,20 @@ behavior changes, docs and CHANGELOG in the same change, the
 subjects, no attribution trailers). The PR template carries the checklist; CI
 runs the same gates as above.
 
-The CHANGELOG half of that discipline is machine-enforced: the `changelog`
-workflow fails a PR when a commit's own diff touches `src/` and neither the
-PR's `CHANGELOG.md` diff records the change — an added line the same diff does
-not also remove once whitespace is collapsed, so touching the file, reflowing
-it or reordering it is not a record — nor that same commit carries the trailer
-`Changelog: none (<reason>)`, the opt-out for a change nothing a changelog
-reader could notice. A merge commit is judged the same way, on the resolution
-its author wrote rather than on what git merged automatically. It fails
-an added `### ` section heading outside the Keep a Changelog vocabulary
-(Added / Changed / Deprecated / Removed / Fixed / Security). It also
-warns, without failing, when a contract-surface file changes and the entry
-never says **(consumer-affecting)**; `scripts/changelog_gate.py` carries the
-policy.
+The CHANGELOG half of that discipline is machine-enforced: the `changelog` job
+of the railform workflow (`railform changelog-gate`, configured by the
+`changelog` table of `railform.toml`) fails a PR when a commit's own diff
+touches `src/` and neither the PR's `CHANGELOG.md` diff records the change — an
+added line the same diff does not also remove once whitespace is collapsed, so
+touching the file, reflowing it or reordering it is not a record — nor that
+same commit carries the trailer `Changelog: none (<reason>)`, the opt-out for a
+change nothing a changelog reader could notice. A merge commit is judged the
+same way, on the resolution its author wrote rather than on what git merged
+automatically. It also fails a release heading that does not move the version
+forward, and warns, without failing, when a contract-surface file changes and
+the entry never says **(consumer-affecting)**. The section headings of
+`[Unreleased]` (Added / Changed / Deprecated / Removed / Fixed / Security, the
+Keep a Changelog vocabulary) are held by `tests/test_changelog_headings.py`.
 
 ## Release discipline
 

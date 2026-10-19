@@ -1,27 +1,59 @@
-# The commit-time lane: the fast half of the gate, in CI's order, plus two
-# commit-message checks CI has no seat for.
+# The commit-time lane. The railform and hygiene entries below are owned by `railform adopt`
+# (the commit-message rules, the branch name, the hook wrappers, the private-reference check
+# and the hygiene hooks). The local hooks after them are this repository's own: the fast half
+# of the gate, in the pipeline's order.
 #
 # Local `language: system` hooks drive the project's own uv-pinned tools, so no
 # hook downloads a second ruff and the versions always match the lockfile's.
 # `ty check` and `pytest` are deliberately absent: they are the slow half of the
 # gate, per-commit friction discourages small commits, and CI owns them.
 #
-# Install (one-off, per clone):
-#     git config core.hooksPath scripts/git-hooks
+# Arm a clone (one-off, per clone) with `railform arm`, which points `core.hooksPath` at
+# .githooks, or by hand:
+#     git config core.hooksPath .githooks
 #
 # Not `pre-commit install`: that writes hooks which shell out to the bare
 # `pre-commit` executable shim, and a machine that blocks unmanaged executable
-# shims runs nothing while `.git/hooks/` looks armed — worse than no hooks. The
-# tracked scripts in scripts/git-hooks/ go through `uv run python -m pre_commit`
+# shims runs nothing while `.git/hooks/` looks armed - worse than no hooks. The
+# tracked wrappers in .githooks/ go through `uv run --frozen python -m pre_commit`
 # instead: the project's own pinned interpreter, no shim.
 #
 # Run the lane by hand:
 #     uv run python -m pre_commit run --all-files
 #
 # tests/test_doc_claims.py reads this file: every `entry` that starts with `uv `
-# must be one of ci.yml's gate commands, in CI's order, so the lane cannot drift
-# from the gate it mirrors.
+# must be one of the effective frame's gate commands, in the pipeline's order, so the lane
+# cannot drift from the gate it mirrors.
 repos:
+  # >>> railform: owned by `railform adopt`; `railform adopt --check` fails on any edit
+  - repo: https://github.com/grimaldost/railform
+    rev: 65bf54ae6f4ed7bd027fee9e0806d9dfa2df3c48
+    hooks:
+      - id: railform-commit-msg
+      - id: railform-branch-name
+      - id: railform-hooks-check
+        files: '^\.githooks/'
+      - id: railform-private-refs
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # frozen: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        stages: [pre-commit]
+      - id: end-of-file-fixer
+        stages: [pre-commit]
+      - id: check-merge-conflict
+        args: [--assume-in-merge]
+        stages: [pre-commit]
+      - id: check-added-large-files
+        stages: [pre-commit]
+      - id: check-yaml
+        stages: [pre-commit]
+      - id: check-toml
+        stages: [pre-commit]
+      - id: check-json
+        stages: [pre-commit]
+  # <<< railform
   - repo: local
     hooks:
       # First, before anything that would rewrite the lock: `--check` fails on a
@@ -34,14 +66,6 @@ repos:
         always_run: true
         pass_filenames: false
 
-      - id: ruff-check
-        stages: [pre-commit]
-        name: ruff check
-        entry: uv run ruff check src tests
-        language: system
-        types: [python]
-        pass_filenames: false
-
       - id: ruff-format-check
         stages: [pre-commit]
         name: ruff format (check)
@@ -50,28 +74,10 @@ repos:
         types: [python]
         pass_filenames: false
 
-  # Commit-message lane (the commit-msg wrapper in scripts/git-hooks/ runs it).
-  - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v4.0.0
-    hooks:
-      - id: conventional-pre-commit
-        stages: [commit-msg]
-        args:
-          - feat
-          - fix
-          - docs
-          - test
-          - refactor
-          - perf
-          - chore
-          - build
-          - ci
-          - release
-
-  - repo: local
-    hooks:
-      - id: no-ai-attribution
-        name: reject AI attribution trailers
-        entry: bash -c 'if grep -Ei "^(Co-Authored-By|Co-authored-by):.*(Claude|GPT|Anthropic|noreply@anthropic)" "$1"; then echo "Commit message carries an AI attribution trailer; the git conventions forbid these. Remove the line and re-commit."; exit 1; fi' --
+      - id: ruff-check
+        stages: [pre-commit]
+        name: ruff check
+        entry: uv run ruff check src tests
         language: system
-        stages: [commit-msg]
+        types: [python]
+        pass_filenames: false

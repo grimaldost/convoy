@@ -1,0 +1,5 @@
+#!/bin/sh
+# Written by railform adopt: the git hooks of this repository moved, and this stub stays for one
+# release so that a clone still armed to this directory fails until it is armed again.
+printf '%s\n' 'railform: the git hooks of this repository moved to .githooks; arm this clone with `railform arm` (or: git config core.hooksPath .githooks)' >&2
+exit 1
