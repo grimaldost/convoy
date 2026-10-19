@@ -19,8 +19,8 @@ lands, **an agent started with `isolation: 'worktree'` is judged against the mai
 against the worktree that holds its changes.** Discovery tries
 `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` before the walk up from the agent's own `cwd`
 (`gate_service.find_gate_spec`), so the checks run in the session project and see none of the
-edits that live only in the agent's worktree. A fix is in progress; the option chosen will change
-which tree a check runs in, and this recipe will be revised when it lands. Until then:
+edits that live only in the agent's worktree. A fix is in progress; it may change which tree a
+check runs in, and this recipe will be revised when it lands. Until then:
 
 - Run writing agents **one at a time in the session's project checkout**, as the example does.
   Do not pass `isolation: 'worktree'` to an agent whose work the gate must judge.
@@ -48,8 +48,9 @@ turns, but each gate then judges whatever the other agents have half written.
 
 ## Step 1: write the gate
 
-Create `.convoy/gate.toml` in the project root. This is the smallest useful shape: a gate-only
-file, one `[series]` id and `[[checks]]`:
+Create `.convoy/gate.toml` in the project root. This is a small but complete shape: a gate-only
+file with a `[series]` id, an optional `[governance]` timeout and three `[[checks]]`, one for every
+agent and one each for two phases:
 
 ```toml
 [series]
@@ -147,8 +148,21 @@ tag would be gated on: the checks with no `phases` plus the checks that list the
 ## Step 4: the Workflow script
 
 Plain JavaScript, for the Workflow tool. It runs the implementers one after another, then has a
-read-only agent return the judge's lines from `.convoy/hook.log` and sorts the tasks into green,
+read-only agent return the judge's fields from `.convoy/hook.log` and sorts the tasks into green,
 residual red and not judged. Pass `args` as real JSON, not a string.
+
+How the log is read matters, so it is stated before the script. A Workflow script has no file
+access, so a reader agent has to fetch the log. The reader cannot use Bash and cannot be given a
+`schema`: the judge treats any tool outside its read-only list as a write (`hook.READ_ONLY_TOOLS`),
+and Bash and the `StructuredOutput` call a schema forces are not on it, so either would make the
+reader a gated subagent. That leaves Claude Code's Grep and Read tools. Both shorten long lines: a
+plain Grep prints `[Omitted long matching line]` in place of any matching line of about 500
+characters or more, and a real judge line is 1100 to 1700 characters (it carries the paths, the
+spec hash and every check's `detail`), so a plain Grep returns no verdict at all. The script
+therefore asks Grep for only the fields it needs (`-o`, which prints just the matched parts, each
+prefixed with its line number), and rebuilds one record per line number. A fragment that is itself
+long, such as a `repair_brief` with a full test failure in it, is omitted too, so the script does
+not ask for it.
 
 ```js
 export const meta = {
@@ -156,7 +170,7 @@ export const meta = {
   description: 'Run implementers one at a time and read back what the convoy hook judged',
   phases: [
     { title: 'Implement', detail: 'one agent per task; the hook judges each when it stops' },
-    { title: 'Read the log', detail: 'a read-only agent returns the judge lines of this run' },
+    { title: 'Read the log', detail: 'a read-only agent returns the judge fields of this run' },
   ],
 }
 
@@ -166,6 +180,9 @@ export const meta = {
 // }
 // Every tag must be listed in the `phases` of some check in .convoy/gate.toml.
 const { since, tasks } = args
+
+// The fields of a judge record that decide the verdict, as short Grep matches.
+const FIELDS = String.raw`"ts": "[^"]*"|"leg": "[^"]*"|"agent_id": "[^"]*"|"stop_hook_active": [a-z]+|"outcome": "[^"]*"|"phases": \[[^\]]*\]|"blocked_stop": [a-z]+|"reason": "[^"]*"|"error": "[^"]*"`
 
 phase('Implement')
 for (const task of tasks) {
@@ -178,26 +195,30 @@ for (const task of tasks) {
 }
 
 phase('Read the log')
-// No schema and no Bash on this agent. The judge treats any tool outside its read-only list as a
-// write (hook.READ_ONLY_TOOLS), and Bash and the StructuredOutput call a schema forces are not on
-// it, so either would make this reader a gated subagent. Grep and Read are on it.
+// No schema and no Bash on this agent (see above). Grep is on the read-only list.
 const text = await agent(
-  'Use the Grep tool, not Bash, on the file .convoy/hook.log with the pattern "leg": "judge" ' +
-    'and reply with every matching line exactly as it is, one per line, nothing else. ' +
+  'Call the Grep tool once, with these arguments: path ".convoy/hook.log" (in the project root), ' +
+    'output_mode "content", -o true, head_limit 0, and this exact pattern:\n\n' +
+    FIELDS +
+    '\n\nReply with the tool output exactly as it is, one line per line, nothing else. ' +
     'Reply NONE if nothing matches.',
   { label: 'read hook.log', phase: 'Read the log' },
 )
 
-const lines = String(text)
-  .split('\n')
-  .map(line => {
-    try {
-      return JSON.parse(line.slice(line.indexOf('{')))
-    } catch {
-      return null
-    }
-  })
-  .filter(record => record && record.leg === 'judge' && record.ts >= since)
+// Grep -o prints `<line>:<match>`. Rebuild one record per log line.
+const byLine = {}
+for (const raw of String(text).split('\n')) {
+  const m = raw.trim().match(/^(\d+):(.*)$/)
+  if (!m) continue
+  try {
+    Object.assign((byLine[m[1]] ||= { line: Number(m[1]) }), JSON.parse(`{${m[2]}}`))
+  } catch {
+    // an omitted or mangled fragment: that field stays unknown
+  }
+}
+const lines = Object.values(byLine)
+  .filter(record => record.leg === 'judge' && record.ts >= since)
+  .sort((a, b) => a.line - b.line)
 
 const verdicts = tasks.map(task => {
   const mine = lines.filter(record => (record.phases || []).includes(task.tag))
@@ -205,14 +226,25 @@ const verdicts = tasks.map(task => {
   if (!last) return { tag: task.tag, state: 'not judged' }
   if (last.outcome === 'completed') return { tag: task.tag, state: 'green' }
   if (last.outcome === 'blocked' && last.blocked_stop === false) {
-    return { tag: task.tag, state: 'residual red', brief: last.repair_brief }
+    // The failing checks' text: `convoy gate --phase <tag> --brief` prints it as JSON.
+    return { tag: task.tag, state: 'residual red', log_line: last.line, agent_id: last.agent_id }
   }
-  return { tag: task.tag, state: last.outcome, reason: last.reason || last.error }
+  return { tag: task.tag, state: last.outcome, reason: last.reason || last.error, log_line: last.line }
 })
 
 log(verdicts.map(v => `${v.tag}: ${v.state}`).join('; '))
 return verdicts
 ```
+
+What was checked: the Grep call above, with this pattern, was run on a `hook.log` made by the
+hook (judge lines of 1100 to 1700 characters, one more with a 4400-character `repair_brief`), and
+the parsing was run under Node with `agent()` stubbed to return that Grep output. It gave `green`
+for a pass, `residual red` for a residual red, `usage` with its `error`, and `not judged` for a tag
+with no line; the same run with every line omitted, as a plain Grep would return, gave `not
+judged` throughout. What was not checked: a live Workflow agent making the Grep call and repeating
+its output, because no Workflow run was available. If that agent mangles the pattern or the
+output, the failure is `not judged`, never a green. A `spec_changed` line carries no `phases`, so
+its task also reads `not judged`; the line itself is in the log.
 
 What happens when a task's agent tries to stop: Claude Code fires `SubagentStop`, the hook runs
 the gate in the project, and
@@ -274,8 +306,9 @@ An untrusted project leaves no line in its own tree at all (the plugin's guard e
 starting `convoy`, and `convoy hook` itself writes nothing into an untrusted project), so a
 missing line is never a green. A task that shows `not judged` in the
 script, with the hook installed, is most often one of: the project was never trusted, no
-`.convoy/gate.toml` was found from the session's project, the agent used only read-only tools, or
-Claude Code killed a hook that outran its 1800 s timeout.
+`.convoy/gate.toml` was found from the session's project, the agent used only read-only tools, the spec changed after it was trusted (a `spec_changed` line
+has no `phases`, so the script cannot attribute it to a task), or Claude Code killed a hook that
+outran its 1800 s timeout.
 
 ## A residual red after the repair round
 
@@ -290,8 +323,11 @@ This is the shape of backlog row
 written for the Agent tool's default dispatch: the row proposes to measure first how often the
 judge's one round leaves a residual red (the `blocked_stop: false` records) and to add an
 orchestrator-side leg only if it is common. What to do with a residual red is the script's call:
-the `brief` it returns is the text a fix agent should be given, with the same `[convoy-phase]`
-marker so the fix is judged too.
+the result it returns names the log line and the `agent_id`, and the failing checks' text comes
+from running `convoy gate --phase <tag> --brief` in the project, which prints the repair brief as
+JSON on stdout. That text is what a fix agent should be given, with the same `[convoy-phase]` marker so the
+fix is judged too. The script does not read `repair_brief` from the log because a long one is
+omitted by the Grep tool (Step 4).
 
 ## Known limits
 
