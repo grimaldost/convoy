@@ -135,7 +135,9 @@ The plugin's hooks (`SubagentStop`, `PostToolUse`) run a project's `.convoy/gate
 only when the project root is on this machine's trust list with the spec's hash
 (`CONVOY_HOME/hook-trust.toml`, default `~/.convoy/`, written by `convoy gate
 --trust`) or named in `CONVOY_TRUSTED_ROOTS` by the process that launched Claude
-Code. An untrusted project executes nothing and gets no file written into it; a spec
+Code. A linked git worktree of a listed project runs on that entry only while its
+spec has the pinned hash: the worktree cannot arm a different gate by itself. An
+untrusted project executes nothing and gets no file written into it; a spec
 that changed since it was trusted is refused loudly. `convoy_gate` with no explicit
 series file holds the discovered spec to the same standard.
 

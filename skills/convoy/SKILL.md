@@ -311,8 +311,8 @@ repair_brief, convoy_version}` — for reading the verdict inside a model turn w
 else in it. `series_file` is optional: omitted, the project spec is used and must be
 trusted on this machine (`convoy gate --trust`), the same standard the hook holds —
 `$CONVOY_GATE_SPEC` when the launching process set it (a missing file is refused, never
-walked past), then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml` in
-the workspace and its parents — and a project spec loads with `CONVOY_ORACLES` defaulted to
+walked past), then `.convoy/gate.toml` in the workspace and its parents, nearest first,
+then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` — and a project spec loads with `CONVOY_ORACLES` defaulted to
 `~/.convoy/oracles/<project dir name>`; none found is a usage result naming where it looked.
 
 ## The gate without the run
@@ -379,8 +379,8 @@ A payload that is not a hook event — empty, malformed, or not a JSON object on
 read as silence.
 
 Three switches, all before anything executes. The project spec is the per-project
-switch — `$CONVOY_GATE_SPEC`, then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then
-`.convoy/gate.toml` from the event's `cwd` upward — and with none found the hook exits 0
+switch — `$CONVOY_GATE_SPEC`, then `.convoy/gate.toml` from the event's `cwd` upward,
+nearest first, then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` — and with none found the hook exits 0
 silently, so installing the plugin arms nothing until a project opts in. The plugin's
 handler runs a standard-library guard (`src/convoy/interface/hook_guard.py`) before
 `convoy hook`: when no spec is found, or one is found in a project this machine does not
@@ -435,6 +435,17 @@ subagent through ungated. A lock left by a killed firing is taken over once the
 process it names is gone, or, when it names none, once it is ten seconds old. The lock orders judges. It does not make
 concurrent writers safe: subagents that edit at the same time need a tree each (a worktree
 per agent), because each gate judges whatever the others have half-written.
+
+A worktree agent is judged in its own worktree when the worktree carries the spec, that is,
+when `.convoy/gate.toml` is committed on the branch the worktree checks out: the judge walks
+up from the agent's `cwd` and stops at the nearest spec. The worktree runs on its main
+checkout's trust entry, and only while its spec has the hash that entry pins; a worktree
+spec that differs is refused loudly, like a changed spec, and an entry with no pin or a root
+vouched for in `CONVOY_TRUSTED_ROOTS` passes nothing on. Two cases still judge the main
+checkout: a spec that is untracked there (the worktree does not have it, so the walk reaches
+the main checkout's), and the messenger, which runs in the orchestrator's `cwd` and does not
+find a verdict the judge logged in the worktree. A blocked verdict names the tree it judged
+(`convoy gate: judged <tree> against <spec>`), so either case is visible in the brief.
 
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared

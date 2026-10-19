@@ -67,7 +67,8 @@ A full series.toml works unchanged — the same file that drives `run` gates
 standalone, so a repo that has a series keeps one set of checks, not two. A repo
 that has no series keeps its gate at `.convoy/gate.toml` — the minimal shape — and
 `convoy gate` / `convoy_gate` find it there with no argument, from the workspace or
-any directory under it (`$CLAUDE_PROJECT_DIR` first, when Claude Code sets it).
+any directory under it (the nearest spec wins; `$CLAUDE_PROJECT_DIR` is the fallback
+when Claude Code sets it and the walk finds none).
 
 What the gate framework adds over running the same commands by hand:
 

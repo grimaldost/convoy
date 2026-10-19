@@ -1216,20 +1216,25 @@ isolated agent made. The probe's agents wrote
 outside their worktrees, so the note shows the tree the gate ran in, not a missed red; no red
 was observed. [probe 2026-10-08]
 
-**Change.** Not chosen. The options on the table: (a) discovery prefers the walk from the
-payload `cwd` when that `cwd` is a git worktree of the `$CLAUDE_PROJECT_DIR` project, so the
-gate runs in the worktree that holds the agent's changes (this changes which tree a check
-executes in, and needs the trust rule to say whether a worktree inherits its main checkout's
-entry); (b) the hook names the judged tree in the repair brief and on stderr (the record already
-carries `cwd` and `workspace`), so a mismatch between the agent's `cwd` and the judged
-`workspace` is visible without changing what runs; (c) both. The skill's advice to give each
-concurrent writing subagent a worktree (`skills/convoy/SKILL.md`, the paragraph on the judge
-lock) assumes each gate judges that agent's own tree, so the chosen fix must revisit it.
+**Change.** Option (c), both. Discovery walks up from the payload `cwd` first and uses the
+nearest `.convoy/gate.toml`, falling back to `$CLAUDE_PROJECT_DIR` only when the walk finds
+none (`gate_service.find_gate_spec`, mirrored in `hook_guard.py`). Trust already keyed on the
+root and the spec's sha256; a linked git worktree that is not itself listed now inherits its
+main checkout's entry for the pinned hash only (`gate_service.main_checkout_of`, read from
+the `.git` file, `commondir` and the `gitdir` back-link, no git process): the same hash is
+`trusted`, another is `changed` (loud), and an unpinned entry or a vouched root passes
+nothing on. A blocked verdict to the subagent or the orchestrator carries
+`convoy gate: judged <tree> against <spec>`. The skill's judge-lock paragraph now says when a
+worktree agent is judged in its worktree and the two cases that still judge the main
+checkout. Tests: `tests/test_hook.py` (a committed spec, a red only in the worktree, blocked
+and logged in the worktree), `tests/test_gate_service.py`, `tests/test_hook_guard.py`.
+**(consumer-affecting: discovery order)**
 
-**Status.** Proposed, not built. `find_gate_spec` still orders `$CLAUDE_PROJECT_DIR` before the
-payload `cwd`, and `hook.log` already records both `cwd` and `workspace`, which is how the
-probe saw the difference. Trust is keyed on the project root and the spec's hash
-(`gate_service.trust_status`), so the trust rule needs reading before option (a) is chosen.
+**Status.** Built on `fix/conv-b75-worktree-gate`, unreleased; no version bump until the owner
+sets the measurement window. Not covered: a spec untracked in the main checkout (the
+worktree has none, so the walk reaches the main checkout's), and the messenger leg, which
+runs in the orchestrator's `cwd` and does not find a verdict the judge logged in the
+worktree. Both are visible through the judged-tree line, not fixed.
 
 **Effort** M · **Source** [probe 2026-10-08]
 
