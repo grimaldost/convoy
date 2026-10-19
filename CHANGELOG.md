@@ -13,6 +13,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **A recipe for judging Claude Code Workflow agents with `convoy gate`.**
+  [`docs/recipes/workflow-gate.md`](docs/recipes/workflow-gate.md) gives a minimal
+  `.convoy/gate.toml`, the `convoy gate --trust` step that arms it, the `[convoy-phase: <tag>]`
+  marker for `agent()` prompts, an example Workflow script, the `.convoy/hook.log` lines for a
+  pass, a red and a residual red, and the three known limits from the 2026-10-08 probe. It says
+  plainly that until CONV-B75 lands a worktree-isolated agent is judged against the main
+  checkout. Documentation only; no behaviour changes.
+
 ## [0.17.1] - 2026-10-08
 
 **Patch**, by the test in `docs/design/02-formats.md`: no entry below carries
