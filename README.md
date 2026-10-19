@@ -54,7 +54,8 @@ Either CLI route installs the `convoy` command, aliased `cvy` (clone and
 `uv sync` for development); the plugin route installs the MCP tools and two hooks
 (`SubagentStop`, `PostToolUse`) that run a project's gate around every subagent
 dispatch — armed only where the project has opted in with `.convoy/gate.toml` and
-this machine has trusted it with `convoy gate --trust`.
+this machine has trusted it with `convoy gate --trust`. To have the gate judge agents a Claude Code
+Workflow script starts, follow [the Workflow gate recipe](docs/recipes/workflow-gate.md).
 
 ## How it works
 
