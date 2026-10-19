@@ -50,6 +50,7 @@ FIXTURES = Path(__file__).parent / 'fixtures' / 'hooks'
 runner = CliRunner()
 
 _OK = f'"{sys.executable}" -c "exit(0)"'
+_PY_QUOTED = f'"{sys.executable}"'
 _RED = f'"{sys.executable}" -c "import sys; sys.stderr.write(\'hook-red-marker\'); sys.exit(1)"'
 
 
@@ -891,12 +892,12 @@ def test_a_judge_that_waits_out_the_bound_exits_2_and_nothing_interleaves(
 def test_an_append_waits_for_the_append_lock(tmp_path: Path) -> None:
     """The loser's line is written outside the judge lock; the append lock keeps it whole."""
     root = tmp_path / 'proj'
-    spec = _project(root, _check('ok', _OK))
+    _project(root, _check('ok', _OK))
     log = root / '.convoy' / 'hook.log'
     failures: list[str | None] = []
     with judge_lock(log.with_name('hook.log.lock'), wait_seconds=0, poll_seconds=0.01):
         writer = threading.Thread(
-            target=lambda: failures.append(append_log(spec, root, {'line': 1})), daemon=True
+            target=lambda: failures.append(append_log(log, {'line': 1})), daemon=True
         )
         writer.start()
         writer.join(timeout=0.3)
@@ -1170,7 +1171,7 @@ def test_a_worktree_that_rewrote_its_gate_is_refused_loudly(tmp_path: Path) -> N
     transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
     result = decide(_stop_payload(worktree, transcript), env)
     assert result.exit_code == HOOK_EXIT_FEEDBACK
-    assert 'changed since' in result.stderr
+    assert 'differs from the spec trusted for' in result.stderr
     assert result.record is not None and result.record['outcome'] == 'spec_changed'
 
 
@@ -1183,9 +1184,10 @@ def test_a_worktree_of_an_untrusted_project_is_not_judged(tmp_path: Path) -> Non
     assert result.record is not None and result.record['outcome'] == 'untrusted'
 
 
-def test_run_hook_logs_a_worktree_verdict_in_the_worktree(
+def test_run_hook_logs_a_worktree_verdict_in_its_anchors_log(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """The worktree is deleted when its agent is done; the anchor's log outlives it."""
     project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
     (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
     env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
@@ -1193,5 +1195,198 @@ def test_run_hook_logs_a_worktree_verdict_in_the_worktree(
     raw = json.dumps(_stop_payload(worktree, transcript)).encode()
     assert run_hook(raw, env) == HOOK_EXIT_FEEDBACK
     assert f'judged {worktree.resolve()}' in capsys.readouterr().err
-    assert [line['outcome'] for line in _log_lines(worktree)] == ['blocked']
-    assert _log_lines(project) == []
+    (line,) = _log_lines(project)
+    assert line['outcome'] == 'blocked'
+    assert line['workspace'] == str(worktree.resolve())
+    assert line['anchor'] == str(project.resolve())
+    assert _log_lines(worktree) == []
+
+
+# --- the review of CONV-B75 -------------------------------------------------------------------
+
+# An independent check whose oracle lives out of tree, under the default oracles dir.
+_ORACLE_CHECK = (
+    '\n'.join(
+        [
+            '[[checks]]',
+            'name = "oracle"',
+            f'run = {_toml_string(f"{_PY_QUOTED} ${{CONVOY_ORACLES}}/oracle1.py")}',
+            'asset = "${CONVOY_ORACLES}/oracle1.py"',
+            'blocking = true',
+            'independent = true',
+        ]
+    )
+    + '\n'
+)
+
+
+def test_an_oracle_check_in_a_worktree_runs_the_projects_oracle(tmp_path: Path) -> None:
+    """MAJOR 1: the default oracles dir keys on the anchor, not on the worktree's name."""
+    project, worktree = _project_with_worktree(tmp_path, _ORACLE_CHECK)
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    oracles = Path(env['CONVOY_HOME']) / 'oracles' / 'project'
+    oracles.mkdir(parents=True)
+    (oracles / 'oracle1.py').write_text('raise SystemExit(0)\n', encoding='utf-8')
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    for cwd in (project, worktree):
+        result = decide(_stop_payload(cwd, transcript), env)
+        assert result.record is not None
+        assert result.record['outcome'] == 'completed', (cwd, result.record)
+        assert result.exit_code == HOOK_EXIT_SILENT
+
+
+@pytest.mark.parametrize('eol', [b'\r\n', b'\r'], ids=['crlf', 'cr'])
+def test_a_worktree_spec_differing_only_in_line_endings_is_judged(
+    tmp_path: Path, eol: bytes
+) -> None:
+    """MAJOR 2 (i): git's eol conversion is no difference in the gate."""
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    spec = worktree / '.convoy' / 'gate.toml'
+    spec.write_bytes(spec.read_bytes().replace(b'\r\n', b'\n').replace(b'\n', eol))
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(worktree, transcript), env)
+    assert result.record is not None and result.record['outcome'] == 'blocked'
+
+
+def test_a_differing_worktree_spec_is_refused_once_then_let_through(tmp_path: Path) -> None:
+    """MAJOR 2 (ii, iii): loud once, addressed to the operator; the retry stops, recorded."""
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    spec = worktree / '.convoy' / 'gate.toml'
+    spec.write_text(spec.read_text(encoding='utf-8').replace('"clean"', '"lax"'), encoding='utf-8')
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    first = run_hook(json.dumps(_stop_payload(worktree, transcript)).encode(), env)
+    assert first == HOOK_EXIT_FEEDBACK
+    retry_payload = _stop_payload(worktree, transcript, stop_hook_active=True)
+    retry = decide(retry_payload, env)
+    assert retry.exit_code == HOOK_EXIT_SILENT
+    assert retry.record is not None and retry.record['outcome'] == 'spec_changed'
+    assert run_hook(json.dumps(retry_payload).encode(), env) == HOOK_EXIT_SILENT
+    lines = _log_lines(project)
+    assert [line['outcome'] for line in lines] == ['spec_changed', 'spec_changed']
+    assert str(project.resolve()) in lines[0]['reason']
+    assert '--trust' not in lines[0]['reason']
+    # The orchestrator hears of it from the messenger, which reads the anchor's log.
+    messenger = decide(
+        _payload(
+            project,
+            tool_response={'agentId': lines[0]['agent_id']},
+            session_id=lines[0]['session_id'],
+        ),
+        env,
+    )
+    assert messenger.exit_code == HOOK_EXIT_FEEDBACK
+    assert 'REFUSED' in messenger.stderr and 'differs from the spec trusted for' in messenger.stderr
+
+
+def test_the_refusal_message_never_tells_the_subagent_to_trust(tmp_path: Path) -> None:
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    spec = worktree / '.convoy' / 'gate.toml'
+    spec.write_text(spec.read_text(encoding='utf-8') + '\n# edited\n', encoding='utf-8')
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(worktree, transcript), env)
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    assert '--trust' not in result.stderr
+    assert 'operator' in result.stderr
+    assert 'changed since this machine trusted it' not in result.stderr
+
+
+def test_a_session_in_a_linked_worktree_still_gates_its_agents_worktrees(tmp_path: Path) -> None:
+    """MAJOR 3, probe A: the session project S is a worktree of M; the agent's is made from S."""
+    main, _worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    session = tmp_path / 'session'
+    _git(main, 'worktree', 'add', '-q', '-b', 'session', str(session))
+    agent = session / '.claude' / 'worktrees' / 'agent-2'
+    _git(session, 'worktree', 'add', '-q', '-b', 'agent-2', str(agent))
+    (agent / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = {**_env_trusting(tmp_path, session), 'CLAUDE_PROJECT_DIR': str(session)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(agent, transcript), env)
+    assert result.record is not None
+    assert result.record['outcome'] == 'blocked'
+    assert result.record['workspace'] == str(agent.resolve())
+    assert result.record['anchor'] == str(session.resolve())
+
+
+def test_a_root_trusted_only_in_the_environment_still_gates(tmp_path: Path) -> None:
+    """MAJOR 3: an anchor that cannot vouch is judged in its own tree, and the verdict says so."""
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    (project / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = {
+        **_home(tmp_path),
+        'CLAUDE_PROJECT_DIR': str(project),
+        'CONVOY_TRUSTED_ROOTS': str(project),
+    }
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(worktree, transcript), env)
+    assert result.record is not None
+    assert result.record['outcome'] == 'blocked'
+    assert result.record['workspace'] == str(project.resolve())
+    assert result.record['fallback_from'] == str(worktree.resolve() / '.convoy' / 'gate.toml')
+    assert f'judged {project.resolve()}' in result.stderr
+    assert 'not vouched for' in result.stderr
+
+
+def test_a_green_in_another_tree_is_said_and_logged(tmp_path: Path) -> None:
+    """MAJOR 4: an untracked spec in the main checkout judges it; the pass says which tree."""
+    project = tmp_path / 'project'
+    project.mkdir()
+    _git(project, 'init', '-q', '-b', 'main')
+    (project / 'README').write_text('x\n', encoding='utf-8')
+    _git(project, 'add', '-A')
+    _git(project, 'commit', '-q', '-m', 'init')
+    _project(project, _check('clean', _RED_IF_BROKEN))  # untracked: not in the worktree
+    worktree = project / '.claude' / 'worktrees' / 'agent-3'
+    _git(project, 'worktree', 'add', '-q', '-b', 'agent-3', str(worktree))
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(worktree, transcript), env)
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and result.record['outcome'] == 'completed'
+    assert result.record['tree_mismatch'] is True
+    assert result.record['agent_tree'] == str(worktree.resolve())
+    assert f'judged {project.resolve()}' in result.stderr
+    assert str(worktree.resolve()) in result.stderr
+
+
+def test_a_green_in_the_agents_own_tree_says_nothing(tmp_path: Path) -> None:
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(worktree, transcript), env)
+    assert result.exit_code == HOOK_EXIT_SILENT and result.stderr == ''
+    assert result.record is not None and result.record['tree_mismatch'] is False
+
+
+def test_the_messenger_reuses_a_worktree_judges_verdict(tmp_path: Path) -> None:
+    """MINOR 5: the judge logs in the anchor, where the orchestrator's messenger looks."""
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    stop = _stop_payload(worktree, transcript, stop_hook_active=True)
+    assert run_hook(json.dumps(stop).encode(), env) == HOOK_EXIT_SILENT  # residual red, recorded
+    (judged,) = _log_lines(project)
+    messenger = decide(
+        _payload(
+            project, tool_response={'agentId': judged['agent_id']}, session_id=judged['session_id']
+        ),
+        env,
+    )
+    assert messenger.exit_code == HOOK_EXIT_FEEDBACK
+    assert messenger.record is not None and messenger.record['reused_from'] == judged['ts']
+    assert f'judged {worktree.resolve()}' in messenger.stderr
+
+
+def test_a_nul_byte_in_a_git_pointer_does_not_crash_the_hook(tmp_path: Path) -> None:
+    """MINOR 7."""
+    root = tmp_path / 'proj'
+    _project(root, _check('ok', _OK))
+    (root / '.git').write_text('gitdir: bad\x00path\n', encoding='utf-8')
+    result = decide(_payload(root), _home(tmp_path))
+    assert result.exit_code == HOOK_EXIT_SILENT
+    assert result.record is not None and result.record['outcome'] == 'untrusted'

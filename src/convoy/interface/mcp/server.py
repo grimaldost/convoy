@@ -45,6 +45,7 @@ from convoy.interface.gate_service import (
     gate_root,
     gate_usage_envelope,
     load_gate_spec_file,
+    oracles_root_for,
     resolve_gate_spec,
     run_gate,
     trust_status,
@@ -379,7 +380,9 @@ def _gate_impl(
                     f'the discovered gate spec {spec_path} is {status} on this machine; run '
                     f'`convoy gate --trust` there, or pass series_file explicitly'
                 )
-        spec = load_gate_spec_file(spec_path, os.environ, root=root)
+        # A worktree's oracles are its anchor's, never its own directory name's.
+        oracles_root = None if root is None else oracles_root_for(root, os.environ)
+        spec = load_gate_spec_file(spec_path, os.environ, root=oracles_root)
     except (OSError, UnicodeDecodeError, SpecError) as exc:
         return gate_usage_envelope(exc, error_kind=error_kind(exc))
     try:
@@ -412,9 +415,10 @@ async def convoy_gate(
                 'Optional absolute path to the file holding the [[checks]] to run: a full '
                 'convoy series.toml, or a minimal file carrying only [series] id and '
                 '[[checks]]. Omitted, the project gate spec is used — '
-                '$CLAUDE_PROJECT_DIR/.convoy/gate.toml, then .convoy/gate.toml in the '
-                'workspace and its parents; none found is a usage result. A relative '
-                'path resolves against the server working directory, so prefer absolute.'
+                '.convoy/gate.toml in the workspace and its parents, nearest first, then '
+                '$CLAUDE_PROJECT_DIR/.convoy/gate.toml; none found is a usage result. A '
+                'relative path resolves against the server working directory, so prefer '
+                'absolute.'
             )
         ),
     ] = None,

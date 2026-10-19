@@ -1180,3 +1180,39 @@ def test_convoy_gate_discovery_requires_the_machine_to_trust_the_project(
     trust_project(tmp_path, dict(os.environ))
     result = asyncio.run(srv.convoy_gate(workspace=str(tmp_path)))
     assert result['ok'] is True
+
+
+def test_convoy_gate_in_a_worktree_runs_the_projects_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CONV-B75 review, MAJOR 1: the default oracles dir keys on the worktree's anchor."""
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    monkeypatch.delenv('CONVOY_ORACLES', raising=False)
+    from convoy.interface.gate_service import trust_project
+
+    project = tmp_path / 'project'
+    (project / '.convoy').mkdir(parents=True)
+    oracle_run = f'"{_GATE_PY}" "${{CONVOY_ORACLES}}/oracle1.py"'.replace('\\', '\\\\')
+    (project / '.convoy' / 'gate.toml').write_text(
+        '[series]\nid = "mcp-gate"\n\n[[checks]]\nname = "oracle"\n'
+        f'run = "{oracle_run.replace(chr(34), chr(92) + chr(34))}"\n'
+        'asset = "${CONVOY_ORACLES}/oracle1.py"\nblocking = true\nindependent = true\n',
+        encoding='utf-8',
+    )
+    git = ['git', '-c', 'user.name=T', '-c', 'user.email=t@example.com']
+    for args in (['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'spec']):
+        subprocess.run([*git, *args], cwd=project, check=True, capture_output=True)
+    worktree = project / '.claude' / 'worktrees' / 'agent-abc123'
+    subprocess.run(
+        [*git, 'worktree', 'add', '-q', '-b', 'agent', str(worktree)],
+        cwd=project,
+        check=True,
+        capture_output=True,
+    )
+    oracles = Path(os.environ['CONVOY_HOME']) / 'oracles' / 'project'
+    oracles.mkdir(parents=True)
+    (oracles / 'oracle1.py').write_text('raise SystemExit(0)\n', encoding='utf-8')
+    trust_project(project, dict(os.environ))
+    for tree in (project, worktree):
+        result = asyncio.run(srv.convoy_gate(workspace=str(tree)))
+        assert result['outcome'] == 'completed', (tree, result)

@@ -38,10 +38,11 @@ from convoy.interface.gate_service import (
     gate_spec_env,
     gate_usage_envelope,
     load_gate_spec_file,
+    oracles_root_for,
     resolve_gate_spec,
     run_gate,
+    trust_decision,
     trust_project,
-    trust_status,
 )
 from convoy.interface.git import Git, GitError
 from convoy.interface.hook import run_hook
@@ -357,8 +358,8 @@ def gate(
             help=(
                 'The file holding the [[checks]] to run: a full series.toml, or a minimal '
                 '[series] id + [[checks]] file. Omitted, the project gate spec is used: '
-                '$CLAUDE_PROJECT_DIR/.convoy/gate.toml, then .convoy/gate.toml in the '
-                'workspace and its parents; none found is a usage failure.'
+                '.convoy/gate.toml in the workspace and its parents, nearest first, then '
+                '$CLAUDE_PROJECT_DIR/.convoy/gate.toml; none found is a usage failure.'
             ),
             show_default=False,
         ),
@@ -506,7 +507,9 @@ def gate(
     try:
         spec_path = resolve_gate_spec(series_file, target, os.environ)
         root = gate_root(spec_path, target) if series_file is None else None
-        spec = load_gate_spec_file(spec_path, os.environ, root=root)
+        # A worktree's oracles are its anchor's, never its own directory name's.
+        oracles_root = None if root is None else oracles_root_for(root, os.environ)
+        spec = load_gate_spec_file(spec_path, os.environ, root=oracles_root)
     except (OSError, UnicodeDecodeError, SpecError) as exc:
         raise _gate_usage_exit(exc, machine) from exc
     if series_file is None:
@@ -514,11 +517,18 @@ def gate(
         # not run it until the project is trusted, and a silent difference between the
         # two surfaces is exactly what an operator cannot see. Say so.
         try:
-            status = trust_status(gate_root(spec_path, target), spec_path, os.environ)
+            decision = trust_decision(gate_root(spec_path, target), spec_path, os.environ)
         except SpecError as exc:
-            status = 'untrusted'
+            decision = None
             typer.echo(f'note: {exc}', err=True)
-        if status == 'changed':
+        status = 'untrusted' if decision is None else decision.status
+        if status == 'differs' and decision is not None:
+            typer.echo(
+                f"note: this worktree's gate spec differs from the one trusted for "
+                f'{decision.anchor}; the hook refuses it until the two match',
+                err=True,
+            )
+        elif status == 'changed':
             typer.echo(
                 'note: the gate spec changed since the hook was armed; run `convoy gate '
                 '--trust` again to re-arm it',
@@ -967,15 +977,18 @@ def hook() -> None:
     not gated. On ``PostToolUse`` for ``Agent``/``Task`` (the messenger, synchronous
     dispatch) the judge's verdict is reused and a residual red is exit 2 with the brief
     shown to the orchestrator, its cue to dispatch a fix subagent. Nothing happens
-    unless the project has a gate spec — ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml``, then
-    ``.convoy/gate.toml`` from the event's ``cwd`` upward — and this machine trusts the
-    project (``convoy gate --init`` / ``--trust``). Green: exit 0 and no output. A gate
-    that cannot run is exit 2 with a one-line reason, and so is a firing that waits out
-    its bound for another firing gating the same tree (``.convoy/judge.lock``): up to
-    600 s, less when its own gate's worst case needs the time. A
-    ``[convoy-phase: <tag>]`` marker in the subagent's brief scopes the gate. Every firing
-    appends one JSON line to ``.convoy/hook.log``. Exit codes are the hook protocol's (0
-    silent, 2 feedback), not convoy's.
+    unless the project has a gate spec — ``.convoy/gate.toml`` from the event's ``cwd``
+    upward, nearest first, then ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` — and this
+    machine trusts the project (``convoy gate --init`` / ``--trust``); a linked git
+    worktree runs on its session project's or main checkout's entry while its spec
+    matches the trusted one. Green: exit 0 and no output, except one stderr line naming
+    the judged tree when it is not the one the agent worked in. A gate that cannot run is
+    exit 2 with a one-line reason, and so is a firing that waits out its bound for
+    another firing gating the same tree (``.convoy/judge.lock``): up to 600 s, less when
+    its own gate's worst case needs the time. A ``[convoy-phase: <tag>]`` marker in the
+    subagent's brief scopes the gate. Every firing appends one JSON line to
+    ``.convoy/hook.log`` (a worktree's, to its anchor's). Exit codes are the hook
+    protocol's (0 silent, 2 feedback), not convoy's.
     """
     raise typer.Exit(run_hook(sys.stdin.buffer.read(), os.environ))
 

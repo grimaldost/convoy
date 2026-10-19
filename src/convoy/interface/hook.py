@@ -3,7 +3,9 @@
 Two hook events, one gate, two legs:
 
 - ``SubagentStop`` is the judge. When a subagent tries to finish, the hook runs the
-  project's gate in the tree the spec governs. Green: exit 0, nothing said. Blocking
+  project's gate in the tree the spec governs. Green: exit 0, nothing said (but one
+  stderr line, outside the model's context, when that tree is not the one the agent
+  worked in). Blocking
   red: exit 2 with the repair brief on stderr, which Claude Code hands to the SUBAGENT as
   the reason it may not stop yet — the implementer repairs its own work, the same shape
   as a governed run's fix spawn — once: on the retry (``stop_hook_active``) a residual
@@ -22,6 +24,17 @@ Two hook events, one gate, two legs:
 
 The vocabulary is the hook protocol's, not convoy's: exit 0 means nothing to say, exit
 2 means stderr is feedback. Nothing enters a model's context on a green gate.
+
+Which spec, which tree. The nearest ``.convoy/gate.toml`` above the event's ``cwd`` is
+judged, in the tree it governs, so an agent in a linked git worktree that carries the
+spec is judged in its worktree. Such a worktree runs on its anchor's trust
+(``gate_service.trust_anchor``: the session project, else git's main checkout) while its
+spec matches the anchor's trusted one; its verdict is logged in the anchor, which
+outlives the worktree and is where the orchestrator's messenger looks, and its default
+oracles dir is the anchor's. A worktree spec that differs is refused loudly once and let
+through on the retry, recorded. When the nearest spec is not vouched for at all, the tree
+discovery judged before CONV-B75 is judged instead, if it is trusted, and the verdict
+says so: a tree that was gated never goes silent.
 
 Three switches, all before anything executes. The presence of a project spec is the
 per-project switch: with none found the hook exits 0 silently, so shipping it in the
@@ -57,9 +70,10 @@ subagents that edit one tree at the same time need a tree each (a worktree per a
 because each gate judges whatever the others have half-written.
 
 Attestation: one JSON line per firing is appended to ``.convoy/hook.log`` under the
-project root (the scaffold gitignores it): the leg, the event, the verdict, the hook's
-exit code, the subagent's id, type and dated model, the phases, the retry flag, the
-per-check facts, the gate's wall-clock, the spec's path and hash, the workspace — so an
+project root, or a worktree's anchor (the scaffold gitignores it): the leg, the event, the
+verdict, the hook's exit code, the subagent's id, type and dated model, the phases, the
+retry flag, the per-check facts, the gate's wall-clock, the spec's path and hash, the
+workspace, the anchor, the agent's own tree and whether it was the one judged — so an
 experiment counts firings from the log rather than from transcripts, and the messenger
 finds the judge's verdict there. Each append holds ``.convoy/hook.log.lock``, so no two
 lines interleave. Writing the log is best-effort and never changes the verdict.
@@ -81,14 +95,17 @@ from convoy import __version__
 from convoy.core.gate import GateUsageError, repair_brief
 from convoy.core.spec import SpecError
 from convoy.interface.gate_service import (
+    GATE_SPEC_RELPATH,
     HOOK_MARGIN_SECONDS,
     HOOK_TIMEOUT_SECONDS,
     GateOutcome,
+    fallback_gate,
     find_gate_spec,
     gate_root,
     load_gate_spec_file,
+    oracles_root_for,
     run_gate,
-    trust_status,
+    trust_decision,
 )
 from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS
 from convoy.interface.workspace_lock import JudgeBusyError, judge_lock, lock_path
@@ -146,11 +163,38 @@ _PHASE_MARKER = re.compile(r'\[convoy-phase:\s*([^\]]+)\]')
 
 @dataclass(frozen=True)
 class HookResult:
-    """What the hook decided: the exit code, what to say on stderr, and the log record."""
+    """What the hook decided: the exit code, what to say on stderr, the log record and its log.
+
+    *log_path* is where :func:`run_hook` appends the record; ``None`` when no tree was found
+    to write it in.
+    """
 
     exit_code: int
     stderr: str
     record: dict[str, Any] | None
+    log_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class JudgedTree:
+    """What a firing judges by and where: the spec, the tree its checks run in, and the rest.
+
+    *anchor* is the tree a linked worktree's trust came from (``gate_service.trust_anchor``):
+    the verdict is logged there, because the worktree is deleted when its agent is done and
+    the orchestrator's messenger looks there. *oracles_root* keys the default oracles dir.
+    *agent_tree* is the working tree the event's ``cwd`` lies in; *mismatch* says it is not
+    the one judged. *fallback_from* is the nearest spec, when it was untrusted and an older
+    discovery's spec was judged instead (``gate_service.fallback_gate``).
+    """
+
+    spec: Path
+    workspace: Path
+    oracles_root: Path
+    log: Path
+    anchor: Path | None
+    agent_tree: Path
+    mismatch: bool
+    fallback_from: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -288,6 +332,50 @@ def log_path_for(spec_path: Path, cwd: Path) -> Path:
     return gate_root(spec_path, cwd) / HOOK_LOG_RELPATH
 
 
+def working_tree_of(path: Path) -> Path | None:
+    """The nearest directory at or above *path* holding a ``.git``: the working tree it lies in."""
+    resolved = Path(path).resolve()
+    return next((d for d in (resolved, *resolved.parents) if (d / '.git').exists()), None)
+
+
+def _mismatch(cwd: Path, workspace: Path) -> bool:
+    """Whether the gate runs in another working tree than the one the event's ``cwd`` is in.
+
+    A subdirectory of the judged tree is the same tree; a worktree nested under it is not.
+    Outside git, a ``cwd`` outside the workspace is a mismatch.
+    """
+    own, judged = working_tree_of(cwd), working_tree_of(workspace)
+    if own is None or judged is None:
+        return not Path(cwd).resolve().is_relative_to(Path(workspace).resolve())
+    return own != judged
+
+
+def _judged_line(spec: Any, workspace: Any) -> str:
+    """The line that names the tree a verdict is about and the spec it was judged by."""
+    return f'convoy gate: judged {workspace} against {spec}\n'
+
+
+def _notice(tree: JudgedTree) -> str:
+    """What a verdict says about the tree it judged, when that is not the agent's own ('' else).
+
+    Said on a green too: a red that exists only in the agent's tree passes unseen when the
+    gate ran in another one, and this line is the trace of that.
+    """
+    lines = ''
+    if tree.fallback_from is not None:
+        lines += (
+            f'convoy gate: the nearest gate spec {tree.fallback_from} is not vouched for by a '
+            f'trusted spec, so the gate ran in {tree.workspace} with {tree.spec} instead\n'
+        )
+    if tree.mismatch:
+        lines += (
+            _judged_line(tree.spec, tree.workspace).rstrip('\n')
+            + f' — not {tree.agent_tree}, the tree this agent worked in; a red only there '
+            f'was not judged\n'
+        )
+    return lines
+
+
 def judge_lock_path(spec_path: Path, cwd: Path) -> Path:
     """The judge lock of the tree *spec_path* governs: beside its hook log, in ``.convoy/``.
 
@@ -346,7 +434,7 @@ def latest_stop_record(
             and entry.get('event') == 'SubagentStop'
             and entry.get('agent_id') == agent_id
             and entry.get('session_id') == session_id
-            and entry.get('outcome') in ('completed', 'blocked', 'skipped')
+            and entry.get('outcome') in ('completed', 'blocked', 'skipped', 'spec_changed')
         ):
             latest = entry
     if latest is None:
@@ -363,8 +451,7 @@ def latest_stop_record(
 
 def _gate(
     payload: Mapping[str, Any],
-    spec_path: Path,
-    workspace: Path,
+    tree: JudgedTree,
     phases: tuple[str, ...],
     env: Mapping[str, str],
     hold: Hold,
@@ -375,10 +462,11 @@ def _gate(
     that could not run, but recorded as ``busy``, not ``usage``: nothing is wrong with the
     spec or the tree, another firing was gating it.
     """
+    spec_path, workspace = tree.spec, tree.workspace
     started = time.monotonic()
     try:
         # Loaded before the lock is taken: how long a firing may wait depends on its gate.
-        spec = load_gate_spec_file(spec_path, env, root=workspace)
+        spec = load_gate_spec_file(spec_path, env, root=tree.oracles_root)
         hold(judge_lock_path(spec_path, workspace), len(spec.checks) * spec.timeout_seconds)
         started = time.monotonic()
         outcome = run_gate(spec, workspace, phases)
@@ -433,20 +521,9 @@ def _verdict_record(
     )
 
 
-def _judged(spec_path: Path, workspace: Path) -> str:
-    """The line that names the tree a verdict is about and the spec it was judged by.
-
-    An agent working in a worktree and its orchestrator in the main checkout may each be
-    shown a verdict; this says which tree it judged, so a mismatch with the tree the
-    reader worked in is visible.
-    """
-    return f'convoy gate: judged {workspace} against {spec_path}\n'
-
-
 def _decide_stop(
     payload: Mapping[str, Any],
-    spec_path: Path,
-    workspace: Path,
+    tree: JudgedTree,
     env: Mapping[str, str],
     hold: Hold,
 ) -> HookResult:
@@ -470,7 +547,7 @@ def _decide_stop(
         )
     retry = bool(payload.get('stop_hook_active'))
     phases = parse_phase_markers(facts.brief)
-    gated = _gate(payload, spec_path, workspace, phases, env, hold)
+    gated = _gate(payload, tree, phases, env, hold)
     if isinstance(gated, HookResult):
         if retry:
             # The gate could not run on the retry either; the subagent cannot act on
@@ -493,13 +570,13 @@ def _decide_stop(
     record = _verdict_record(payload, outcome, phases, gate_ms, series_id)
     record['model'] = record['model'] or facts.model
     if not outcome.verdict.blocking_red:
-        return HookResult(HOOK_EXIT_SILENT, '', record)
+        return HookResult(HOOK_EXIT_SILENT, _notice(tree), record)
     if retry:
         # One repair round is the bound: on the retry a residual red is recorded and the
         # subagent may stop, so a red it cannot fix never holds it forever.
         record['blocked_stop'] = False
         record['reason'] = 'residual red after the repair round; the subagent may stop'
-        return HookResult(HOOK_EXIT_SILENT, '', record)
+        return HookResult(HOOK_EXIT_SILENT, _notice(tree), record)
     record['blocked_stop'] = True
     scope = f' (phase {", ".join(phases)})' if phases else ''
     header = (
@@ -508,7 +585,10 @@ def _decide_stop(
     )
     return HookResult(
         HOOK_EXIT_FEEDBACK,
-        header + _judged(spec_path, workspace) + repair_brief(outcome.verdict),
+        header
+        + _judged_line(tree.spec, tree.workspace)
+        + (_notice(replace(tree, mismatch=False)))
+        + repair_brief(outcome.verdict),
         record,
     )
 
@@ -524,8 +604,7 @@ def _orchestrator_header(agent_id: str, phases: tuple[str, ...]) -> str:
 
 def _decide_dispatch(
     payload: Mapping[str, Any],
-    spec_path: Path,
-    workspace: Path,
+    tree: JudgedTree,
     env: Mapping[str, str],
     hold: Hold,
 ) -> HookResult:
@@ -541,9 +620,9 @@ def _decide_dispatch(
             _record(payload, outcome='skipped', reason=f'dispatch status {status!r}'),
         )
     agent_id = _string(tool_response, 'agentId')
-    judged = latest_stop_record(
-        log_path_for(spec_path, workspace), agent_id, _string(payload, 'session_id')
-    )
+    # A worktree agent's judge logs in the worktree's anchor, the tree this firing found:
+    # its verdict is reused here rather than a second gate run in this tree.
+    judged = latest_stop_record(tree.log, agent_id, _string(payload, 'session_id'))
     if judged is not None:
         phases = tuple(str(tag) for tag in judged.get('phases') or ())
         brief = str(judged.get('repair_brief') or '')
@@ -554,26 +633,39 @@ def _decide_dispatch(
             reused_from=judged.get('ts'),
             counts=judged.get('counts'),
             repair_brief=brief,
+            judged_workspace=judged.get('workspace'),
+            judged_spec=judged.get('spec'),
+            judged_tree_mismatch=judged.get('tree_mismatch'),
         )
+        line = _judged_line(judged.get('spec'), judged.get('workspace'))
+        if judged['outcome'] == 'spec_changed':
+            record['reason'] = judged.get('reason')
+            who = f'subagent {agent_id}' if agent_id else 'the subagent'
+            return HookResult(
+                HOOK_EXIT_FEEDBACK,
+                f'convoy gate: REFUSED for {who} — its work was not judged.\n'
+                f'{judged.get("reason") or ""}\n',
+                record,
+            )
         if judged['outcome'] != 'blocked':
-            return HookResult(HOOK_EXIT_SILENT, '', record)
+            notice = line if judged.get('tree_mismatch') else ''
+            return HookResult(HOOK_EXIT_SILENT, notice, record)
         return HookResult(
-            HOOK_EXIT_FEEDBACK,
-            _orchestrator_header(agent_id, phases) + _judged(spec_path, workspace) + brief,
-            record,
+            HOOK_EXIT_FEEDBACK, _orchestrator_header(agent_id, phases) + line + brief, record
         )
     phases = parse_phase_markers(_string(payload.get('tool_input'), 'prompt'))
-    gated = _gate(payload, spec_path, workspace, phases, env, hold)
+    gated = _gate(payload, tree, phases, env, hold)
     if isinstance(gated, HookResult):
         return gated
     outcome, gate_ms, series_id = gated
     record = _verdict_record(payload, outcome, phases, gate_ms, series_id)
     if not outcome.verdict.blocking_red:
-        return HookResult(HOOK_EXIT_SILENT, '', record)
+        return HookResult(HOOK_EXIT_SILENT, _notice(tree), record)
     return HookResult(
         HOOK_EXIT_FEEDBACK,
         _orchestrator_header(agent_id, phases)
-        + _judged(spec_path, workspace)
+        + _judged_line(tree.spec, tree.workspace)
+        + _notice(replace(tree, mismatch=False))
         + repair_brief(outcome.verdict),
         record,
     )
@@ -610,23 +702,53 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
     if spec_path is None:
         return HookResult(HOOK_EXIT_SILENT, '', None)
 
+    nearest = spec_path
     workspace = gate_root(spec_path, cwd)
-    stamp = {
-        'spec': str(spec_path),
-        'spec_sha256': spec_sha256(spec_path),
-        'workspace': str(workspace),
-    }
     try:
-        status = trust_status(workspace, spec_path, env)
+        decision = trust_decision(workspace, spec_path, env)
+        fallback = (
+            fallback_gate(spec_path, workspace, decision.anchor, env)
+            if decision.status == 'untrusted'
+            else None
+        )
     except SpecError as exc:
         return _finish(
             HookResult(
                 HOOK_EXIT_SILENT,
                 '',
-                _record(payload, outcome='untrusted', reason=str(exc), **stamp),
+                _record(
+                    payload, outcome='untrusted', reason=str(exc), **_stamp(spec_path, workspace)
+                ),
             )
         )
-    if status == 'untrusted':
+    if fallback is not None:
+        # The nearest spec is not vouched for, and the tree discovery judged before
+        # CONV-B75 is trusted: that tree is judged, and the verdict says so, rather than
+        # a tree that was gated going silent.
+        spec_path, workspace, decision = fallback
+    tree = JudgedTree(
+        spec=spec_path,
+        workspace=workspace,
+        oracles_root=oracles_root_for(workspace, env),
+        log=(decision.anchor or workspace) / HOOK_LOG_RELPATH,
+        anchor=decision.anchor,
+        agent_tree=working_tree_of(cwd) or cwd.resolve(),
+        mismatch=_mismatch(cwd, workspace),
+        fallback_from=nearest if fallback is not None else None,
+    )
+    stamp = {
+        **_stamp(spec_path, workspace),
+        'anchor': str(tree.anchor) if tree.anchor is not None else None,
+        'agent_tree': str(tree.agent_tree),
+        'tree_mismatch': tree.mismatch,
+    }
+    if tree.fallback_from is not None:
+        stamp['fallback_from'] = str(tree.fallback_from)
+
+    def finish(result: HookResult) -> HookResult:
+        return _finish(replace(result, log_path=tree.log))
+
+    if decision.status == 'untrusted':
         return _finish(
             HookResult(
                 HOOK_EXIT_SILENT,
@@ -642,24 +764,26 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
                 ),
             )
         )
-    if status == 'changed':
+    if decision.status == 'changed':
         message = (
             f'convoy hook: the gate spec {spec_path} changed since this machine trusted it; '
             f'review it and re-run `convoy gate --trust` to arm it again'
         )
-        return _finish(
+        return finish(
             HookResult(
                 HOOK_EXIT_FEEDBACK,
                 message + '\n',
                 _record(payload, outcome='spec_changed', reason=message, **stamp),
             )
         )
+    if decision.status == 'differs':
+        return finish(_differs(payload, event, tree, stamp))
     if lock_path(workspace).exists():
         message = (
             f'convoy hook: a convoy run holds {workspace} (lock present); the hook does not '
             f'gate a driven workspace'
         )
-        return _finish(
+        return finish(
             HookResult(
                 HOOK_EXIT_FEEDBACK,
                 message + '\n',
@@ -668,22 +792,68 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
         )
 
     if event == 'SubagentStop':
-        result = _decide_stop(payload, spec_path, workspace, env, hold)
+        result = _decide_stop(payload, tree, env, hold)
     else:
-        result = _decide_dispatch(payload, spec_path, workspace, env, hold)
+        result = _decide_dispatch(payload, tree, env, hold)
     if result.record is not None:
         result.record.update(stamp)
-    return _finish(result)
+    return finish(result)
 
 
-def append_log(spec_path: Path, cwd: Path, record: Mapping[str, Any]) -> str | None:
-    """Append one JSON line to the project's hook log; return a message on failure.
+def _stamp(spec_path: Path, workspace: Path) -> dict[str, Any]:
+    return {
+        'spec': str(spec_path),
+        'spec_sha256': spec_sha256(spec_path),
+        'workspace': str(workspace),
+    }
+
+
+def _differs(
+    payload: Mapping[str, Any], event: str, tree: JudgedTree, stamp: Mapping[str, Any]
+) -> HookResult:
+    """A worktree whose spec is not its anchor's: refused loudly once, then let through.
+
+    The difference is the operator's to settle (the worktree was made from a commit whose
+    spec is not the trusted one, or someone edited it), not the subagent's: the message is
+    addressed to the operator and never tells the subagent to trust anything, which in a
+    worktree would pin the worktree's own spec. On the judge's retry the subagent stops
+    unjudged and the refusal is recorded, where the messenger reports it to the
+    orchestrator — a refusal the subagent cannot act on must not hold it forever.
+    """
+    anchor = tree.anchor
+    message = (
+        f'convoy hook: for the operator — the gate spec {tree.spec} in the worktree '
+        f'{tree.workspace} differs from the spec trusted for {anchor} '
+        f'({(anchor or tree.workspace) / GATE_SPEC_RELPATH}), so the gate was not run. The '
+        f'worktree must carry the trusted spec: commit it where the worktree is made from, or '
+        f'review the difference. Nothing here is for the subagent to repair.'
+    )
+    retry = event == 'SubagentStop' and bool(payload.get('stop_hook_active'))
+    if retry:
+        record = _record(
+            payload,
+            outcome='spec_changed',
+            reason=message + ' Refused again on the retry; the subagent stopped unjudged.',
+            blocked_stop=False,
+            **stamp,
+        )
+        return HookResult(HOOK_EXIT_SILENT, '', record)
+    tail = (
+        ' Stopping again lets the subagent finish; the refusal is recorded for the orchestrator.'
+        if event == 'SubagentStop'
+        else ''
+    )
+    record = _record(payload, outcome='spec_changed', reason=message, **stamp)
+    return HookResult(HOOK_EXIT_FEEDBACK, message + tail + '\n', record)
+
+
+def append_log(log_path: Path, record: Mapping[str, Any]) -> str | None:
+    """Append one JSON line to the hook log at *log_path*; return a message on failure.
 
     Under ``hook.log.lock``: ``open('a')`` is not atomic across processes on Windows, and
     a firing that gave up on the judge lock writes its line while the holder may be
     writing one.
     """
-    log_path = log_path_for(spec_path, cwd)
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with (
@@ -727,16 +897,14 @@ def run_hook(raw: bytes, env: Mapping[str, str]) -> int:
         result = decide(payload, env, hold)
         # An untrusted project gets no file written into it: the machine refused it, and a
         # log line in a clone's tree would be the first trace the refusal left.
-        if result.record is not None and result.record.get('outcome') != 'untrusted':
-            cwd = Path(_string(payload, 'cwd') or '.')
-            try:
-                spec_path = find_gate_spec(cwd, env)
-            except SpecError:
-                spec_path = None
-            if spec_path is not None:
-                failure = append_log(spec_path, cwd, result.record)
-                if failure is not None:
-                    sys.stderr.write(failure)
+        if (
+            result.record is not None
+            and result.record.get('outcome') != 'untrusted'
+            and result.log_path is not None
+        ):
+            failure = append_log(result.log_path, result.record)
+            if failure is not None:
+                sys.stderr.write(failure)
     if result.stderr:
         sys.stderr.write(result.stderr)
     return result.exit_code

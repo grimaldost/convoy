@@ -249,7 +249,20 @@ def test_the_project_dir_spec_is_the_fallback_when_the_walk_finds_none(tmp_path:
 
 
 def test_the_walk_wins_over_the_project_dir(tmp_path: Path) -> None:
-    """A spec on the walk from the payload cwd is found first, untrusted here: a skip."""
+    """A spec on the walk from the payload cwd is found first: trusted here, it delegates."""
+    project = tmp_path / 'project'
+    _spec(project)
+    nearer = tmp_path / 'nearer'
+    _spec(nearer)
+    env = {**_home(tmp_path), 'CLAUDE_PROJECT_DIR': str(project)}
+    trust_project(nearer, env)
+    delegate = _Recorder()
+    _guard(_raw(_stop(nearer)), env, nearer, delegate)
+    assert len(delegate.calls) == 1
+
+
+def test_an_untrusted_nearer_spec_delegates_when_the_project_is_trusted(tmp_path: Path) -> None:
+    """The full hook falls back to the trusted project's spec; the guard must not skip it."""
     project = tmp_path / 'project'
     _spec(project)
     nearer = tmp_path / 'nearer'
@@ -258,7 +271,7 @@ def test_the_walk_wins_over_the_project_dir(tmp_path: Path) -> None:
     trust_project(project, env)
     delegate = _Recorder()
     _guard(_raw(_stop(nearer)), env, nearer, delegate)
-    assert delegate.calls == []
+    assert len(delegate.calls) == 1
 
 
 def test_the_walk_finds_a_parents_spec(tmp_path: Path) -> None:
@@ -341,7 +354,9 @@ def test_a_skipped_worktree_firing_is_one_the_full_hook_is_silent_on(
     raw = _raw(_stop(worktree))
     delegate = _Recorder()
     _guard(raw, env, Path.cwd(), delegate)
-    assert bool(delegate.calls) == (trust in ('listed', 'unpinned', 'changed'))
+    # A vouched-for main checkout cannot vouch for the worktree's spec, but the hook falls
+    # back to judging the main checkout itself, so the guard must hand the firing on.
+    assert bool(delegate.calls) == (trust in ('listed', 'vouched', 'unpinned', 'changed'))
     if delegate.calls:
         return
     payload = parse_event(raw)
@@ -350,6 +365,32 @@ def test_a_skipped_worktree_firing_is_one_the_full_hook_is_silent_on(
     assert result.exit_code == 0 and result.stderr == ''
     assert result.record is None or result.record.get('outcome') == 'untrusted'
     assert not (worktree / 'side-effect.txt').exists()
+
+
+def test_a_session_in_a_linked_worktree_delegates_its_agents_firings(tmp_path: Path) -> None:
+    """Probe A: the session project is a worktree of M and trusted; M is not listed."""
+    main = tmp_path / 'main'
+    _worktree_of(main)
+    session = tmp_path / 'session'
+    _git(main, 'worktree', 'add', '-q', '-b', 'session', str(session))
+    agent = session / '.claude' / 'worktrees' / 'a'
+    _git(session, 'worktree', 'add', '-q', '-b', 'a', str(agent))
+    env = {**_home(tmp_path), 'CLAUDE_PROJECT_DIR': str(session)}
+    trust_project(session, env)
+    delegate = _Recorder()
+    _guard(_raw(_stop(agent)), env, agent, delegate)
+    assert len(delegate.calls) == 1
+
+
+def test_a_nul_byte_in_a_git_pointer_does_not_skip_a_trusted_firing(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    _spec(root)
+    (root / '.git').write_text('gitdir: bad\x00path\n', encoding='utf-8')
+    env = _home(tmp_path)
+    trust_project(root, env)
+    delegate = _Recorder()
+    _guard(_raw(_stop(root)), env, root, delegate)
+    assert len(delegate.calls) == 1
 
 
 # --- parity with the full hook ------------------------------------------------------------------
