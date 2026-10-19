@@ -1219,22 +1219,25 @@ was observed. [probe 2026-10-08]
 **Change.** Option (c), both. Discovery walks up from the payload `cwd` first and uses the
 nearest `.convoy/gate.toml`, falling back to `$CLAUDE_PROJECT_DIR` only when the walk finds
 none (`gate_service.find_gate_spec`, mirrored in `hook_guard.py`). Trust already keyed on the
-root and the spec's sha256; a linked git worktree that is not itself listed now inherits its
-main checkout's entry for the pinned hash only (`gate_service.main_checkout_of`, read from
-the `.git` file, `commondir` and the `gitdir` back-link, no git process): the same hash is
-`trusted`, another is `changed` (loud), and an unpinned entry or a vouched root passes
-nothing on. A blocked verdict to the subagent or the orchestrator carries
-`convoy gate: judged <tree> against <spec>`. The skill's judge-lock paragraph now says when a
-worktree agent is judged in its worktree and the two cases that still judge the main
-checkout. Tests: `tests/test_hook.py` (a committed spec, a red only in the worktree, blocked
-and logged in the worktree), `tests/test_gate_service.py`, `tests/test_hook_guard.py`.
-**(consumer-affecting: discovery order)**
+root and the spec's sha256. A linked git worktree that is not itself listed inherits from its
+anchor (`gate_service.trust_anchor`): the session project when it is trusted and the worktree
+lies in it or shares its repository, else git's main checkout (`git_layout` reads the `.git`
+file, `commondir` and the `gitdir` back-link, no git process). The anchor's spec must still
+match its pin, and the worktree's must match the anchor's with line endings normalised
+(`spec_text_digest`): `trusted`, else `differs`, refused once to the operator and let through
+on the retry, logged. An anchor that cannot vouch (unpinned, vouched-only, missing spec)
+leads to `fallback_gate`: the tree the old order judged is judged, and the verdict says so.
+A worktree's verdict is logged in its anchor, where the messenger reuses it, and its oracles
+default to the anchor's (hook, CLI, MCP). Every blocked verdict carries
+`convoy gate: judged <tree> against <spec>`; a green in another tree than the agent's writes
+it to stderr and `hook.log` records `tree_mismatch`. **(consumer-affecting: discovery order,
+new `hook.log` fields)**
 
-**Status.** Built on `fix/conv-b75-worktree-gate`, unreleased; no version bump until the owner
-sets the measurement window. Not covered: a spec untracked in the main checkout (the
-worktree has none, so the walk reaches the main checkout's), and the messenger leg, which
-runs in the orchestrator's `cwd` and does not find a verdict the judge logged in the
-worktree. Both are visible through the judged-tree line, not fixed.
+**Status.** Built, unreleased; no version bump until the owner sets the measurement window.
+Not covered: a spec untracked in the main checkout is not in the worktree, so the gate runs
+in the main checkout and a red only in the worktree passes without a word to the subagent or
+the orchestrator; only `hook.log` (`tree_mismatch: true`) and a stderr line outside the
+model's context record it.
 
 **Effort** M · **Source** [probe 2026-10-08]
 

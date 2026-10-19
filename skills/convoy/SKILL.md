@@ -438,14 +438,19 @@ per agent), because each gate judges whatever the others have half-written.
 
 A worktree agent is judged in its own worktree when the worktree carries the spec, that is,
 when `.convoy/gate.toml` is committed on the branch the worktree checks out: the judge walks
-up from the agent's `cwd` and stops at the nearest spec. The worktree runs on its main
-checkout's trust entry, and only while its spec has the hash that entry pins; a worktree
-spec that differs is refused loudly, like a changed spec, and an entry with no pin or a root
-vouched for in `CONVOY_TRUSTED_ROOTS` passes nothing on. Two cases still judge the main
-checkout: a spec that is untracked there (the worktree does not have it, so the walk reaches
-the main checkout's), and the messenger, which runs in the orchestrator's `cwd` and does not
-find a verdict the judge logged in the worktree. A blocked verdict names the tree it judged
-(`convoy gate: judged <tree> against <spec>`), so either case is visible in the brief.
+up from the agent's `cwd` and stops at the nearest spec. The worktree runs on its anchor's
+trust entry — the session project when it is trusted and the worktree lies in it or shares
+its repository, else git's main checkout — only while its spec matches the anchor's pinned
+one (line endings aside). A worktree spec that differs is refused once, addressed to the
+operator, and the subagent may stop on the retry; the refusal is logged and the messenger
+reports it. A worktree's verdict is logged in the anchor's `.convoy/hook.log`, where the
+orchestrator's messenger reuses it, and its oracles default to the anchor's. When no anchor
+can vouch for the worktree's spec (an unpinned entry, a root only in `CONVOY_TRUSTED_ROOTS`),
+the anchor's own tree is judged and the verdict says so. One case still judges the main
+checkout: a spec that is untracked there, which the worktree does not have. A red that
+exists only in the worktree then passes, and the subagent and the orchestrator hear nothing;
+the trace is `tree_mismatch: true` in `hook.log` and a stderr line Claude Code keeps out of
+the model's context. Commit the spec before relying on worktree isolation.
 
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared

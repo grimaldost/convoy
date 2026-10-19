@@ -16,22 +16,40 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 ### Fixed
 
 - **A worktree-isolated subagent is judged in its own worktree, not the main checkout.**
-  **(consumer-affecting)** — the gate spec discovery order changes. `find_gate_spec` tried
-  `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` before the walk up from the starting directory, so
-  a subagent working in `<project>/.claude/worktrees/<id>` was judged against the main
-  checkout's files: a red that existed only in the worktree passed. Discovery now walks up
-  from the event's `cwd` (the workspace, for `convoy gate` and `convoy_gate`) and uses the
-  nearest `.convoy/gate.toml`; `$CLAUDE_PROJECT_DIR` is the fallback when the walk finds
-  none. A directory that has its own spec under a `$CLAUDE_PROJECT_DIR` that also has one now
-  runs its own. A linked git worktree that is not on the trust list runs on its main
-  checkout's entry, only while its spec has the hash that entry pins: a worktree spec that
-  differs is refused loudly as `spec_changed`, and an entry with no pin or a root in
-  `CONVOY_TRUSTED_ROOTS` passes nothing on. The plugin's guard mirrors both. A blocked
-  verdict, to the subagent or to the orchestrator, now carries a line naming the tree it
-  judged and the spec it used (`convoy gate: judged <tree> against <spec>`). A spec that is
-  untracked in the main checkout is not in the worktree, so such a worktree is still judged
-  in the main checkout, and so is the messenger leg, which runs in the orchestrator's
-  `cwd`; the new line makes both visible.
+  **(consumer-affecting)** — the gate spec discovery order changes, and `hook.log` lines
+  gain fields. `find_gate_spec` tried `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` before the walk
+  up from the starting directory, so a subagent working in `<project>/.claude/worktrees/<id>`
+  was judged against the main checkout's files: a red that existed only in the worktree
+  passed. Discovery now walks up from the event's `cwd` (the workspace, for `convoy gate` and
+  `convoy_gate`) and uses the nearest `.convoy/gate.toml`; `$CLAUDE_PROJECT_DIR` is the
+  fallback when the walk finds none. A directory that has its own spec under a
+  `$CLAUDE_PROJECT_DIR` that also has one now runs its own.
+
+  A linked git worktree that is not itself on the trust list runs on its anchor's entry: the
+  session project (`$CLAUDE_PROJECT_DIR`) when the worktree lies in it or belongs to the same
+  repository and the project is trusted, otherwise git's main checkout. It does so only while
+  the anchor's own spec is the one its entry pins and the worktree's spec matches it with
+  CRLF and CR line endings read as LF. A worktree spec that differs is refused loudly once
+  (`spec_changed`, a message to the operator that never tells the subagent to run
+  `--trust`); on the judge's retry the subagent stops unjudged and the refusal is logged,
+  and the messenger reports it to the orchestrator. When the nearest spec cannot be vouched
+  for (an unpinned entry, a root trusted only through `CONVOY_TRUSTED_ROOTS`, no anchor), the
+  tree the old discovery order judged is judged instead if it is trusted, and the verdict
+  says so, so no tree that was gated goes ungated. A worktree's verdict is logged in its
+  anchor's `.convoy/hook.log`, where the orchestrator's messenger finds and reuses it, and its
+  default oracles dir is the anchor's (the hook, `convoy gate` and `convoy_gate`). The
+  plugin's guard mirrors discovery and these trust sources.
+
+  A blocked verdict, to the subagent or to the orchestrator, carries
+  `convoy gate: judged <tree> against <spec>`. A green verdict in another working tree than
+  the agent's writes that line to stderr with exit 0, which Claude Code does not put in the
+  model's context. New `hook.log` fields: `anchor`, `agent_tree`, `tree_mismatch`, and
+  `fallback_from` when the fallback judged another tree; a reused verdict carries
+  `judged_workspace`, `judged_spec` and `judged_tree_mismatch`. One case is not fixed: a spec
+  untracked in the main checkout is not in the worktree, so the walk reaches the main
+  checkout's spec and the gate runs there; a red only in the worktree then passes, silently
+  as far as the model is concerned, and is visible only in `hook.log` (`tree_mismatch: true`)
+  and on stderr.
 
 ## [0.17.1] - 2026-10-08
 
