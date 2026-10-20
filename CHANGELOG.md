@@ -39,6 +39,12 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   `[Unreleased]` section-heading vocabulary that railform's gate does not read. No engine
   behaviour changes.
 
+### Fixed
+
+- **The `convoy gate --trust` help no longer says `--init` trusts the project it scaffolds.** It
+  does not: `--init` writes `.convoy/gate.toml` and names `--trust` as the arming step. Help text
+  only; no behaviour changes.
+
 ## [0.17.1] - 2026-10-08
 
 **Patch**, by the test in `docs/design/02-formats.md`: no entry below carries
