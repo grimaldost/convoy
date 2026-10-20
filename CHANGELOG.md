@@ -39,6 +39,10 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   `[Unreleased]` section-heading vocabulary that railform's gate does not read. No engine
   behaviour changes.
 
+### Fixed
+
+- **The README, the formats table and the authoring guide call the budget and tool tables per role, not per phase.** They are keyed by the governance role (implementation / review / fix); "phase" is the `[[prs]].phase` tag. A test pins the wording in those three files. Documentation only; no behaviour changes.
+
 ## [0.17.1] - 2026-10-08
 
 **Patch**, by the test in `docs/design/02-formats.md`: no entry below carries
