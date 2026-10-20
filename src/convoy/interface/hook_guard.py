@@ -11,8 +11,9 @@ the event and decides:
   certainly be silent and write nothing: no gate spec can be found, or one is found in a
   project that is neither vouched for in ``CONVOY_TRUSTED_ROOTS`` nor listed in the trust
   file (or there is no trust file at all), and neither the linked git worktree's main checkout
-  nor ``$CLAUDE_PROJECT_DIR`` is listed or vouched for (a worktree inherits from either, and
-  the full hook falls back to judging either when the nearest spec is not vouched for);
+  nor ``$CLAUDE_PROJECT_DIR`` nor that project's own main checkout is listed or vouched for (a
+  worktree inherits from them, and the full hook falls back to judging the project when the
+  nearest spec is not vouched for);
 - **delegate** otherwise: ``uv run --project <plugin root> convoy hook`` with the same stdin
   bytes, its stdout and stderr inherited, a SIGTERM or SIGINT the guard receives passed on
   to it, its exit code returned.
@@ -155,7 +156,15 @@ def should_delegate(raw: bytes, env: Mapping[str, str], cwd: Path) -> bool:
     # inherits from or the full hook falls back to. Delegating for more than the full hook
     # acts on costs a start-up; skipping for one it acts on would lose a gate.
     project_dir = env.get(_PROJECT_DIR_ENV)
-    trees = {root, _main_checkout_of(root), (cwd / project_dir).resolve() if project_dir else None}
+    project = (cwd / project_dir).resolve() if project_dir else None
+    # The session project inherits from its own main checkout when it is a linked worktree
+    # nobody listed, and the full hook may fall back to it.
+    trees = {
+        root,
+        _main_checkout_of(root),
+        project,
+        _main_checkout_of(project) if project is not None else None,
+    }
     trees.discard(None)
     vouched = env.get(_TRUSTED_ROOTS_ENV, '')
     if any((cwd / item).resolve() in trees for item in vouched.split(os.pathsep) if item):

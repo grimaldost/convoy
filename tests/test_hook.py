@@ -1390,3 +1390,89 @@ def test_a_nul_byte_in_a_git_pointer_does_not_crash_the_hook(tmp_path: Path) -> 
     result = decide(_payload(root), _home(tmp_path))
     assert result.exit_code == HOOK_EXIT_SILENT
     assert result.record is not None and result.record['outcome'] == 'untrusted'
+
+
+# --- the second review of CONV-B75 -------------------------------------------------------------
+
+
+def _session_worktree(tmp_path: Path, *checks: str) -> tuple[Path, Path]:
+    """The owner's layout: a main checkout M and a session checkout S, a worktree of M."""
+    main, _agent = _project_with_worktree(tmp_path, *checks)
+    session = tmp_path / 'session-wt'
+    _git(main, 'worktree', 'add', '-q', '-b', 'session', str(session))
+    return main, session
+
+
+@pytest.mark.parametrize('main_listed', [False, True], ids=['main-unlisted', 'main-listed'])
+def test_a_trusted_session_worktree_finds_the_oracles_its_scaffold_wrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, main_listed: bool
+) -> None:
+    """MAJOR 1: S is a linked worktree with its own entry; init, gate and hook agree on S."""
+    monkeypatch.delenv('CONVOY_ORACLES', raising=False)
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    main, session = _session_worktree(tmp_path, _check('ok', _OK))
+    one = Toolchain('python', (Check(name='c0', run=_OK, blocking=True),))
+    monkeypatch.setattr(gate_scaffold, 'detect_toolchain', lambda _root: one)
+    env = _home(tmp_path)
+    if main_listed:
+        trust_project(main, env)
+    (session / '.convoy' / 'gate.toml').unlink()
+    written = scaffold_gate(session, env, independent='oracle1')
+    oracle = next(path for path in written if path.name == 'oracle1.py')
+    assert oracle.parent.name == 'session-wt'
+    oracle.write_text('raise SystemExit(0)\n', encoding='utf-8')
+    spec_path = session / '.convoy' / 'gate.toml'
+    interpreter = f'run = "\\"{sys.executable}\\" "'.replace('\\', '\\\\')
+    text = spec_path.read_text(encoding='utf-8').replace('run = "python "', interpreter, 1)
+    spec_path.write_text(text, encoding='utf-8')
+    trust_project(session, env)
+    monkeypatch.setenv('CONVOY_HOME', env['CONVOY_HOME'])
+    gated = runner.invoke(cli.app, ['gate', '--workspace', str(session)])
+    assert gated.exit_code == 0, gated.stderr + gated.stdout
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    hooked = decide(_stop_payload(session, transcript), {**env, 'CLAUDE_PROJECT_DIR': str(session)})
+    assert hooked.record is not None and hooked.record['outcome'] == 'completed', hooked.record
+
+
+def test_a_changed_anchor_spec_reached_from_a_worktree_is_refused_once(tmp_path: Path) -> None:
+    """MINOR m2: the fallback judges the main checkout, whose spec changed since it was trusted."""
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    spec = project / '.convoy' / 'gate.toml'
+    spec.write_text(spec.read_text(encoding='utf-8') + '\n# edited after trust\n', 'utf-8')
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    first = decide(_stop_payload(worktree, transcript), env)
+    assert first.exit_code == HOOK_EXIT_FEEDBACK
+    assert first.record is not None and first.record['outcome'] == 'spec_changed'
+    assert 'operator' in first.stderr
+    assert str(worktree.resolve()) in first.stderr
+    assert f'`convoy gate --trust` in {project.resolve()}' in first.stderr
+    retry = decide(_stop_payload(worktree, transcript, stop_hook_active=True), env)
+    assert retry.exit_code == HOOK_EXIT_SILENT
+    assert retry.record is not None and retry.record['outcome'] == 'spec_changed'
+
+
+def test_a_changed_main_checkout_spec_still_refuses_its_own_agents_every_time(
+    tmp_path: Path,
+) -> None:
+    """The main checkout's own `changed` behaviour is unchanged."""
+    project, _worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    spec = project / '.convoy' / 'gate.toml'
+    spec.write_text(spec.read_text(encoding='utf-8') + '\n# edited after trust\n', 'utf-8')
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    retry = decide(_stop_payload(project, transcript, stop_hook_active=True), env)
+    assert retry.exit_code == HOOK_EXIT_FEEDBACK
+    assert 'changed since' in retry.stderr
+
+
+def test_an_untrusted_worktree_is_never_told_to_trust_itself(tmp_path: Path) -> None:
+    """MAJOR 2: the advice names the checkout the worktree is made from."""
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_home(tmp_path), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    result = decide(_stop_payload(worktree, transcript), env)
+    assert result.record is not None and result.record['outcome'] == 'untrusted'
+    reason = result.record['reason']
+    assert f'`convoy gate --trust` in {project.resolve()}' in reason
+    assert f'in {worktree.resolve()}' not in reason

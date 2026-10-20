@@ -42,6 +42,7 @@ from convoy.interface.gate_service import (
     resolve_gate_spec,
     run_gate,
     trust_decision,
+    trust_hint,
     trust_project,
 )
 from convoy.interface.git import Git, GitError
@@ -516,29 +517,28 @@ def gate(
         # A discovered project spec runs here because the operator asked; the hook would
         # not run it until the project is trusted, and a silent difference between the
         # two surfaces is exactly what an operator cannot see. Say so.
+        root = gate_root(spec_path, target)
         try:
-            decision = trust_decision(gate_root(spec_path, target), spec_path, os.environ)
+            decision = trust_decision(root, spec_path, os.environ)
+            hint = trust_hint(root, os.environ)
         except SpecError as exc:
-            decision = None
+            decision, hint = None, ''
             typer.echo(f'note: {exc}', err=True)
         status = 'untrusted' if decision is None else decision.status
         if status == 'differs' and decision is not None:
             typer.echo(
                 f"note: this worktree's gate spec differs from the one trusted for "
-                f'{decision.anchor}; the hook refuses it until the two match',
+                f'{decision.anchor}; the hook refuses it until the two match (commit the '
+                f'trusted spec where the worktree is made from)',
                 err=True,
             )
         elif status == 'changed':
             typer.echo(
-                'note: the gate spec changed since the hook was armed; run `convoy gate '
-                '--trust` again to re-arm it',
+                f'note: the gate spec changed since the hook was armed; to re-arm it, {hint}',
                 err=True,
             )
-        elif status != 'trusted':
-            typer.echo(
-                'note: the hook is not armed for this project; run `convoy gate --trust` to arm it',
-                err=True,
-            )
+        elif status != 'trusted' and decision is not None:
+            typer.echo(f'note: the hook is not armed for this project; to arm it, {hint}', err=True)
     phases = tuple(phase or ())
     try:
         outcome = run_gate(spec, target, phases)

@@ -22,6 +22,7 @@ from convoy.interface.gate_service import (
     GATE_SPEC_RELPATH,
     ORACLES_ENV,
     oracles_dir_for,
+    oracles_root_for,
 )
 from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS
 
@@ -232,7 +233,8 @@ def scaffold_gate(
     oracle_path: Path | None = None
     if independent is not None:
         name = _oracle_name(independent)
-        oracle_path = oracles_dir_for(root, env) / f'{name}.py'
+        # The same decision every gate makes when it reads the oracle (gate_service.anchor_of).
+        oracle_path = oracles_dir_for(oracles_root_for(root, env), env) / f'{name}.py'
         targets.append(oracle_path)
         reference = f'${{{ORACLES_ENV}}}/{name}.py'
         checks.append(

@@ -453,19 +453,129 @@ def fallback_gate(
     return None
 
 
-def oracles_root_for(root: Path, env: Mapping[str, str]) -> Path:
-    """The tree whose name keys a judged tree's default oracles dir.
+def anchor_of(root: Path, env: Mapping[str, str]) -> Path:
+    """The tree *root* keys its default oracles on: itself, or the tree its spec came from.
 
-    A linked worktree's oracles are its anchor's (:func:`trust_anchor`, else git's main
-    checkout), never its own directory's name: ``<project>/.claude/worktrees/<id>`` would
-    key on ``<id>``, where no oracle was ever written. Any other tree keys on itself. A
-    trust list that cannot be read leaves the session project out of the choice.
+    A tree whose trust is its own entry (listed, or vouched for) is its own anchor, and so
+    is a tree with no spec yet (what ``convoy gate --init`` scaffolds) or one whose spec is
+    its own. A linked worktree whose spec is its :func:`trust_anchor`'s, line endings
+    aside, is that tree's checkout of it, and keys where that tree keys: an agent's worktree
+    under the session project runs the project's oracles, never ones named after the
+    worktree's own directory. Content and the trust list decide it, not who asks, so the
+    scaffold that writes an oracle and every gate that reads it agree.
+    """
+    resolved = Path(root).resolve()
+    if _vouched(resolved, env) or _listed(resolved, env) is not None:
+        return resolved
+    anchor = trust_anchor(resolved, env)
+    if anchor is None:
+        return resolved
+    own, theirs = resolved / GATE_SPEC_RELPATH, anchor / GATE_SPEC_RELPATH
+    if not own.is_file() or not theirs.is_file():
+        return resolved
+    if spec_text_digest(own) != spec_text_digest(theirs):
+        return resolved
+    return anchor_of(anchor, env)
+
+
+def oracles_root_for(root: Path, env: Mapping[str, str]) -> Path:
+    """The tree whose name keys *root*'s default oracles dir: :func:`anchor_of`.
+
+    A trust list that cannot be read is no list here: the loader is not where that is
+    reported, and the tree keys on itself.
     """
     try:
-        anchor = trust_anchor(root, env)
+        return anchor_of(root, env)
     except SpecError:
-        anchor = main_checkout_of(root)
-    return anchor or Path(root).resolve()
+        return Path(root).resolve()
+
+
+def trust_hint(root: Path, env: Mapping[str, str]) -> str:
+    """What the operator does to arm *root*'s gate — never ``--trust`` inside an agent's worktree.
+
+    Trusting a linked worktree pins that worktree's own spec, which is how an edited gate
+    would arm itself; the advice names the checkout it is made from instead. A worktree that
+    already has its own entry (a long-lived checkout the operator trusted) is re-trusted
+    where it is.
+    """
+    resolved = Path(root).resolve()
+    layout = git_layout(resolved)
+    try:
+        own_entry = _vouched(resolved, env) or _listed(resolved, env) is not None
+        anchor = trust_anchor(resolved, env) if layout is not None and layout.linked else None
+    except SpecError:
+        own_entry, anchor = False, main_checkout_of(resolved)
+    if layout is None or not layout.linked or own_entry:
+        return f'run `convoy gate --trust` in {resolved}'
+    anchor = anchor or main_checkout_of(resolved)
+    if anchor is None:
+        return (
+            f'{resolved} is a git worktree: trust the checkout it is made from, and commit '
+            f'the spec there, never `convoy gate --trust` in the worktree itself'
+        )
+    return (
+        f'{resolved} is a git worktree: run `convoy gate --trust` in {anchor}, the checkout it '
+        f'inherits from, and commit the spec there so the worktree carries it'
+    )
+
+
+@dataclass(frozen=True)
+class GateTarget:
+    """The spec a discovered gate judges by, the tree it governs, and the machine's decision.
+
+    *nearest* is the spec discovery found; it differs from *spec* when
+    :func:`fallback_gate` replaced an untrusted nearest spec.
+    """
+
+    spec: Path
+    workspace: Path
+    decision: TrustDecision
+    nearest: Path
+
+    @property
+    def fallback_from(self) -> Path | None:
+        return self.nearest if self.spec != self.nearest else None
+
+
+def judged_target(spec_path: Path, start: Path, env: Mapping[str, str]) -> GateTarget:
+    """Decide which discovered spec runs where, for the hook and ``convoy_gate`` alike.
+
+    The nearest spec and the tree it governs, with :func:`trust_decision`; when that is
+    ``untrusted``, :func:`fallback_gate`'s spec and tree if it has one. Raises ``SpecError``
+    when the trust list cannot be read.
+    """
+    workspace = gate_root(spec_path, start)
+    decision = trust_decision(workspace, spec_path, env)
+    if decision.status == 'untrusted':
+        fallback = fallback_gate(spec_path, workspace, decision.anchor, env)
+        if fallback is not None:
+            spec, root, found = fallback
+            return GateTarget(spec, root, found, nearest=spec_path)
+    return GateTarget(spec_path, workspace, decision, nearest=spec_path)
+
+
+def refusal_reason(target: GateTarget, env: Mapping[str, str]) -> str:
+    """Why *target* may not run, addressed to the operator; ``''`` when it may."""
+    decision = target.decision
+    if decision.status == 'untrusted':
+        return (
+            f'the discovered gate spec {target.spec} is untrusted on this machine; '
+            f'{trust_hint(target.workspace, env)}'
+        )
+    if decision.status == 'changed':
+        return (
+            f'the gate spec {target.spec} changed since this machine trusted it; review it, '
+            f'then {trust_hint(target.workspace, env)}'
+        )
+    if decision.status == 'differs':
+        anchor = decision.anchor or target.workspace
+        return (
+            f'the gate spec {target.spec} in the worktree {target.workspace} differs from the '
+            f'spec trusted for {anchor} ({anchor / GATE_SPEC_RELPATH}); the worktree must carry '
+            f'the trusted spec: commit it where the worktree is made from, or review the '
+            f'difference'
+        )
+    return ''
 
 
 def is_trusted(root: Path, env: Mapping[str, str], spec_path: Path | None = None) -> bool:

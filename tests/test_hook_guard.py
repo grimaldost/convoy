@@ -393,6 +393,33 @@ def test_a_nul_byte_in_a_git_pointer_does_not_skip_a_trusted_firing(tmp_path: Pa
     assert len(delegate.calls) == 1
 
 
+def test_a_session_inheriting_from_its_main_checkout_delegates_a_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probe P8: S is an unlisted worktree of listed M; the agent's own spec is untrusted.
+
+    The full hook falls back to S's spec, which S inherits from M, and blocks; the guard must
+    not skip that firing.
+    """
+    main = tmp_path / 'main'
+    _worktree_of(main, _SIDE_EFFECT)
+    session = tmp_path / 'session'
+    _git(main, 'worktree', 'add', '-q', '-b', 'session', str(session))
+    sub = session / 'sub'
+    _spec(sub)  # its own spec, which nobody trusted
+    env = {**_home(tmp_path), 'CLAUDE_PROJECT_DIR': str(session)}
+    trust_project(main, env)
+    monkeypatch.chdir(sub)
+    raw = _raw(_stop(sub))
+    payload = parse_event(raw)
+    assert not isinstance(payload, str)
+    acted = decide(payload, env)
+    assert acted.record is not None and acted.record['outcome'] != 'untrusted', acted.record
+    delegate = _Recorder()
+    _guard(raw, env, Path.cwd(), delegate)
+    assert len(delegate.calls) == 1
+
+
 # --- parity with the full hook ------------------------------------------------------------------
 
 

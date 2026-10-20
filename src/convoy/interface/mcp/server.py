@@ -42,13 +42,13 @@ from convoy.interface.drivers.headless import make_run_id
 from convoy.interface.gate_service import (
     gate_brief_envelope,
     gate_envelope,
-    gate_root,
     gate_usage_envelope,
+    judged_target,
     load_gate_spec_file,
     oracles_root_for,
+    refusal_reason,
     resolve_gate_spec,
     run_gate,
-    trust_status,
 )
 from convoy.interface.git import GitError
 from convoy.interface.run_service import PreflightError, run_series_headless, start_report
@@ -370,18 +370,21 @@ def _gate_impl(
     try:
         explicit = None if series_file is None else Path(series_file)
         spec_path = resolve_gate_spec(explicit, Path(workspace), os.environ)
-        root = gate_root(spec_path, Path(workspace)) if explicit is None else None
-        if root is not None:
-            # A discovered spec runs on the model's say-so (the workspace argument is
-            # the model's), so it is held to the hook's standard: the machine's trust.
-            status = trust_status(root, spec_path, os.environ)
-            if status != 'trusted':
+        oracles_root = None
+        if explicit is None:
+            # A discovered spec runs on the model's say-so (the workspace argument is the
+            # model's), so it is held to the hook's standard, through the hook's own
+            # decision: the machine's trust, a worktree's anchor, and the fallback that
+            # keeps a gated tree gated. It runs in the workspace given, as it always has.
+            target = judged_target(spec_path, Path(workspace), os.environ)
+            if target.decision.status != 'trusted':
                 raise SpecError(
-                    f'the discovered gate spec {spec_path} is {status} on this machine; run '
-                    f'`convoy gate --trust` there, or pass series_file explicitly'
+                    f'for the operator — {refusal_reason(target, os.environ)}; or pass '
+                    f'series_file explicitly'
                 )
-        # A worktree's oracles are its anchor's, never its own directory name's.
-        oracles_root = None if root is None else oracles_root_for(root, os.environ)
+            spec_path = target.spec
+            # A worktree's oracles are its anchor's, never its own directory name's.
+            oracles_root = oracles_root_for(target.workspace, os.environ)
         spec = load_gate_spec_file(spec_path, os.environ, root=oracles_root)
     except (OSError, UnicodeDecodeError, SpecError) as exc:
         return gate_usage_envelope(exc, error_kind=error_kind(exc))

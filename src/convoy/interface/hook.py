@@ -95,17 +95,17 @@ from convoy import __version__
 from convoy.core.gate import GateUsageError, repair_brief
 from convoy.core.spec import SpecError
 from convoy.interface.gate_service import (
-    GATE_SPEC_RELPATH,
     HOOK_MARGIN_SECONDS,
     HOOK_TIMEOUT_SECONDS,
     GateOutcome,
-    fallback_gate,
     find_gate_spec,
     gate_root,
+    git_layout,
+    judged_target,
     load_gate_spec_file,
     oracles_root_for,
+    refusal_reason,
     run_gate,
-    trust_decision,
 )
 from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS
 from convoy.interface.workspace_lock import JudgeBusyError, judge_lock, lock_path
@@ -702,16 +702,14 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
     if spec_path is None:
         return HookResult(HOOK_EXIT_SILENT, '', None)
 
-    nearest = spec_path
-    workspace = gate_root(spec_path, cwd)
     try:
-        decision = trust_decision(workspace, spec_path, env)
-        fallback = (
-            fallback_gate(spec_path, workspace, decision.anchor, env)
-            if decision.status == 'untrusted'
-            else None
-        )
+        # When the nearest spec is not vouched for and the tree discovery judged before
+        # CONV-B75 is trusted, that tree is judged, and the verdict says so, rather than a
+        # tree that was gated going silent (gate_service.fallback_gate).
+        target = judged_target(spec_path, cwd, env)
+        trust_advice = refusal_reason(target, env)
     except SpecError as exc:
+        workspace = gate_root(spec_path, cwd)
         return _finish(
             HookResult(
                 HOOK_EXIT_SILENT,
@@ -721,11 +719,7 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
                 ),
             )
         )
-    if fallback is not None:
-        # The nearest spec is not vouched for, and the tree discovery judged before
-        # CONV-B75 is trusted: that tree is judged, and the verdict says so, rather than
-        # a tree that was gated going silent.
-        spec_path, workspace, decision = fallback
+    spec_path, workspace, decision = target.spec, target.workspace, target.decision
     tree = JudgedTree(
         spec=spec_path,
         workspace=workspace,
@@ -734,7 +728,7 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
         anchor=decision.anchor,
         agent_tree=working_tree_of(cwd) or cwd.resolve(),
         mismatch=_mismatch(cwd, workspace),
-        fallback_from=nearest if fallback is not None else None,
+        fallback_from=target.fallback_from,
     )
     stamp = {
         **_stamp(spec_path, workspace),
@@ -756,19 +750,26 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
                 _record(
                     payload,
                     outcome='untrusted',
-                    reason=(
-                        f'{workspace} is not on the hook trust list; run '
-                        f'`convoy gate --trust` there'
-                    ),
+                    reason=trust_advice,
                     **stamp,
                 ),
             )
         )
-    if decision.status == 'changed':
-        message = (
-            f'convoy hook: the gate spec {spec_path} changed since this machine trusted it; '
-            f'review it and re-run `convoy gate --trust` to arm it again'
+    agent_in_worktree = tree.mismatch and _is_linked_worktree(tree.agent_tree)
+    if decision.status == 'changed' and agent_in_worktree:
+        # Reached through the fallback: the agent works in a worktree, and the tree judged
+        # for it has a spec edited since it was trusted. The operator's to settle.
+        return finish(
+            _refuse_for_operator(
+                payload,
+                event,
+                f'convoy hook: for the operator — {trust_advice}. The agent working in '
+                f'{tree.agent_tree} was not judged. Nothing here is for the subagent to repair.',
+                stamp,
+            )
         )
+    if decision.status == 'changed':
+        message = f'convoy hook: {trust_advice}'
         return finish(
             HookResult(
                 HOOK_EXIT_FEEDBACK,
@@ -777,7 +778,15 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
             )
         )
     if decision.status == 'differs':
-        return finish(_differs(payload, event, tree, stamp))
+        return finish(
+            _refuse_for_operator(
+                payload,
+                event,
+                f'convoy hook: for the operator — {trust_advice}, so the gate was not run. '
+                f'Nothing here is for the subagent to repair.',
+                stamp,
+            )
+        )
     if lock_path(workspace).exists():
         message = (
             f'convoy hook: a convoy run holds {workspace} (lock present); the hook does not '
@@ -808,26 +817,23 @@ def _stamp(spec_path: Path, workspace: Path) -> dict[str, Any]:
     }
 
 
-def _differs(
-    payload: Mapping[str, Any], event: str, tree: JudgedTree, stamp: Mapping[str, Any]
-) -> HookResult:
-    """A worktree whose spec is not its anchor's: refused loudly once, then let through.
+def _is_linked_worktree(path: Path) -> bool:
+    layout = git_layout(path)
+    return layout is not None and layout.linked
 
-    The difference is the operator's to settle (the worktree was made from a commit whose
-    spec is not the trusted one, or someone edited it), not the subagent's: the message is
-    addressed to the operator and never tells the subagent to trust anything, which in a
-    worktree would pin the worktree's own spec. On the judge's retry the subagent stops
-    unjudged and the refusal is recorded, where the messenger reports it to the
-    orchestrator — a refusal the subagent cannot act on must not hold it forever.
+
+def _refuse_for_operator(
+    payload: Mapping[str, Any], event: str, message: str, stamp: Mapping[str, Any]
+) -> HookResult:
+    """A refusal the subagent cannot act on: loud once, then let through on the retry.
+
+    The difference is the operator's to settle (a worktree made from a commit whose spec is
+    not the trusted one, or a spec edited since it was trusted), not the subagent's: the
+    message is addressed to the operator and never tells anyone to trust a worktree, which
+    would pin the worktree's own spec. On the judge's retry the subagent stops unjudged and
+    the refusal is recorded, where the messenger reports it to the orchestrator — a
+    refusal the subagent cannot act on must not hold it forever.
     """
-    anchor = tree.anchor
-    message = (
-        f'convoy hook: for the operator — the gate spec {tree.spec} in the worktree '
-        f'{tree.workspace} differs from the spec trusted for {anchor} '
-        f'({(anchor or tree.workspace) / GATE_SPEC_RELPATH}), so the gate was not run. The '
-        f'worktree must carry the trusted spec: commit it where the worktree is made from, or '
-        f'review the difference. Nothing here is for the subagent to repair.'
-    )
     retry = event == 'SubagentStop' and bool(payload.get('stop_hook_active'))
     if retry:
         record = _record(

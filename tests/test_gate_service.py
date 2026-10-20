@@ -27,6 +27,7 @@ from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK
 from convoy.interface.gate_runner import SubprocessGateRunner
 from convoy.interface.gate_service import (
     GateSpecNotFoundError,
+    anchor_of,
     convoy_home,
     fallback_gate,
     find_gate_spec,
@@ -540,7 +541,14 @@ def test_an_unpinned_or_vouched_main_checkout_passes_nothing_on(tmp_path: Path) 
 
 
 def _point(root: Path, text: str) -> None:
-    (root / '.git').write_text(text, encoding='utf-8')
+    """Write *root*'s ``.git`` file, replacing the one git wrote.
+
+    Git for Windows creates it hidden (``core.hideDotFiles``), and opening a hidden file for
+    writing raises ``PermissionError`` there: it is removed first, never written over.
+    """
+    dot_git = root / '.git'
+    dot_git.unlink(missing_ok=True)
+    dot_git.write_text(text, encoding='utf-8')
 
 
 def _gitdir_of(worktree: Path) -> Path:
@@ -667,6 +675,35 @@ def test_an_anchor_that_cannot_vouch_falls_back_to_judging_its_own_tree(tmp_path
     assert (
         fallback_gate(spec, worktree, decision.anchor, {'CONVOY_HOME': env['CONVOY_HOME']}) is None
     )
+
+
+def test_a_tree_with_its_own_entry_is_its_own_anchor(tmp_path: Path) -> None:
+    """A session checkout S, a linked worktree of M, keys on itself once it has its own entry."""
+    project, _worktree = _repo_with_worktree(tmp_path)
+    session = tmp_path / 'session-wt'
+    _git(project, 'worktree', 'add', '-q', '-b', 'session', str(session))
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    # S checks out M's committed spec: it is M's spec, and keys where M keys.
+    assert anchor_of(session, env) == project.resolve()
+    trust_project(project, env)
+    assert anchor_of(session, env) == project.resolve()
+    trust_project(session, env)
+    assert anchor_of(session, env) == session.resolve()  # its own entry wins
+    assert oracles_root_for(session, env) == session.resolve()
+
+
+def test_a_tree_with_its_own_spec_or_none_is_its_own_anchor(tmp_path: Path) -> None:
+    """What ``--init`` scaffolds has no spec yet, then a spec of its own: both key on itself."""
+    project, _worktree = _repo_with_worktree(tmp_path)
+    session = tmp_path / 'session-wt'
+    _git(project, 'worktree', 'add', '-q', '-b', 'session', str(session))
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    trust_project(project, env)
+    spec = session / '.convoy' / 'gate.toml'
+    spec.unlink()
+    assert anchor_of(session, env) == session.resolve()
+    spec.write_text('[series]\nid = "session-wt"\n', encoding='utf-8')
+    assert anchor_of(session, env) == session.resolve()
 
 
 def test_a_worktrees_oracles_default_to_its_anchors(tmp_path: Path) -> None:
