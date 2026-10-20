@@ -62,20 +62,30 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   for (an unpinned entry, a root trusted only through `CONVOY_TRUSTED_ROOTS`, no anchor), the
   tree the old discovery order judged is judged instead if it is trusted, and the verdict
   says so, so no tree that was gated goes ungated. A worktree's verdict is logged in its
-  anchor's `.convoy/hook.log`, where the orchestrator's messenger finds and reuses it, and its
-  default oracles dir is the anchor's (the hook, `convoy gate` and `convoy_gate`). The
-  plugin's guard mirrors discovery and these trust sources.
+  anchor's `.convoy/hook.log`, where the orchestrator's messenger finds and reuses it. The
+  default oracles dir keys on one decision, `gate_service.anchor_of`, which the scaffold, the
+  hook, `convoy gate` and `convoy_gate` all call: a tree with its own trust entry, or a spec of
+  its own, keys on itself, and a worktree checking out its anchor's spec keys where the anchor
+  does. `convoy_gate` goes through the hook's own decision and fallback, and no message tells
+  anyone to run `convoy gate --trust` inside an agent's worktree: the advice names the checkout
+  it is made from. The plugin's guard mirrors discovery and these trust sources.
 
   A blocked verdict, to the subagent or to the orchestrator, carries
   `convoy gate: judged <tree> against <spec>`. A green verdict in another working tree than
   the agent's writes that line to stderr with exit 0, which Claude Code does not put in the
   model's context. New `hook.log` fields: `anchor`, `agent_tree`, `tree_mismatch`, and
   `fallback_from` when the fallback judged another tree; a reused verdict carries
-  `judged_workspace`, `judged_spec` and `judged_tree_mismatch`. One case is not fixed: a spec
-  untracked in the main checkout is not in the worktree, so the walk reaches the main
-  checkout's spec and the gate runs there; a red only in the worktree then passes, silently
-  as far as the model is concerned, and is visible only in `hook.log` (`tree_mismatch: true`)
-  and on stderr.
+  `judged_workspace`, `judged_spec` and `judged_tree_mismatch`.
+
+  What is not fixed: an isolated agent is judged in its worktree only when the worktree carries
+  a spec its anchor's pinned entry vouches for. When the spec is untracked in the main checkout
+  (the worktree has none), or the anchor is trusted only through `CONVOY_TRUSTED_ROOTS` or by an
+  entry with no pin, the main checkout is judged instead, and a red that exists only in the
+  worktree passes: the subagent and the orchestrator are told nothing, and the only traces are an
+  exit-0 stderr line, which Claude Code keeps out of the model's context, and
+  `tree_mismatch: true` in `hook.log`. When the anchor's own spec changed since it was trusted,
+  or the worktree's spec differs from it, the worktree is not judged either: that is refused
+  once, then let through on the retry and reported by the messenger.
 
 ## [0.17.1] - 2026-10-08
 

@@ -1227,17 +1227,21 @@ match its pin, and the worktree's must match the anchor's with line endings norm
 (`spec_text_digest`): `trusted`, else `differs`, refused once to the operator and let through
 on the retry, logged. An anchor that cannot vouch (unpinned, vouched-only, missing spec)
 leads to `fallback_gate`: the tree the old order judged is judged, and the verdict says so.
-A worktree's verdict is logged in its anchor, where the messenger reuses it, and its oracles
-default to the anchor's (hook, CLI, MCP). Every blocked verdict carries
+A worktree's verdict is logged in its anchor, where the messenger reuses it. The oracles
+default keys on `gate_service.anchor_of`, which the scaffold, the hook, the CLI and the MCP
+tool share; `convoy_gate` uses the hook's own decision and fallback (`judged_target`), and no
+advice tells anyone to trust an agent's worktree (`trust_hint`). Every blocked verdict carries
 `convoy gate: judged <tree> against <spec>`; a green in another tree than the agent's writes
 it to stderr and `hook.log` records `tree_mismatch`. **(consumer-affecting: discovery order,
 new `hook.log` fields)**
 
 **Status.** Built, unreleased; no version bump until the owner sets the measurement window.
-Not covered: a spec untracked in the main checkout is not in the worktree, so the gate runs
-in the main checkout and a red only in the worktree passes without a word to the subagent or
-the orchestrator; only `hook.log` (`tree_mismatch: true`) and a stderr line outside the
-model's context record it.
+Not covered: a worktree is judged in place only when it carries a spec its anchor's pinned
+entry vouches for. When the spec is untracked in the main checkout, or the anchor is trusted
+only through `CONVOY_TRUSTED_ROOTS` or an unpinned entry, the main checkout is judged and a red
+only in the worktree passes without a word to the subagent or the orchestrator; only an exit-0
+stderr line and `tree_mismatch: true` in `hook.log` record it. A differing worktree spec or an
+anchor spec changed since trust is refused once and let through, reported by the messenger.
 
 **Effort** M · **Source** [probe 2026-10-08]
 

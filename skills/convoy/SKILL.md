@@ -440,17 +440,25 @@ A worktree agent is judged in its own worktree when the worktree carries the spe
 when `.convoy/gate.toml` is committed on the branch the worktree checks out: the judge walks
 up from the agent's `cwd` and stops at the nearest spec. The worktree runs on its anchor's
 trust entry — the session project when it is trusted and the worktree lies in it or shares
-its repository, else git's main checkout — only while its spec matches the anchor's pinned
-one (line endings aside). A worktree spec that differs is refused once, addressed to the
-operator, and the subagent may stop on the retry; the refusal is logged and the messenger
-reports it. A worktree's verdict is logged in the anchor's `.convoy/hook.log`, where the
-orchestrator's messenger reuses it, and its oracles default to the anchor's. When no anchor
-can vouch for the worktree's spec (an unpinned entry, a root only in `CONVOY_TRUSTED_ROOTS`),
-the anchor's own tree is judged and the verdict says so. One case still judges the main
-checkout: a spec that is untracked there, which the worktree does not have. A red that
-exists only in the worktree then passes, and the subagent and the orchestrator hear nothing;
-the trace is `tree_mismatch: true` in `hook.log` and a stderr line Claude Code keeps out of
-the model's context. Commit the spec before relying on worktree isolation.
+its repository, else git's main checkout — only while that entry is pinned, the anchor's spec
+still matches the pin, and the worktree's spec matches the anchor's (line endings aside). A
+worktree's verdict is logged in the anchor's `.convoy/hook.log`, where the orchestrator's
+messenger reuses it, and its oracles default to the anchor's (`gate_service.anchor_of`).
+
+The other cases, and what each does to a red that exists only in the worktree:
+
+- The worktree's spec differs from the anchor's, or the anchor's spec changed since it was
+  trusted: refused once, addressed to the operator; the subagent may stop on the retry, and
+  the messenger reports the refusal to the orchestrator. The work is not judged.
+- The anchor is trusted only through `CONVOY_TRUSTED_ROOTS`, or by an entry with no pin: the
+  anchor's own tree is judged instead. The red passes.
+- The spec is untracked in the main checkout, so the worktree has none: the main checkout is
+  judged. The red passes.
+
+Where the red passes, the subagent and the orchestrator hear nothing: the traces are an
+exit-0 stderr line naming the judged tree, which Claude Code keeps out of the model's context,
+and `tree_mismatch: true` in `hook.log`. Commit the spec and trust it with a pin before relying
+on worktree isolation, and never run `convoy gate --trust` inside an agent's worktree.
 
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared

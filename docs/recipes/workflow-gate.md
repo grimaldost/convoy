@@ -12,20 +12,28 @@ events to `convoy hook`, not by a live Workflow run, so they show the record's s
 Workflow agent's own transcript. The only observation of the hook under the Workflow tool is the
 dated probe, [2026-10-08-subagentstop-under-workflow.md](../notes/2026-10-08-subagentstop-under-workflow.md).
 
-## Read this first: worktree isolation is not judged correctly yet
+## Read this first: worktree isolation needs a committed spec
 
-Until [CONV-B75](../backlog.md#conv-b75--a-worktree-isolated-subagent-is-judged-against-the-main-checkout-not-the-worktree-that-holds-its-changes)
-lands, **an agent started with `isolation: 'worktree'` is judged against the main checkout, not
-against the worktree that holds its changes.** Discovery tries
-`$CLAUDE_PROJECT_DIR/.convoy/gate.toml` before the walk up from the agent's own `cwd`
-(`gate_service.find_gate_spec`), so the checks run in the session project and see none of the
-edits that live only in the agent's worktree. A fix is in progress; it may change which tree a
-check runs in, and this recipe will be revised when it lands. Until then:
+Since [CONV-B75](../backlog.md#conv-b75--a-worktree-isolated-subagent-is-judged-against-the-main-checkout-not-the-worktree-that-holds-its-changes),
+an agent started with `isolation: 'worktree'` is judged in its own worktree when the worktree
+carries the gate spec. The hook walks up from the agent's `cwd` and uses the nearest
+`.convoy/gate.toml` (`gate_service.find_gate_spec`), and the worktree runs on the trust of the
+project it was made from, as long as its spec matches the one `convoy gate --trust` pinned there
+(line endings aside). So:
 
-- Run writing agents **one at a time in the session's project checkout**, as the example does.
-  Do not pass `isolation: 'worktree'` to an agent whose work the gate must judge.
-- Parallel agents are fine when they only read: a subagent whose transcript shows only read-only
-  tool use is not gated (`hook.py`, `_decide_stop`).
+- **Commit `.convoy/gate.toml` before starting isolated agents**, and trust it with
+  `convoy gate --trust --workspace <project>` (a pinned entry). Never run `--trust` inside an
+  agent's worktree: that would pin whatever spec the worktree holds.
+- In every other case a red that exists only in the worktree is not caught, and the agent and the
+  orchestrator hear nothing: the spec is untracked in the project (the worktree has none, so the
+  gate runs in the project checkout), or the project is trusted only through
+  `CONVOY_TRUSTED_ROOTS`, or by an entry with no pinned hash (the project checkout is judged
+  instead). The only traces are an exit-0 stderr line naming the judged tree and
+  `"tree_mismatch": true` in `.convoy/hook.log`. A worktree spec that differs from the trusted
+  one, or a project spec changed since it was trusted, is refused instead: once to the subagent,
+  then the subagent may stop unjudged and the orchestrator's messenger reports the refusal.
+- Read-only agents are not gated wherever they run: a subagent whose transcript shows only
+  read-only tool use is skipped (`hook.py`, `_decide_stop`).
 
 Concurrent writers in one checkout are not safe either: the hook's judge lock makes gates take
 turns, but each gate then judges whatever the other agents have half written.
@@ -186,7 +194,8 @@ const FIELDS = String.raw`"ts": "[^"]*"|"leg": "[^"]*"|"agent_id": "[^"]*"|"stop
 
 phase('Implement')
 for (const task of tasks) {
-  // Sequential on purpose: see "Read this first". No isolation option on a judged agent.
+  // Sequential, so the agents share the project checkout safely. To run writers in parallel,
+  // give each `isolation: 'worktree'` with the spec committed (see "Read this first").
   // Add model / effort here if the task needs a tier other than the session's.
   await agent(`[convoy-phase: ${task.tag}]\n${task.brief}`, {
     label: `implement ${task.tag}`,
@@ -334,15 +343,16 @@ omitted by the Grep tool (Step 4).
 From the probe note and [ADR-0011](../adr/0011-the-runner-is-frozen-the-gate-is-the-product.md),
 fact 2:
 
-1. **A worktree-isolated agent is judged against the main checkout**
-   ([CONV-B75](../backlog.md#conv-b75--a-worktree-isolated-subagent-is-judged-against-the-main-checkout-not-the-worktree-that-holds-its-changes),
-   proposed, fix in progress). Observed with an untracked spec; with a committed spec it follows
-   from the discovery order in the code. The `hook.log` line for such an agent has a `cwd` under
-   `.claude/worktrees/` and a `workspace` equal to the project root; a mismatch between the two
-   is how to see it. Until it is fixed, do not use worktree isolation for agents the gate judges.
-2. **A gate in a directory other than the session project is not found**, even when the agent
-   edits that directory. The gate must sit at `.convoy/gate.toml` in the project the session was
-   started in. (`$CONVOY_GATE_SPEC` in the environment that launches Claude Code names a spec
+1. **A worktree-isolated agent is judged in its worktree only when the worktree carries the
+   trusted spec**
+   ([CONV-B75](../backlog.md#conv-b75--a-worktree-isolated-subagent-is-judged-against-the-main-checkout-not-the-worktree-that-holds-its-changes)).
+   With the spec untracked in the project, or the project trusted without a pinned hash, the
+   project checkout is judged instead, and a red only in the worktree passes; the `hook.log`
+   line then has `"tree_mismatch": true`, an `agent_tree` under `.claude/worktrees/` and a
+   `workspace` equal to the project root. See "Read this first".
+2. **A gate in a directory the agent does not work in is not found**, even when the agent edits
+   that directory. The hook finds the nearest `.convoy/gate.toml` above the agent's `cwd`, then
+   the one in the project the session was started in. (`$CONVOY_GATE_SPEC` in the environment that launches Claude Code names a spec
    elsewhere; neither the probe nor this recipe exercised it.)
 3. **The messenger leg did not fire for Workflow agents**, so an orchestrator that started the
    agents from a script hears of a residual red only by reading `.convoy/hook.log` (read from the
