@@ -59,7 +59,7 @@ Workflow script starts, follow [the Workflow gate recipe](docs/recipes/workflow-
 
 ## How it works
 
-**Governed** — model, effort, permission mode, per-phase budgets and tool
+**Governed** — model, effort, permission mode, per-role budgets and tool
 allow-lists are pinned once per series, so every spawn runs under the same
 audited rules.
 
@@ -120,12 +120,12 @@ permission_mode = "acceptEdits"
 timeout_seconds = 1800
 tier = "weak"              # or an explicit model = "<api model id>"
 
-[governance.budgets]       # USD caps per phase
+[governance.budgets]       # USD caps per role
 implementation = 1.0
 review = 0.5
 fix = 0.5
 
-[governance.tools]         # allow-lists per phase
+[governance.tools]         # allow-lists per role
 implementation = ["Read", "Edit", "Write", "Bash"]
 review = ["Read", "Grep", "Glob"]
 fix = ["Read", "Edit", "Write", "Bash"]

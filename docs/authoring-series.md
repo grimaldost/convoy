@@ -115,6 +115,6 @@ Practical notes for the single-PR shape:
 - The DAG is trivial, but the schema still wants the section complete: one `[[prs]]`
   entry, `depends_on = []`.
 - Budget to the task, not to a wave: with one PR there is no cross-PR amortization,
-  so the per-phase caps are the whole ceiling.
+  so the per-role caps are the whole ceiling.
 - `resume` still works and still matters — a killed driver resumes without
   re-purchasing the implementation if it already gated green.

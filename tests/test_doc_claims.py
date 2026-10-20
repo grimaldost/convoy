@@ -408,3 +408,26 @@ def test_the_skill_names_no_model_id() -> None:
         f'skills/convoy/SKILL.md names model ids {found}; say "an explicit `model`" or use '
         'a tier, and point at the resolution chain instead (ADR-0010)'
     )
+
+
+# `[governance.budgets]` and `[governance.tools]` are keyed by the governance role
+# (implementation / review / fix); "phase" is the `[[prs]].phase` grouping tag. These files
+# say so. skills/convoy/SKILL.md and the plugin manifests join this list once the CONV-B75
+# branch has landed.
+_ROLE_TABLE_DOCS = ('README.md', 'docs/design/02-formats.md', 'docs/authoring-series.md')
+_PER_PHASE = re.compile(r'(?i)per[- ]phase')
+_ROLE_TABLE_WORDS = re.compile(r'(?i)budget|cap|ceiling|allow-list|tool')
+
+
+@pytest.mark.parametrize('doc', _ROLE_TABLE_DOCS)
+def test_the_role_tables_are_not_called_per_phase(doc: str) -> None:
+    """The budget and tool tables are per role; "phase" is the grouping tag, a different thing."""
+    offenders = [
+        f'{doc}:{number}: {line.strip()}'
+        for number, line in enumerate(_text(*doc.split('/')).splitlines(), start=1)
+        if _PER_PHASE.search(line) and _ROLE_TABLE_WORDS.search(line)
+    ]
+    assert offenders == [], (
+        'the budget and tool tables are keyed by the governance role (implementation / '
+        'review / fix), not by phase; say "per role":\n' + '\n'.join(offenders)
+    )
