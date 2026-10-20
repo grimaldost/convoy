@@ -1,5 +1,9 @@
 name: ci
 
+# The pipeline, the commit checks and the required `gate` status come from railform, pinned
+# below by `railform adopt` (the `railform` and `gate` jobs); this repository's own frame is
+# railform.toml. The jobs this file does not own would go here, and `gate` waits for them too.
+
 # Least privilege: the gate only checks out and runs commands.
 permissions:
   contents: read
@@ -7,75 +11,24 @@ permissions:
 on:
   push:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
-  checks:
-    # Both OSes, because the engine's failure history is platform-shaped: the locale-decode
-    # class (cp1252 vs agent-produced UTF-8) and the path-separator class are invisible to a
-    # Linux-only leg and were each caught after the fact on a Windows machine.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          python-version: '3.14'
-      # Before anything that would rewrite it. uv.lock carries the package version, and it
-      # recorded 0.1.1 through the whole of 0.2.0 because `uv sync` was not part of the
-      # documented cut. A test cannot catch this: `uv run` re-locks before it runs pytest,
-      # so the file is already repaired by the time a test could read it. `--check` fails
-      # on a stale lock instead of fixing it, which is the whole point.
-      - run: uv lock --check
-      - run: uv sync
-      - run: uv run ruff check src tests
-      - run: uv run ruff format --check src tests
-      - run: uv run ty check src
-      - run: uv run pytest
-
-  # The one status check the branch ruleset requires, by the exact context `gate`.
-  #
-  # A matrix job does not report that context: it reports one check per leg
-  # (`gate (ubuntu-latest)`, `gate (windows-latest)`). So the moment the gate gained its
-  # second operating system the required context stopped being reported at all, and every
-  # pull request became unmergeable with every check green — the change breaking the
-  # requirement it had to satisfy. This job is that context. It runs no gate command; it
-  # only asserts that every leg passed.
-  #
-  # Kept here rather than re-pointing the ruleset at the two leg names, so the matrix can
-  # gain or lose an operating system without the merge requirement having to be edited
-  # again — and so the next person to add a leg does not rediscover this by being blocked.
-  gate:
-    needs: checks
-    # Without this the aggregate is SKIPPED when a leg goes red, and a skipped required
-    # check never fails a pull request — it just never arrives, which is the same silence
-    # this job exists to remove.
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Every leg of the matrix must have succeeded
-        # Through the environment, not through a `${{ }}` expansion in the script. An
-        # expansion is substituted into the script TEXT before bash parses it, so whether
-        # the line is safe depends on what the value contains; an env var is data whatever
-        # it contains. This value is one of four words GitHub chooses, so nothing is
-        # exploitable here - the point is to stop carrying a shape an audit has to judge.
-        env:
-          CHECKS_RESULT: ${{ needs.checks.result }}
-        run: '[ "$CHECKS_RESULT" = "success" ]'
-
-  zizmor:
+  # >>> railform: owned by `railform adopt`; `railform adopt --check` fails on any edit
+  railform:
+    uses: grimaldost/railform/.github/workflows/python-ci.yml@65bf54ae6f4ed7bd027fee9e0806d9dfa2df3c48
     permissions:
       contents: read
+    with:
+      railform-sha: 65bf54ae6f4ed7bd027fee9e0806d9dfa2df3c48
+  gate:
+    if: always()
+    needs: [railform]
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-      - run: uvx zizmor==1.30.0 --min-severity high .github/workflows
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Fail when a needed job failed or was cancelled
+        if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
+        shell: bash
+        run: exit 1
+  # <<< railform

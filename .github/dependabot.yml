@@ -11,6 +11,10 @@ updates:
     directory: "/"
     schedule:
       interval: monthly
+    # >>> railform: owned by `railform adopt`; `railform adopt --check` fails on any edit
+    ignore:
+      - dependency-name: grimaldost/railform
+    # <<< railform
   - package-ecosystem: uv
     directory: "/"
     schedule:

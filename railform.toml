@@ -1,0 +1,59 @@
+# This repository's frame for railform: `railform frame` prints the effective frame and
+# `railform frame --check` judges this file.
+[project]
+type = "python-package"
+
+[python]
+# The package requires Python 3.14 (pyproject.toml), so the one leg runs it.
+versions = ["3.14"]
+# Lint and format cover the sources and the tests, not the repository root.
+lint_paths = ["src", "tests"]
+
+[[exceptions]]
+key = "python.lint_paths"
+value = ["src", "tests"]
+reason = "ruff checks src and tests only; the repository root also holds scripts and fixtures that are not linted"
+
+# The engine's changelog and the contract surfaces its header enumerates (a new process exit
+# code, a telemetry event, field or value, a series.toml key). The record rows are the preset's.
+[changelog]
+contract_surfaces = [
+    "src/convoy/core/telemetry.py",
+    "src/convoy/core/spec.py",
+    "src/convoy/interface/drivers/headless.py",
+]
+
+[release]
+# Tags up to v0.17.1 predate adoption and several fail the release check (lightweight tag,
+# release commit outside the release metadata); the check judges the tags from the next one.
+since = "v0.17.2"
+# A release commit also stamps the backlog ledger (the preset lists no such file).
+metadata_paths = ["pyproject.toml", "uv.lock", "docs/backlog.md"]
+
+[[exceptions]]
+key = "release.metadata_paths"
+value = ["pyproject.toml", "uv.lock", "docs/backlog.md"]
+reason = "a convoy release commit also marks the shipped rows of docs/backlog.md"
+
+# The places the release version is written. The newest changelog heading arrives with its
+# section and is written by hand, so it is authored.
+[[version.sites]]
+path = "pyproject.toml"
+pattern = "(?m)^version = '([0-9][^']*)'"
+
+[[version.sites]]
+path = "src/convoy/__init__.py"
+pattern = "(?m)^__version__ = '([0-9][^']*)'"
+
+[[version.sites]]
+path = ".claude-plugin/plugin.json"
+pattern = '"version": "([0-9][^"]*)"'
+
+[[version.sites]]
+path = "skills/convoy/SKILL.md"
+pattern = 'This document describes convoy `([0-9]+\.[0-9]+\.[0-9]+)`'
+
+[[version.sites]]
+path = "CHANGELOG.md"
+pattern = '(?m)^## \[([0-9]+\.[0-9]+\.[0-9]+)\]'
+authored = true
