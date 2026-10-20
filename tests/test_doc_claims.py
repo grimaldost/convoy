@@ -20,8 +20,12 @@ promises to list them, and whether a stated count matches the real one.
 """
 
 import asyncio
+import functools
 import json
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -138,26 +142,110 @@ def test_the_marketplace_entry_is_the_one_the_installer_reads() -> None:
     assert not missing, f'the marketplace plugin description does not name {missing}'
 
 
-def _ci_gate_commands() -> list[str]:
-    """Every command CI's `checks` job runs, in the order CI runs them.
+# The gate a contributor reproduces is the pipeline railform runs for this repository's frame
+# (railform.toml over the python-package preset), not a list in the workflow file: ci.yml only
+# calls railform's reusable workflow at a pinned commit. So the expectation is read from the
+# effective frame, `railform frame --json`, run at the commit ci.yml pins.
+#
+# The documents spell the commands the way a contributor types them: no `--frozen` (a CI
+# flag) and `uv run pytest` for the test command (pytest's `-q` is in pyproject.toml).
 
-    Read from the workflow rather than restated here, so the expectation cannot be the thing
-    that goes stale. Parsed with a line regex instead of a YAML dependency: the job is plain
-    `- run:` steps, and a parser is not what this test is about.
+_RAILFORM_REPOSITORY = 'git+https://github.com/grimaldost/railform'
 
-    Scoped to `checks` rather than to the whole file. The workflow's other job is the `gate`
-    aggregator the branch ruleset requires by name; its one step asserts the matrix result
-    and is not a command a contributor reproduces locally. Reading the file whole would make
-    that assertion "a command CI runs" and demand the contributor docs list it — the same
-    reasoning that keeps the changelog gate in a workflow of its own.
+
+def _railform_pin() -> str:
+    """The railform commit ci.yml's `railform` job passes as `railform-sha`.
+
+    Read from the workflow, the file `railform adopt --pin` rewrites, so the pin has no copy
+    here that could lag behind it.
     """
     workflow = _text('.github', 'workflows', 'ci.yml')
-    job = re.search(r'^  checks:\n(.*?)(?=^  \S|\Z)', workflow, re.M | re.S)
-    if job is None:
-        return []  # the non-vacuity guard below owns this failure
-    return [
-        match.group(1).strip() for match in re.finditer(r'^\s*- run: (.+)$', job.group(1), re.M)
-    ]
+    match = re.search(r'^\s*railform-sha: ([0-9a-f]{40})\s*$', workflow, re.M)
+    assert match is not None, 'ci.yml passes no 40-hex `railform-sha` to the railform job'
+    return match.group(1)
+
+
+def _run_railform(*args: str, env: dict[str, str] | None = None) -> str:
+    """Run ``railform <args>`` at the pinned commit, through an interpreter launch (never a
+    console-script shim), and return its output without the closing verdict line.
+
+    Needs the network the first time a commit is installed, like the CI jobs that do the same.
+    """
+    uv = shutil.which('uv')
+    assert uv is not None, 'uv is not on PATH'
+    done = subprocess.run(
+        [
+            uv,
+            'run',
+            '--no-project',
+            '--with',
+            f'{_RAILFORM_REPOSITORY}@{_railform_pin()}',
+            'python',
+            '-m',
+            'railform',
+            *args,
+        ],
+        cwd=_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        timeout=300,
+        check=False,
+    )
+    assert done.returncode == 0, f'railform {" ".join(args)} failed:\n{done.stdout}{done.stderr}'
+    return '\n'.join(
+        line for line in done.stdout.splitlines() if not line.startswith('railform-verdict:')
+    )
+
+
+@functools.cache
+def _effective_frame() -> dict:
+    return json.loads(_run_railform('frame', '--json'))
+
+
+def _documented(command: str) -> str:
+    """The form a contributor document spells a pipeline command in."""
+    spelled = command.replace(' --frozen', '')
+    return re.sub(r'\bpython -m pytest( -q)?$', 'pytest', spelled)
+
+
+def _ci_gate_commands() -> list[str]:
+    """Every command the CI pipeline runs for this repository, in its order, as documented.
+
+    Built from the effective frame in the order of railform's python-package pipeline: the
+    lock check, the sync, the extra installs, the format check, the lint, the type check and
+    the test command. ``test_the_commands_read_from_the_frame_are_the_pipeline_ci_runs`` holds
+    this list to the pipeline railform itself writes, so the two cannot part.
+    """
+    frame = _effective_frame()
+    python = frame['python']
+    installs = frame['ci']['setup']['extra_installs']
+    lint = ' '.join(python['lint_paths'])
+    commands = ['uv lock --check', ' '.join(['uv', 'sync', *python['sync_args']])]
+    if installs:
+        commands.append(' '.join(['uv', 'pip', 'install', *installs]))
+    commands += [f'uv run ruff format --check {lint}', f'uv run ruff check {lint}']
+    if python['type_check']:
+        commands.append(f'uv run ty check {python["type_check"]}')
+    commands += [_documented(line) for line in python['test_command'].splitlines() if line.strip()]
+    return commands
+
+
+def test_the_commands_read_from_the_frame_are_the_pipeline_ci_runs(tmp_path: Path) -> None:
+    """The list above is a reading of the frame; this holds it to the pipeline itself.
+
+    `railform frame --github-output` writes the `pipeline` output the reusable workflow's
+    `checks` job runs line by line. Both are read at the commit ci.yml pins.
+    """
+    output = tmp_path / 'github-output'
+    output.write_text('', encoding='utf-8')
+    _run_railform('frame', '--github-output', env={**os.environ, 'GITHUB_OUTPUT': str(output)})
+    text = output.read_text(encoding='utf-8')
+    block = re.search(r'^pipeline<<(\S+)\n(.*?)\n\1$', text, re.M | re.S)
+    assert block is not None, f'no multi-line `pipeline` output in {text!r}'
+    pipeline = block.group(2).splitlines()
+    assert [_documented(line) for line in pipeline] == _ci_gate_commands()
 
 
 def _gate_block(body: str) -> str | None:
@@ -178,6 +266,13 @@ def _gate_block(body: str) -> str | None:
 # same set CI runs" while listing four of the six.
 _GATE_LISTING_DOCS = (('CONTRIBUTING.md',), ('AGENTS.md',))
 
+# Documents whose gate list must also keep the pipeline's order. AGENTS.md is left out until
+# 2026-11-08 (§21 of the development-rails spec, railform adoption): Claude Code sessions load
+# it, so it may not change before then, and it still lists `ruff check` before
+# `ruff format --check` while the pipeline runs the format check first. Put it back in this
+# tuple, with its commands reordered, in the change that edits AGENTS.md after that date.
+_ORDERED_GATE_DOCS = (('CONTRIBUTING.md',),)
+
 
 @pytest.mark.parametrize('parts', _GATE_LISTING_DOCS, ids=lambda parts: parts[-1])
 def test_the_documented_gate_names_every_command_ci_runs(parts: tuple[str, ...]) -> None:
@@ -195,7 +290,7 @@ def test_the_documented_gate_names_every_command_ci_runs(parts: tuple[str, ...])
     )
 
 
-@pytest.mark.parametrize('parts', _GATE_LISTING_DOCS, ids=lambda parts: parts[-1])
+@pytest.mark.parametrize('parts', _ORDERED_GATE_DOCS, ids=lambda parts: parts[-1])
 def test_the_documented_gate_keeps_cis_order(parts: tuple[str, ...]) -> None:
     """`uv lock --check` before `uv sync` is the whole reason it can ever fail.
 
@@ -207,15 +302,16 @@ def test_the_documented_gate_keeps_cis_order(parts: tuple[str, ...]) -> None:
     assert block is not None  # the check above owns this failure
     positions = [block.index(command) for command in _ci_gate_commands()]
     assert positions == sorted(positions), (
-        f'{parts[-1]} lists the gate commands in a different order than ci.yml runs them'
+        f'{parts[-1]} lists the gate commands in a different order than the pipeline runs them'
     )
 
 
 def test_the_ci_gate_is_not_empty() -> None:
-    """Non-vacuity guard: an unparsed workflow would make both checks above pass silently."""
+    """Non-vacuity guard: an unread frame would make both checks above pass silently."""
     commands = _ci_gate_commands()
     assert len(commands) >= 4, commands
     assert 'uv lock --check' in commands
+    assert commands.index('uv lock --check') < commands.index('uv sync')
 
 
 # The commit-time lane (.pre-commit-config.yaml) mirrors the fast half of the gate. The
@@ -244,11 +340,11 @@ def test_every_commit_lane_command_is_a_ci_gate_command() -> None:
 
 
 def test_the_commit_lane_keeps_cis_order() -> None:
-    """`uv lock --check` before anything that would repair the lock — CI's argument, here too."""
+    """`uv lock --check` before anything that would repair the lock — the pipeline's argument."""
     gate = _ci_gate_commands()
     positions = [gate.index(command) for command in _commit_lane_commands()]
     assert positions == sorted(positions), (
-        '.pre-commit-config.yaml runs the gate commands in a different order than ci.yml'
+        '.pre-commit-config.yaml runs the gate commands in a different order than the pipeline'
     )
 
 
@@ -260,15 +356,16 @@ def test_the_commit_lane_is_not_empty() -> None:
 
 
 def test_the_required_status_check_context_is_a_plain_job_named_gate() -> None:
-    """The branch ruleset requires one context, `gate`, and a matrix job never reports it.
+    """The branch ruleset requires one context, `gate`, and only a plain job reports it.
 
-    When the gate gained its second operating system the reported checks became
-    `gate (ubuntu-latest)` and `gate (windows-latest)`; the bare `gate` context stopped
-    existing, and the pull request that made the change sat unmergeable with all eight of
-    its checks green. The aggregator job restores that context. What is asserted here is
-    the set of properties the ruleset silently depends on — the ruleset lives in repository
-    settings and is invisible from the tree, so the next person to reshape the matrix has
-    no way to know it is watching.
+    A matrix job reports one check per leg (`gate (ubuntu-latest)`), never the bare `gate`
+    context; when the gate gained its second operating system the context stopped existing
+    and the pull request that made the change sat unmergeable with all eight of its checks
+    green. `railform adopt` now writes the `gate` job, after the `railform` job that calls
+    the reusable workflow (whose matrix lives inside the called workflow and reports under
+    that job's name). What is asserted here is the set of properties the ruleset silently
+    depends on — the ruleset lives in repository settings and is invisible from the tree, so
+    the next person to reshape this file has no way to know it is watching.
     """
     workflow = _text('.github', 'workflows', 'ci.yml')
     job = re.search(r'^  gate:\n(.*?)(?=^  \S|\Z)', workflow, re.M | re.S)
@@ -281,12 +378,13 @@ def test_the_required_status_check_context_is_a_plain_job_named_gate() -> None:
         'the `gate` job is a matrix, so it reports `gate (<leg>)` per leg and never the bare '
         '`gate` context the ruleset requires'
     )
-    assert re.search(r'^    needs: checks$', body, re.M), (
-        'the `gate` aggregate must depend on `checks`, or it reports success without the '
-        'matrix having run'
+    needs = re.search(r'^    needs: \[?([^\n\]]+)\]?$', body, re.M)
+    assert needs is not None and 'railform' in [n.strip() for n in needs.group(1).split(',')], (
+        'the `gate` aggregate must depend on the `railform` job, or it reports success without '
+        'the pipeline having run'
     )
     assert re.search(r'^    if: always\(\)$', body, re.M), (
-        'without `if: always()` a red leg leaves the aggregate SKIPPED, and a skipped '
+        'without `if: always()` a red job leaves the aggregate SKIPPED, and a skipped '
         'required check never fails a pull request — it just never arrives'
     )
 

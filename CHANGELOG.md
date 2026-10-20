@@ -13,6 +13,32 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Added
+
+- **A recipe for judging Claude Code Workflow agents with `convoy gate`.**
+  [`docs/recipes/workflow-gate.md`](docs/recipes/workflow-gate.md) gives a minimal
+  `.convoy/gate.toml`, the `convoy gate --trust` step that arms it, the `[convoy-phase: <tag>]`
+  marker for `agent()` prompts, an example Workflow script, the `.convoy/hook.log` lines for a
+  pass, a red and a residual red, and the known limits from the 2026-10-08 probe, updated for
+  the worktree fix below (a worktree-isolated agent is judged in its worktree when the spec is
+  committed). Documentation only; no behaviour changes.
+
+### Changed
+
+- **CI, the commit hooks and the changelog gate run through railform, pinned to one commit.**
+  `.github/workflows/ci.yml` now calls railform's reusable workflow (the lock check, the sync,
+  the format check, the lint over `src tests`, `ty`, pytest and the repository's checks, on
+  Ubuntu and Windows) and keeps the required `gate` status as the caller-level job `railform
+  adopt` writes. The pipeline runs the format check before the lint; the zizmor job and the
+  `changelog` workflow are replaced by railform's `audit` and `changelog` jobs, and
+  `scripts/changelog_gate.py` with its tests is deleted. The git hooks move from
+  `scripts/git-hooks/` to `.githooks/` (the old directory keeps stubs that fail with the
+  re-arm command); re-arm a clone with `railform arm` or `git config core.hooksPath .githooks`.
+  The frame is `railform.toml`; `tests/test_doc_claims.py` reads the gate commands from
+  `railform frame --json` instead of `ci.yml`, and `tests/test_changelog_headings.py` keeps the
+  `[Unreleased]` section-heading vocabulary that railform's gate does not read. No engine
+  behaviour changes.
+
 ### Fixed
 
 - **A worktree-isolated subagent is judged in its own worktree, not the main checkout.**

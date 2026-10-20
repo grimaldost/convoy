@@ -1675,7 +1675,7 @@ from `watch` to `proposed` on that replication. [triage: 2026-09-01 gate-only bu
 **Change.** Per-PR changelog fragments — `changelog.d/<pr>.md` — assembled into the release
 section at the cut, which removes the shared heading. Needs an ADR: it changes where every
 contributor records a change, adds an assembly step to the release checklist, and has to
-settle what `scripts/changelog_gate.py` accepts as a record, since today it reads the
+settle what `railform changelog-gate` accepts as a record, since today it reads the
 `CHANGELOG.md` diff. The documentation-only alternative — record that build-round conflicts
 in `CHANGELOG.md` are expected and additive — prices the conflict without removing it, and
 is a prose append with nothing displaced.

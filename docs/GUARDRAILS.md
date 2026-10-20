@@ -90,8 +90,9 @@ by a general mechanism, the way `test_the_names_being_pinned_are_actually_discov
 does for `test_doc_claims.py` (mechanization candidate). Worked examples, so none
 of the above is re-derived: the four `run_gate` refusals fixed in
 `interface/gate_service.py`, `test_convoy_gate_matches_the_cli_envelope`
-(`tests/test_mcp_server.py`), and the three `scripts/changelog_gate.py` rounds
-(`tests/test_changelog_gate.py`).
+(`tests/test_mcp_server.py`), and the three `scripts/changelog_gate.py` rounds (the script
+and its tests, `tests/test_changelog_gate.py`, were deleted when `railform changelog-gate`
+replaced them; they stay in the git history).
 
 ### Every subprocess is hermetic
 
