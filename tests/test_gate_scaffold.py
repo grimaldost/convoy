@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import typer.main
 from typer.testing import CliRunner
 
 import convoy.interface.cli as cli
@@ -286,7 +287,14 @@ def test_independent_without_init_is_usage(tmp_path: Path) -> None:
     assert '--init' in result.stderr
 
 
-# --- trust: --init trusts, --trust arms an existing spec ------------------------------------
+# --- trust: --init does not trust, --trust arms an existing spec ---------------------------
+
+
+def test_the_trust_help_does_not_claim_init_trusts() -> None:
+    gate_command = typer.main.get_command(cli.app).commands['gate']  # type: ignore[attr-defined]
+    trust_help = next(p.help for p in gate_command.params if p.name == 'trust')
+    assert '--init trusts' not in trust_help
+    assert '--init does not trust' in trust_help
 
 
 def _trust_list(home: Path) -> str:

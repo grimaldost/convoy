@@ -437,7 +437,8 @@ def gate(
                 'list (CONVOY_HOME/hook-trust.toml, default ~/.convoy/), which the hook '
                 "requires before it runs a project's checks — a cloned .convoy/gate.toml "
                 'must not run commands on dispatch until you say so. Needs an existing '
-                'project spec; --init trusts the project it scaffolds.'
+                'project spec; --init does not trust the project it scaffolds, so run '
+                '--trust after it.'
             ),
         ),
     ] = False,

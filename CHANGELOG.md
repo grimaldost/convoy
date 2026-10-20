@@ -45,6 +45,9 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   role, not per phase.** They are keyed by the governance role (implementation / review / fix);
   "phase" is the `[[prs]].phase` tag. A test pins the wording in those three files.
   Documentation only; no behaviour changes.
+- **The `convoy gate --trust` help no longer says `--init` trusts the project it scaffolds.** It
+  does not: `--init` writes `.convoy/gate.toml` and names `--trust` as the arming step. Help text
+  only; no behaviour changes.
 
 ## [0.17.1] - 2026-10-08
 
