@@ -13,6 +13,14 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-10-24
+
+**Patch**, by the test in `docs/design/02-formats.md`: no entry below carries
+**(consumer-affecting)**.
+
+CI, the commit hooks and the changelog gate move to railform, and the Workflow gate recipe, a
+per-role wording fix and a `--trust` help-text fix land. No engine behaviour changes.
+
 ### Added
 
 - **A recipe for judging Claude Code Workflow agents with `convoy gate`.**
