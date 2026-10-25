@@ -13,6 +13,70 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The Workflow gate recipe describes the worktree fix below.** In
+  [`docs/recipes/workflow-gate.md`](docs/recipes/workflow-gate.md) the "Read this first" warning
+  and the known limit that a worktree-isolated agent is judged against the main checkout are
+  gone; a new section, "Worktree-isolated agents", says by which spec an isolated agent is judged
+  in its worktree, to pin the spec from the project, and the three cases in which the agent's work
+  is not judged, with the trace each leaves. The outcome table gains `untrusted`. The example
+  script reads `tree_mismatch` and reports `green in another tree` for a pass judged in the
+  project checkout while the agent worked in another tree. The `--init`/`--trust` help-text note,
+  fixed in 0.17.2, is dropped, and the version the recipe was checked against is restated.
+  Documentation only.
+
+### Fixed
+
+- **A worktree-isolated subagent is judged in its own worktree, not the main checkout.**
+  **(consumer-affecting)** — the gate spec discovery order changes, and `hook.log` lines
+  gain fields. `find_gate_spec` tried `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` before the walk
+  up from the starting directory, so a subagent working in `<project>/.claude/worktrees/<id>`
+  was judged against the main checkout's files: a red that existed only in the worktree
+  passed. Discovery now walks up from the event's `cwd` (the workspace, for `convoy gate` and
+  `convoy_gate`) and uses the nearest `.convoy/gate.toml`; `$CLAUDE_PROJECT_DIR` is the
+  fallback when the walk finds none, and a linked worktree's main checkout after it. A directory
+  that has its own spec under a `$CLAUDE_PROJECT_DIR` that also has one now runs its own.
+
+  A linked git worktree that is not itself on the trust list runs on its anchor's entry: the
+  session project (`$CLAUDE_PROJECT_DIR`) when the worktree lies in it or belongs to the same
+  repository and the project is trusted, otherwise git's main checkout. It does so only while
+  the anchor's own spec is the one its entry pins and the worktree's spec matches it with
+  CRLF and CR line endings read as LF. A worktree spec that differs is refused loudly once
+  (`spec_changed`, a message to the operator that never tells the subagent to run
+  `--trust`); on the judge's retry the subagent stops unjudged and the refusal is logged,
+  and the messenger reports it to the orchestrator. When the nearest spec cannot be vouched
+  for (an unpinned entry, a root trusted only through `CONVOY_TRUSTED_ROOTS`, no anchor), the
+  spec the old discovery order found is judged instead if it is trusted, and the verdict
+  says so, so no tree that was gated goes ungated. A trusted spec from another checkout of the
+  same repository — that fallback's, or the main checkout's when the worktree has no spec of
+  its own because it is untracked — runs in the agent's worktree, not in its own tree, with a
+  judge lock of its own beside the anchor's log, so the checks see the agent's edits; this is
+  what `convoy_gate` and `convoy gate` given the worktree already did. A worktree spec nothing
+  trusted vouches for, under a trusted anchor with no spec of its own, is not run: the firing
+  says so on stderr (exit 0) and leaves an `untrusted` line in the anchor's `hook.log`. A
+  worktree's verdict is logged in its
+  anchor's `.convoy/hook.log`, where the orchestrator's messenger finds and reuses it. The
+  default oracles dir keys on one decision, `gate_service.anchor_of`, which the scaffold, the
+  hook, `convoy gate` and `convoy_gate` all call: a tree with its own trust entry, or a spec of
+  its own, keys on itself, and a worktree checking out its anchor's spec keys where the anchor
+  does. `convoy_gate` goes through the hook's own decision and fallback, and no message tells
+  anyone to run `convoy gate --trust` inside an agent's worktree: the advice names the checkout
+  it is made from. `convoy gate`'s note on whether the hook is armed follows the hook's own
+  decision, fallback included. The plugin's guard mirrors discovery and these trust sources.
+
+  A blocked verdict, to the subagent or to the orchestrator, carries
+  `convoy gate: judged <tree> against <spec>`. A green verdict in another working tree than
+  the agent's (a separate repository nested in the project, which no spec of the project runs
+  in) writes that line to stderr with exit 0, which Claude Code does not put in the model's
+  context. New `hook.log` fields: `anchor`, `agent_tree`, `tree_mismatch`, and
+  `fallback_from` when the fallback judged another tree; a reused verdict carries
+  `judged_workspace`, `judged_spec` and `judged_tree_mismatch`.
+
+  What is not judged: when the anchor's own spec changed since it was trusted, or the worktree's
+  spec differs from it, the agent's work is refused once, then let through on the retry and
+  reported by the messenger.
+
 ## [0.17.2] - 2026-10-24
 
 **Patch**, by the test in `docs/design/02-formats.md`: no entry below carries

@@ -8,6 +8,7 @@ the same way the gate runner's own tests do.
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,20 +27,31 @@ from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK
 from convoy.interface.gate_runner import SubprocessGateRunner
 from convoy.interface.gate_service import (
     GateSpecNotFoundError,
+    GateTarget,
+    TrustDecision,
+    anchor_of,
     convoy_home,
+    fallback_gate,
     find_gate_spec,
     gate_brief_envelope,
     gate_envelope,
     gate_root,
     gate_spec_env,
     gate_usage_envelope,
+    gated_tree,
     is_trusted,
+    main_checkout_of,
     oracles_dir_for,
+    oracles_root_for,
     resolve_gate_spec,
     run_gate,
+    same_path,
+    trust_anchor,
+    trust_decision,
     trust_project,
     trust_status,
     trusted_projects,
+    working_tree_of,
 )
 
 _PY = sys.executable
@@ -314,9 +326,19 @@ def _project_with_spec(root: Path) -> Path:
     return spec
 
 
-def test_find_gate_spec_prefers_the_project_dir_from_the_environment(tmp_path: Path) -> None:
+def test_find_gate_spec_prefers_the_walk_over_the_project_dir(tmp_path: Path) -> None:
+    """The nearest spec wins: a worktree's own, not the main checkout's (CONV-B75)."""
+    _project_with_spec(tmp_path / 'project')
+    worktree_spec = _project_with_spec(tmp_path / 'project' / '.claude' / 'worktrees' / 'a')
+    env = {'CLAUDE_PROJECT_DIR': str(tmp_path / 'project')}
+    assert find_gate_spec(tmp_path / 'project' / '.claude' / 'worktrees' / 'a', env) == (
+        worktree_spec
+    )
+
+
+def test_find_gate_spec_falls_back_to_the_project_dir(tmp_path: Path) -> None:
     project_spec = _project_with_spec(tmp_path / 'project')
-    _project_with_spec(tmp_path / 'elsewhere')
+    (tmp_path / 'elsewhere').mkdir()
     env = {'CLAUDE_PROJECT_DIR': str(tmp_path / 'project')}
     assert find_gate_spec(tmp_path / 'elsewhere', env) == project_spec
 
@@ -444,6 +466,334 @@ def test_vouched_roots_carry_no_pin(tmp_path: Path) -> None:
     spec.write_text('x = 1\n', encoding='utf-8')
     env = {'CONVOY_HOME': str(tmp_path / 'home'), 'CONVOY_TRUSTED_ROOTS': str(workspace)}
     assert trust_status(workspace, spec, env) == 'trusted'
+
+
+# --- a linked git worktree inherits its main checkout's pinned spec (CONV-B75) -----------------
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.com', *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _repo_with_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """A repository with a committed spec, and a linked worktree under it."""
+    project = tmp_path / 'proj'
+    spec = _project_with_spec(project)
+    spec.write_text('[series]\nid = "a"\n', encoding='utf-8')
+    _git(project, 'init', '-q', '-b', 'main')
+    _git(project, 'add', '-A')
+    _git(project, 'commit', '-q', '-m', 'spec')
+    worktree = project / '.claude' / 'worktrees' / 'agent'
+    _git(project, 'worktree', 'add', '-q', '-b', 'agent', str(worktree))
+    return project, worktree
+
+
+def _beside(project: Path, name: str = 'beside') -> Path:
+    """A linked worktree of *project* made next to it, not under it."""
+    worktree = project.parent / name
+    _git(project, 'worktree', 'add', '-q', '-b', name, str(worktree))
+    return worktree
+
+
+def test_find_gate_spec_falls_back_to_the_main_checkouts_spec(tmp_path: Path) -> None:
+    """A worktree beside the project, with no spec and no project dir, finds the project's."""
+    project, _nested = _repo_with_worktree(tmp_path)
+    worktree = _beside(project)
+    (worktree / '.convoy' / 'gate.toml').unlink()
+    assert find_gate_spec(worktree, {}) == (project.resolve() / '.convoy' / 'gate.toml')
+    # Its own spec, when it has one, is still the nearest.
+    (worktree / '.convoy' / 'gate.toml').write_text('', encoding='utf-8')
+    assert find_gate_spec(worktree, {}) == worktree.resolve() / '.convoy' / 'gate.toml'
+
+
+def test_find_gate_spec_does_not_reach_a_separate_repositorys_spec(tmp_path: Path) -> None:
+    project, _nested = _repo_with_worktree(tmp_path)
+    other = tmp_path / 'other'
+    other.mkdir()
+    _git(other, 'init', '-q', '-b', 'main')
+    assert find_gate_spec(other, {}) is None
+    assert working_tree_of(other / 'x') == other.resolve()
+    assert working_tree_of(project / '.claude') == project.resolve()
+
+
+def _target(spec: Path, workspace: Path, status: str = 'trusted') -> GateTarget:
+    return GateTarget(spec, workspace, TrustDecision(status), nearest=spec)
+
+
+def test_a_trusted_spec_runs_in_a_linked_worktree_of_its_repository(tmp_path: Path) -> None:
+    project, nested = _repo_with_worktree(tmp_path)
+    beside = _beside(project)
+    spec = project / '.convoy' / 'gate.toml'
+    assert gated_tree(_target(spec, project), nested) == nested.resolve()
+    assert gated_tree(_target(spec, project), beside) == beside.resolve()
+    assert gated_tree(_target(spec, project), project) == project.resolve()
+
+
+@pytest.mark.parametrize('status', ['untrusted', 'changed', 'differs'])
+def test_a_spec_that_may_not_run_keeps_its_own_tree(tmp_path: Path, status: str) -> None:
+    project, nested = _repo_with_worktree(tmp_path)
+    spec = project / '.convoy' / 'gate.toml'
+    assert gated_tree(_target(spec, project, status), nested) == project.resolve()
+
+
+def test_a_tree_of_another_repository_is_not_judged_by_the_spec(tmp_path: Path) -> None:
+    """A separate repository nested in the project, or a directory outside git, is no checkout."""
+    project, _nested = _repo_with_worktree(tmp_path)
+    vendored = project / 'vendor'
+    vendored.mkdir()
+    _git(vendored, 'init', '-q', '-b', 'main')
+    spec = project / '.convoy' / 'gate.toml'
+    assert gated_tree(_target(spec, project), vendored) == project.resolve()
+    assert gated_tree(_target(spec, project), tmp_path) == project.resolve()
+
+
+def test_a_subproject_spec_runs_in_the_same_directory_of_the_worktree(tmp_path: Path) -> None:
+    """A spec governing ``pkg/`` of the repository runs in the worktree's ``pkg/``."""
+    project = tmp_path / 'mono'
+    (project / 'pkg').mkdir(parents=True)
+    (project / 'pkg' / 'mod.py').write_text('', encoding='utf-8')
+    _git(project, 'init', '-q', '-b', 'main')
+    _git(project, 'add', '-A')
+    _git(project, 'commit', '-q', '-m', 'init')
+    spec = _project_with_spec(project / 'pkg')
+    worktree = _beside(project)
+    assert gated_tree(_target(spec, project / 'pkg'), worktree) == worktree.resolve() / 'pkg'
+    (worktree / 'pkg' / 'mod.py').unlink()
+    (worktree / 'pkg').rmdir()
+    assert gated_tree(_target(spec, project / 'pkg'), worktree) == (project / 'pkg').resolve()
+
+
+def test_main_checkout_of_names_a_linked_worktrees_main_checkout(tmp_path: Path) -> None:
+    project, worktree = _repo_with_worktree(tmp_path)
+    assert main_checkout_of(worktree) == project.resolve()
+    assert main_checkout_of(project) is None
+    assert main_checkout_of(tmp_path) is None
+
+
+def test_a_git_file_its_git_dir_does_not_name_back_is_no_worktree(tmp_path: Path) -> None:
+    """A ``.git`` file copied elsewhere points at a real worktree's git dir, which disowns it."""
+    _project, worktree = _repo_with_worktree(tmp_path)
+    impostor = tmp_path / 'impostor'
+    impostor.mkdir()
+    gitdir = (worktree / '.git').read_text(encoding='utf-8').removeprefix('gitdir:').strip()
+    (impostor / '.git').write_text(f'gitdir: {(worktree / gitdir).resolve()}\n', encoding='utf-8')
+    assert main_checkout_of(impostor) is None
+
+
+def test_a_worktree_inherits_the_main_checkouts_pinned_spec(tmp_path: Path) -> None:
+    project, worktree = _repo_with_worktree(tmp_path)
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    spec = worktree / '.convoy' / 'gate.toml'
+    assert trust_status(worktree, spec, env) == 'untrusted'
+    trust_project(project, env)
+    assert trust_status(worktree, spec, env) == 'trusted'
+    spec.write_text('[series]\nid = "b"\n', encoding='utf-8')
+    assert trust_status(worktree, spec, env) == 'changed'
+    # Trusting the worktree itself is its own entry, with its own pin.
+    trust_project(worktree, env)
+    assert trust_status(worktree, spec, env) == 'trusted'
+
+
+def test_an_unpinned_or_vouched_main_checkout_passes_nothing_on(tmp_path: Path) -> None:
+    project, worktree = _repo_with_worktree(tmp_path)
+    spec = worktree / '.convoy' / 'gate.toml'
+    home = tmp_path / 'home'
+    vouched = {'CONVOY_HOME': str(home), 'CONVOY_TRUSTED_ROOTS': str(project)}
+    assert trust_status(project, project / '.convoy' / 'gate.toml', vouched) == 'trusted'
+    assert trust_status(worktree, spec, vouched) == 'untrusted'
+    home.mkdir()
+    (home / 'hook-trust.toml').write_text(
+        f'[[projects]]\nroot = "{project.resolve().as_posix()}"\nspec_sha256 = ""\n',
+        encoding='utf-8',
+    )
+    unpinned = {'CONVOY_HOME': str(home)}
+    assert trust_status(project, project / '.convoy' / 'gate.toml', unpinned) == 'trusted'
+    assert trust_status(worktree, spec, unpinned) == 'untrusted'
+
+
+# --- the trust anchor of a worktree, and the layouts git allows (CONV-B75 review) --------------
+
+
+def _point(root: Path, text: str) -> None:
+    """Write *root*'s ``.git`` file, replacing the one git wrote.
+
+    Git for Windows creates it hidden (``core.hideDotFiles``), and opening a hidden file for
+    writing raises ``PermissionError`` there: it is removed first, never written over.
+    """
+    dot_git = root / '.git'
+    dot_git.unlink(missing_ok=True)
+    dot_git.write_text(text, encoding='utf-8')
+
+
+def _gitdir_of(worktree: Path) -> Path:
+    pointer = (worktree / '.git').read_text(encoding='utf-8').removeprefix('gitdir:').strip()
+    return (worktree / pointer).resolve()
+
+
+def test_same_path_reads_windows_spellings_of_one_path_as_one() -> None:
+    """Git on Windows may write a lower-case drive and backslashes where Python resolves ``C:/``."""
+    assert same_path('c:\\work\\proj\\.git', 'C:/work/proj/.git', windows=True)
+    assert same_path('C:\\Work\\Proj', 'c:/work/proj', windows=True)
+    assert not same_path('c:\\work\\proj', 'c:\\work\\other', windows=True)
+    assert not same_path('/work/Proj', '/work/proj', windows=False)
+
+
+def test_a_nul_byte_in_a_git_pointer_is_no_worktree(tmp_path: Path) -> None:
+    root = tmp_path / 'odd'
+    root.mkdir()
+    _point(root, 'gitdir: bad\x00path\n')
+    assert main_checkout_of(root) is None
+    assert trust_anchor(root, {'CONVOY_HOME': str(tmp_path / 'home')}) is None
+
+
+def test_relative_gitdir_pointers_are_followed(tmp_path: Path) -> None:
+    """``git worktree add --relative-paths`` (git 2.48+) writes both pointers relative."""
+    project, worktree = _repo_with_worktree(tmp_path)
+    own = _gitdir_of(worktree)
+    _point(worktree, f'gitdir: {os.path.relpath(own, worktree)}\n')
+    (own / 'gitdir').write_text(os.path.relpath(worktree / '.git', own) + '\n', encoding='utf-8')
+    assert main_checkout_of(worktree) == project.resolve()
+
+
+def test_a_submodule_is_not_a_worktree(tmp_path: Path) -> None:
+    """A submodule's ``.git`` file names a git dir under ``.git/modules`` with no ``commondir``."""
+    project = tmp_path / 'proj'
+    modules = project / '.git' / 'modules' / 'sub'
+    modules.mkdir(parents=True)
+    sub = project / 'sub'
+    sub.mkdir()
+    _point(sub, 'gitdir: ../.git/modules/sub\n')
+    assert main_checkout_of(sub) is None
+    assert trust_anchor(sub, {'CONVOY_HOME': str(tmp_path / 'home')}) is None
+
+
+def test_a_worktree_whose_commondir_is_missing_is_no_worktree(tmp_path: Path) -> None:
+    _project, worktree = _repo_with_worktree(tmp_path)
+    (_gitdir_of(worktree) / 'commondir').unlink()
+    assert main_checkout_of(worktree) is None
+
+
+def test_a_bare_repositorys_worktree_anchors_on_the_session_project(tmp_path: Path) -> None:
+    """Bare repository plus worktrees: no main checkout, so the session project is the anchor."""
+    project, _worktree = _repo_with_worktree(tmp_path)
+    bare = tmp_path / 'repo.git'
+    _git(tmp_path, 'clone', '-q', '--bare', str(project), str(bare))
+    session = tmp_path / 'session'
+    _git(bare, 'worktree', 'add', '-q', str(session), 'main')
+    agent = session / '.claude' / 'worktrees' / 'a'
+    _git(session, 'worktree', 'add', '-q', '-b', 'a', str(agent))
+    assert main_checkout_of(agent) is None
+    env = {'CONVOY_HOME': str(tmp_path / 'home'), 'CLAUDE_PROJECT_DIR': str(session)}
+    spec = agent / '.convoy' / 'gate.toml'
+    assert trust_decision(agent, spec, env).status == 'untrusted'
+    trust_project(session, env)
+    decision = trust_decision(agent, spec, env)
+    assert (decision.status, decision.anchor) == ('trusted', session.resolve())
+
+
+def test_a_session_in_a_linked_worktree_anchors_its_agents_worktrees(tmp_path: Path) -> None:
+    """The session project is a worktree of M; an agent worktree made from it anchors there."""
+    project, _worktree = _repo_with_worktree(tmp_path)
+    session = tmp_path / 'session'
+    _git(project, 'worktree', 'add', '-q', '-b', 'session', str(session))
+    agent = session / '.claude' / 'worktrees' / 'a'
+    _git(session, 'worktree', 'add', '-q', '-b', 'a', str(agent))
+    env = {'CONVOY_HOME': str(tmp_path / 'home'), 'CLAUDE_PROJECT_DIR': str(session)}
+    trust_project(session, env)
+    assert trust_anchor(agent, env) == session.resolve()
+    decision = trust_decision(agent, agent / '.convoy' / 'gate.toml', env)
+    assert (decision.status, decision.anchor) == ('trusted', session.resolve())
+    # A session project nobody trusted is no anchor: git's main checkout is the next one.
+    untrusting = {'CONVOY_HOME': str(tmp_path / 'other-home'), 'CLAUDE_PROJECT_DIR': str(session)}
+    assert trust_anchor(agent, untrusting) == project.resolve()
+
+
+@pytest.mark.parametrize(
+    ('anchor_bytes', 'worktree_bytes'),
+    [
+        (b'[series]\nid = "a"\n', b'[series]\r\nid = "a"\r\n'),
+        (b'[series]\r\nid = "a"\r\n', b'[series]\nid = "a"\n'),
+        (b'[series]\nid = "a"\n', b'[series]\rid = "a"\r'),
+    ],
+    ids=['lf-to-crlf', 'crlf-to-lf', 'lf-to-cr'],
+)
+def test_line_endings_do_not_break_inheritance(
+    tmp_path: Path, anchor_bytes: bytes, worktree_bytes: bytes
+) -> None:
+    project, worktree = _repo_with_worktree(tmp_path)
+    (project / '.convoy' / 'gate.toml').write_bytes(anchor_bytes)
+    spec = worktree / '.convoy' / 'gate.toml'
+    spec.write_bytes(worktree_bytes)
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    trust_project(project, env)
+    assert trust_decision(worktree, spec, env).status == 'trusted'
+    spec.write_bytes(worktree_bytes.replace(b'"a"', b'"b"'))
+    decision = trust_decision(worktree, spec, env)
+    assert (decision.status, decision.anchor) == ('differs', project.resolve())
+    assert trust_status(worktree, spec, env) == 'changed'
+
+
+def test_an_anchor_that_cannot_vouch_falls_back_to_judging_its_own_tree(tmp_path: Path) -> None:
+    """Unpinned or vouched anchors leave the worktree untrusted; the fallback gates the anchor."""
+    project, worktree = _repo_with_worktree(tmp_path)
+    spec = worktree / '.convoy' / 'gate.toml'
+    env = {'CONVOY_HOME': str(tmp_path / 'home'), 'CONVOY_TRUSTED_ROOTS': str(project)}
+    decision = trust_decision(worktree, spec, env)
+    assert (decision.status, decision.anchor) == ('untrusted', project.resolve())
+    fallback = fallback_gate(spec, worktree, decision.anchor, env)
+    assert fallback is not None
+    fallback_spec, fallback_root, fallback_decision = fallback
+    assert fallback_spec == project.resolve() / '.convoy' / 'gate.toml'
+    assert fallback_root == project.resolve()
+    assert fallback_decision.status == 'trusted'
+    assert (
+        fallback_gate(spec, worktree, decision.anchor, {'CONVOY_HOME': env['CONVOY_HOME']}) is None
+    )
+
+
+def test_a_tree_with_its_own_entry_is_its_own_anchor(tmp_path: Path) -> None:
+    """A session checkout S, a linked worktree of M, keys on itself once it has its own entry."""
+    project, _worktree = _repo_with_worktree(tmp_path)
+    session = tmp_path / 'session-wt'
+    _git(project, 'worktree', 'add', '-q', '-b', 'session', str(session))
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    # S checks out M's committed spec: it is M's spec, and keys where M keys.
+    assert anchor_of(session, env) == project.resolve()
+    trust_project(project, env)
+    assert anchor_of(session, env) == project.resolve()
+    trust_project(session, env)
+    assert anchor_of(session, env) == session.resolve()  # its own entry wins
+    assert oracles_root_for(session, env) == session.resolve()
+
+
+def test_a_tree_with_its_own_spec_or_none_is_its_own_anchor(tmp_path: Path) -> None:
+    """What ``--init`` scaffolds has no spec yet, then a spec of its own: both key on itself."""
+    project, _worktree = _repo_with_worktree(tmp_path)
+    session = tmp_path / 'session-wt'
+    _git(project, 'worktree', 'add', '-q', '-b', 'session', str(session))
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    trust_project(project, env)
+    spec = session / '.convoy' / 'gate.toml'
+    spec.unlink()
+    assert anchor_of(session, env) == session.resolve()
+    spec.write_text('[series]\nid = "session-wt"\n', encoding='utf-8')
+    assert anchor_of(session, env) == session.resolve()
+
+
+def test_a_worktrees_oracles_default_to_its_anchors(tmp_path: Path) -> None:
+    project, worktree = _repo_with_worktree(tmp_path)
+    env = {'CONVOY_HOME': str(tmp_path / 'home')}
+    assert oracles_root_for(worktree, env) == project.resolve()
+    assert oracles_root_for(project, env) == project.resolve()
+    spec_env = gate_spec_env(
+        worktree / '.convoy' / 'gate.toml', env, root=oracles_root_for(worktree, env)
+    )
+    assert spec_env['CONVOY_ORACLES'] == str(tmp_path / 'home' / 'oracles' / 'proj')
 
 
 def test_a_malformed_trust_list_is_a_spec_error(tmp_path: Path) -> None:

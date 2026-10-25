@@ -311,8 +311,9 @@ repair_brief, convoy_version}` — for reading the verdict inside a model turn w
 else in it. `series_file` is optional: omitted, the project spec is used and must be
 trusted on this machine (`convoy gate --trust`), the same standard the hook holds —
 `$CONVOY_GATE_SPEC` when the launching process set it (a missing file is refused, never
-walked past), then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then `.convoy/gate.toml` in
-the workspace and its parents — and a project spec loads with `CONVOY_ORACLES` defaulted to
+walked past), then `.convoy/gate.toml` in the workspace and its parents, nearest first,
+then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then a linked worktree's main checkout's —
+and a project spec loads with `CONVOY_ORACLES` defaulted to
 `~/.convoy/oracles/<project dir name>`; none found is a usage result naming where it looked.
 
 ## The gate without the run
@@ -379,8 +380,9 @@ A payload that is not a hook event — empty, malformed, or not a JSON object on
 read as silence.
 
 Three switches, all before anything executes. The project spec is the per-project
-switch — `$CONVOY_GATE_SPEC`, then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then
-`.convoy/gate.toml` from the event's `cwd` upward — and with none found the hook exits 0
+switch — `$CONVOY_GATE_SPEC`, then `.convoy/gate.toml` from the event's `cwd` upward,
+nearest first, then `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`, then a linked worktree's main
+checkout's — and with none found the hook exits 0
 silently, so installing the plugin arms nothing until a project opts in. The plugin's
 handler runs a standard-library guard (`src/convoy/interface/hook_guard.py`) before
 `convoy hook`: when no spec is found, or one is found in a project this machine does not
@@ -435,6 +437,33 @@ subagent through ungated. A lock left by a killed firing is taken over once the
 process it names is gone, or, when it names none, once it is ten seconds old. The lock orders judges. It does not make
 concurrent writers safe: subagents that edit at the same time need a tree each (a worktree
 per agent), because each gate judges whatever the others have half-written.
+
+A worktree agent is judged in its own worktree. When the worktree carries the spec (it is
+committed on the branch the worktree checks out), the judge walks up from the agent's `cwd`,
+stops at that spec, and runs it on its anchor's trust entry — the session project when it is
+trusted and the worktree lies in it or shares its repository, else git's main checkout — while
+that entry is pinned, the anchor's spec still matches the pin, and the worktree's spec matches
+the anchor's (line endings aside). When the worktree has no spec (it is untracked in the main
+checkout), or its copy cannot be vouched for (the anchor is trusted only through
+`CONVOY_TRUSTED_ROOTS` or by an entry with no pin), the anchor's trusted spec is run in the
+worktree instead (`gate_service.gated_tree`). Either way the verdict is logged in the anchor's
+`.convoy/hook.log`, where the orchestrator's messenger reuses it, and the oracles default to
+the anchor's (`gate_service.anchor_of`).
+
+The cases in which the worktree's work is not judged:
+
+- The worktree's spec differs from the anchor's, or the anchor's spec changed since it was
+  trusted: refused once, addressed to the operator; the subagent may stop on the retry, and
+  the messenger reports the refusal to the orchestrator.
+- The worktree carries a spec nothing trusted vouches for, and the trusted checkout it is made
+  from has no spec of its own: nothing runs; one exit-0 stderr line and an `untrusted` line in
+  that checkout's `hook.log` say so.
+- The agent works in a separate repository nested in the project, not a worktree of it: the
+  project is judged, and the verdict says so (an exit-0 stderr line on a green, which Claude
+  Code keeps out of the model's context, and `tree_mismatch: true` in `hook.log`).
+
+Commit the spec and trust it with a pin before relying on worktree isolation, and never run
+`convoy gate --trust` inside an agent's worktree.
 
 The envelope is written to be acted on, not just read: on a red gate `repair_brief`
 carries the failing-checks section — each blocking red's name, `detail` and declared

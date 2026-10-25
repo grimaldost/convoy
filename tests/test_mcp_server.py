@@ -1180,3 +1180,182 @@ def test_convoy_gate_discovery_requires_the_machine_to_trust_the_project(
     trust_project(tmp_path, dict(os.environ))
     result = asyncio.run(srv.convoy_gate(workspace=str(tmp_path)))
     assert result['ok'] is True
+
+
+def test_convoy_gate_in_a_worktree_runs_the_projects_oracle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CONV-B75 review, MAJOR 1: the default oracles dir keys on the worktree's anchor."""
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    monkeypatch.delenv('CONVOY_ORACLES', raising=False)
+    from convoy.interface.gate_service import trust_project
+
+    project = tmp_path / 'project'
+    (project / '.convoy').mkdir(parents=True)
+    oracle_run = f'"{_GATE_PY}" "${{CONVOY_ORACLES}}/oracle1.py"'.replace('\\', '\\\\')
+    (project / '.convoy' / 'gate.toml').write_text(
+        '[series]\nid = "mcp-gate"\n\n[[checks]]\nname = "oracle"\n'
+        f'run = "{oracle_run.replace(chr(34), chr(92) + chr(34))}"\n'
+        'asset = "${CONVOY_ORACLES}/oracle1.py"\nblocking = true\nindependent = true\n',
+        encoding='utf-8',
+    )
+    git = ['git', '-c', 'user.name=T', '-c', 'user.email=t@example.com']
+    for args in (['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'spec']):
+        subprocess.run([*git, *args], cwd=project, check=True, capture_output=True)
+    worktree = project / '.claude' / 'worktrees' / 'agent-abc123'
+    subprocess.run(
+        [*git, 'worktree', 'add', '-q', '-b', 'agent', str(worktree)],
+        cwd=project,
+        check=True,
+        capture_output=True,
+    )
+    oracles = Path(os.environ['CONVOY_HOME']) / 'oracles' / 'project'
+    oracles.mkdir(parents=True)
+    (oracles / 'oracle1.py').write_text('raise SystemExit(0)\n', encoding='utf-8')
+    trust_project(project, dict(os.environ))
+    for tree in (project, worktree):
+        result = asyncio.run(srv.convoy_gate(workspace=str(tree)))
+        assert result['outcome'] == 'completed', (tree, result)
+
+
+def _worktree_project(tmp_path: Path, run: str) -> tuple[Path, Path]:
+    """A project with a committed spec running *run*, and an agent worktree under it."""
+    project = tmp_path / 'project'
+    (project / '.convoy').mkdir(parents=True)
+    escaped = run.replace('\\', '\\\\').replace('"', '\\"')
+    (project / '.convoy' / 'gate.toml').write_text(
+        f'[series]\nid = "mcp-gate"\n\n[[checks]]\nname = "clean"\nrun = "{escaped}"\n'
+        'blocking = true\nindependent = false\n',
+        encoding='utf-8',
+    )
+    git = ['git', '-c', 'user.name=T', '-c', 'user.email=t@example.com']
+    for args in (['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'spec']):
+        subprocess.run([*git, *args], cwd=project, check=True, capture_output=True)
+    worktree = project / '.claude' / 'worktrees' / 'agent'
+    subprocess.run(
+        [*git, 'worktree', 'add', '-q', '-b', 'agent', str(worktree)],
+        cwd=project,
+        check=True,
+        capture_output=True,
+    )
+    return project, worktree
+
+
+_RED_IF_BROKEN = (
+    f'"{_GATE_PY}" -c "import pathlib, sys; sys.exit(int(pathlib.Path(\'broken.txt\').exists()))"'
+)
+
+
+@pytest.mark.parametrize('trust', ['vouched', 'unpinned'])
+def test_convoy_gate_in_a_worktree_falls_back_like_the_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trust: str
+) -> None:
+    """CONV-B75 review 2, MAJOR 2: an anchor that cannot vouch still gates the worktree."""
+    project, worktree = _worktree_project(tmp_path, _RED_IF_BROKEN)
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    monkeypatch.setenv('CLAUDE_PROJECT_DIR', str(project))
+    if trust == 'vouched':
+        monkeypatch.setenv('CONVOY_TRUSTED_ROOTS', str(project))
+    else:
+        home = Path(os.environ['CONVOY_HOME'])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / 'hook-trust.toml').write_text(
+            f'[[projects]]\nroot = "{project.resolve().as_posix()}"\nspec_sha256 = ""\n',
+            encoding='utf-8',
+        )
+    result = asyncio.run(srv.convoy_gate(workspace=str(worktree)))
+    assert result['outcome'] == 'blocked', result
+
+
+def test_convoy_gate_never_tells_a_worktree_to_trust_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from convoy.interface.gate_service import trust_project
+
+    project, worktree = _worktree_project(tmp_path, _RED_IF_BROKEN)
+    monkeypatch.setenv('CLAUDE_PROJECT_DIR', str(project))
+    trust_project(project, dict(os.environ))
+    spec = worktree / '.convoy' / 'gate.toml'
+    spec.write_text(spec.read_text(encoding='utf-8').replace('"clean"', '"lax"'), 'utf-8')
+    result = asyncio.run(srv.convoy_gate(workspace=str(worktree)))
+    assert result['outcome'] == 'usage'
+    assert str(project.resolve()) in result['error']
+    assert 'operator' in result['error']
+    assert f'in {worktree.resolve()}' not in result['error']
+    assert 'run `convoy gate --trust` there' not in result['error']
+
+
+@pytest.mark.parametrize('project_dir', [True, False], ids=['project-dir', 'no-project-dir'])
+@pytest.mark.parametrize('case', ['untracked-nested', 'untracked-beside', 'vouched', 'unpinned'])
+def test_convoy_gate_and_the_hook_judge_the_same_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, project_dir: bool
+) -> None:
+    """CONV-B75 review 3, MAJOR: on the same trees the hook and `convoy_gate` agree.
+
+    The red exists only in the agent's worktree; both block, and both name the worktree.
+    """
+    import json
+
+    from convoy.interface.gate_service import trust_project
+    from convoy.interface.hook import decide
+
+    git = ['git', '-c', 'user.name=T', '-c', 'user.email=t@example.com']
+    if case.startswith('untracked'):
+        project = tmp_path / 'project'
+        project.mkdir()
+        (project / 'README').write_text('x\n', encoding='utf-8')
+        for args in (['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'init']):
+            subprocess.run([*git, *args], cwd=project, check=True, capture_output=True)
+        (project / '.convoy').mkdir()
+        escaped = _RED_IF_BROKEN.replace('\\', '\\\\').replace('"', '\\"')
+        (project / '.convoy' / 'gate.toml').write_text(
+            f'[series]\nid = "mcp-gate"\n\n[[checks]]\nname = "clean"\nrun = "{escaped}"\n'
+            'blocking = true\nindependent = false\n',
+            encoding='utf-8',
+        )
+        worktree = tmp_path / 'beside' if case == 'untracked-beside' else project / '.claude' / 'wt'
+        subprocess.run(
+            [*git, 'worktree', 'add', '-q', '-b', 'agent', str(worktree)],
+            cwd=project,
+            check=True,
+            capture_output=True,
+        )
+        trust_project(project, dict(os.environ))
+    else:
+        project, worktree = _worktree_project(tmp_path, _RED_IF_BROKEN)
+        if case == 'vouched':
+            monkeypatch.setenv('CONVOY_TRUSTED_ROOTS', str(project))
+        else:
+            home = Path(os.environ['CONVOY_HOME'])
+            home.mkdir(parents=True, exist_ok=True)
+            (home / 'hook-trust.toml').write_text(
+                f'[[projects]]\nroot = "{project.resolve().as_posix()}"\nspec_sha256 = ""\n',
+                encoding='utf-8',
+            )
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    if project_dir:
+        monkeypatch.setenv('CLAUDE_PROJECT_DIR', str(project))
+    else:
+        monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    tool = asyncio.run(srv.convoy_gate(workspace=str(worktree)))
+    transcript = tmp_path / 't.jsonl'
+    lines = [
+        {'type': 'user', 'message': {'role': 'user', 'content': 'Implement it'}},
+        {
+            'type': 'assistant',
+            'message': {'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Write'}]},
+        },
+    ]
+    transcript.write_text('\n'.join(json.dumps(line) for line in lines), encoding='utf-8')
+    event = {
+        'hook_event_name': 'SubagentStop',
+        'session_id': 's',
+        'agent_id': 'a',
+        'cwd': str(worktree),
+        'agent_transcript_path': str(transcript),
+        'stop_hook_active': False,
+    }
+    hooked = decide(event, dict(os.environ))
+    assert hooked.record is not None
+    assert (tool['outcome'], hooked.record['outcome']) == ('blocked', 'blocked'), (tool, hooked)
+    assert tool['workspace'] == hooked.record['workspace'] == str(worktree.resolve())

@@ -28,7 +28,7 @@ import re
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import tomli_w
@@ -108,11 +108,15 @@ def find_gate_spec(start: Path, env: Mapping[str, str]) -> Path | None:
     ``$CONVOY_GATE_SPEC`` first when set — an explicit file the launching process names,
     refused (:class:`GateSpecNotFoundError`) when it does not exist, because a caller
     that set it and got a walk-up result instead would never learn its file is missing.
-    Then ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` — the root Claude Code hands a hook
-    or an MCP server, which may differ from the process cwd — then ``.convoy/gate.toml``
-    in *start* and each of its parents, so a gate invoked from a subdirectory finds the
-    project's spec the way git finds ``.git``. An env root without a spec falls through
-    to the walk rather than ending it.
+    Then ``.convoy/gate.toml`` in *start* and each of its parents, nearest first, so a
+    gate invoked from a subdirectory finds the project's spec the way git finds ``.git``,
+    and a subagent working in a worktree of the project (Claude Code puts an isolated
+    agent's under ``<project>/.claude/worktrees/<id>``) finds the worktree's own spec, not
+    the main checkout's. Only when the walk finds none,
+    ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` — the root Claude Code hands a hook or an
+    MCP server, which may lie outside *start*'s ancestry — and last, when *start* lies in a
+    linked git worktree, its main checkout's spec: a worktree made beside the project, or
+    from a project whose spec is not committed, has none of its own.
     """
     explicit = env.get(GATE_SPEC_ENV)
     if explicit:
@@ -120,16 +124,25 @@ def find_gate_spec(start: Path, env: Mapping[str, str]) -> Path | None:
         if not named.is_file():
             raise GateSpecNotFoundError(f'${GATE_SPEC_ENV}={explicit} is not an existing file')
         return named
-    candidates: list[Path] = []
+    resolved = Path(start).resolve()
+    candidates = [directory / GATE_SPEC_RELPATH for directory in (resolved, *resolved.parents)]
     project_dir = env.get(PROJECT_DIR_ENV)
     if project_dir:
         candidates.append(Path(project_dir) / GATE_SPEC_RELPATH)
-    resolved = Path(start).resolve()
-    candidates.extend(directory / GATE_SPEC_RELPATH for directory in (resolved, *resolved.parents))
     for candidate in candidates:
         if candidate.is_file():
             return candidate
+    tree = working_tree_of(resolved)
+    main = main_checkout_of(tree) if tree is not None else None
+    if main is not None and (main / GATE_SPEC_RELPATH).is_file():
+        return main / GATE_SPEC_RELPATH
     return None
+
+
+def working_tree_of(path: Path) -> Path | None:
+    """The nearest directory at or above *path* holding a ``.git``: the working tree it lies in."""
+    resolved = Path(path).resolve()
+    return next((d for d in (resolved, *resolved.parents) if (d / '.git').exists()), None)
 
 
 def resolve_gate_spec(series_file: Path | None, start: Path, env: Mapping[str, str]) -> Path:
@@ -145,8 +158,8 @@ def resolve_gate_spec(series_file: Path | None, start: Path, env: Mapping[str, s
         project_dir = env.get(PROJECT_DIR_ENV) or 'unset'
         raise GateSpecNotFoundError(
             f'no series file given and no {GATE_SPEC_RELPATH.as_posix()} found — searched '
-            f'${PROJECT_DIR_ENV} ({project_dir}), then {Path(start).resolve()} and its '
-            f'parents; pass a series file, or create the project spec'
+            f'{Path(start).resolve()} and its parents, then ${PROJECT_DIR_ENV} '
+            f'({project_dir}); pass a series file, or create the project spec'
         )
     return found
 
@@ -166,6 +179,72 @@ def gate_root(spec_path: Path, workspace: Path) -> Path:
     what the trust list is checked against and where the hook log goes.
     """
     return project_root_of(spec_path) or Path(workspace).resolve()
+
+
+def same_path(a: str, b: str, *, windows: bool = os.name == 'nt') -> bool:
+    """Whether two path strings name one path, read the way this platform reads paths.
+
+    Git on Windows may write a lower-case drive letter and backslashes in the pointers it
+    leaves (``c:\\work\\proj\\.git``) where Python spells ``C:/work/proj/.git``; on
+    Windows the two are one path, on POSIX a difference in case is a different path.
+    """
+    flavour = PureWindowsPath if windows else PurePosixPath
+    return flavour(a) == flavour(b)
+
+
+@dataclass(frozen=True)
+class GitLayout:
+    """Where a working tree's repository lives: its shared git dir, and whether it is linked."""
+
+    common: Path
+    linked: bool
+
+
+def git_layout(root: Path) -> GitLayout | None:
+    """Read *root*'s ``.git`` the way git wrote it; ``None`` when *root* holds none git reads.
+
+    Read from files rather than by running git: the hook's guard mirrors this with the
+    standard library alone, and a firing should not start a process to learn it. A
+    ``.git`` directory is a main checkout. A ``.git`` file names a git dir: with a
+    ``commondir`` in it, *root* is a linked worktree whose repository is that shared dir,
+    and the git dir must name *root*'s ``.git`` back (its ``gitdir`` file) or the pointer
+    is not believed; without one, it is a ``--separate-git-dir`` main checkout or a
+    submodule, whose repository is the git dir itself. A pointer that cannot be read, or
+    one carrying a byte no path can hold, is no layout.
+    """
+    dot_git = Path(root) / '.git'
+    try:
+        if dot_git.is_dir():
+            return GitLayout(dot_git.resolve(), linked=False)
+        if not dot_git.is_file():
+            return None
+        pointer = dot_git.read_text(encoding='utf-8').strip()
+        if not pointer.startswith('gitdir:'):
+            return None
+        own = (Path(root) / pointer.removeprefix('gitdir:').strip()).resolve()
+        commondir = own / 'commondir'
+        if not commondir.is_file():
+            return GitLayout(own, linked=False) if own.is_dir() else None
+        common = (own / commondir.read_text(encoding='utf-8').strip()).resolve()
+        back = (own / (own / 'gitdir').read_text(encoding='utf-8').strip()).resolve()
+        if not same_path(str(back), str(dot_git.resolve())):
+            return None
+    except OSError, UnicodeDecodeError, ValueError:
+        return None
+    return GitLayout(common, linked=True)
+
+
+def main_checkout_of(root: Path) -> Path | None:
+    """The main checkout of the linked git worktree at *root*; ``None`` for anything else.
+
+    The shared git dir's parent, when that dir is a checkout's ``.git``. A bare
+    repository's worktrees and a ``--separate-git-dir`` repository's have none that can be
+    read from the worktree; a submodule or a main checkout is no linked worktree.
+    """
+    layout = git_layout(root)
+    if layout is None or not layout.linked or layout.common.name != '.git':
+        return None
+    return layout.common.parent
 
 
 def convoy_home(env: Mapping[str, str]) -> Path:
@@ -196,6 +275,20 @@ class TrustEntry:
 
     root: Path
     spec_sha256: str = ''
+
+
+def spec_text_digest(spec_path: Path) -> str:
+    """sha256 of the spec's bytes with CRLF and CR line endings read as LF; ``''`` when unreadable.
+
+    What a worktree's spec is compared with its anchor's by: git's line-ending conversion
+    (``core.autocrlf``, ``.gitattributes`` ``eol``) can check one spec out with other line
+    endings than the anchor's file has, and that is no difference in what the gate runs.
+    """
+    try:
+        data = Path(spec_path).read_bytes()
+    except OSError:
+        return ''
+    return hashlib.sha256(data.replace(b'\r\n', b'\n').replace(b'\r', b'\n')).hexdigest()
 
 
 def spec_digest(spec_path: Path) -> str:
@@ -236,8 +329,72 @@ def trusted_projects(env: Mapping[str, str]) -> tuple[TrustEntry, ...]:
     return tuple(entries)
 
 
-def trust_status(root: Path, spec_path: Path | None, env: Mapping[str, str]) -> str:
-    """``trusted``, ``untrusted``, or ``changed`` (trusted, but the spec is not the one that was).
+@dataclass(frozen=True)
+class TrustDecision:
+    """Whether the hook may run a spec, and the tree a worktree's trust came from.
+
+    *status* is ``trusted``, ``untrusted``, ``changed`` (the root's own pinned spec is not
+    the one that was trusted) or ``differs`` (a worktree's spec is not its anchor's).
+    *anchor* is the tree a linked worktree inherits from — set for ``differs``, for an
+    inherited ``trusted``, and for an ``untrusted`` worktree whose anchor could not vouch.
+    """
+
+    status: str
+    anchor: Path | None = None
+
+
+def _vouched(resolved: Path, env: Mapping[str, str]) -> bool:
+    vouched = env.get(TRUSTED_ROOTS_ENV, '')
+    return any(Path(item).resolve() == resolved for item in vouched.split(os.pathsep) if item)
+
+
+def _listed(resolved: Path, env: Mapping[str, str]) -> TrustEntry | None:
+    return next((e for e in trusted_projects(env) if e.root.resolve() == resolved), None)
+
+
+def has_own_entry(root: Path, env: Mapping[str, str]) -> bool:
+    """Whether this machine trusts *root* by name: listed, pinned or not, or vouched for.
+
+    The operator opted that tree in, so a firing it cannot vouch for is worth a trace there.
+    A trust list that cannot be read names nothing.
+    """
+    resolved = Path(root).resolve()
+    try:
+        return _vouched(resolved, env) or _listed(resolved, env) is not None
+    except SpecError:
+        return False
+
+
+def trust_anchor(root: Path, env: Mapping[str, str]) -> Path | None:
+    """The tree the linked git worktree at *root* takes its trust from; ``None`` when there is none.
+
+    ``$CLAUDE_PROJECT_DIR`` first, when *root* lies inside it or belongs to the same
+    repository (it was made from it: an agent's worktree under a session that is itself a
+    worktree) and this machine trusts it (listed or vouched for); otherwise git's main
+    checkout. A *root* that is not a linked worktree has no anchor: it is its own tree.
+    """
+    layout = git_layout(root)
+    if layout is None or not layout.linked:
+        return None
+    resolved = Path(root).resolve()
+    project_dir = env.get(PROJECT_DIR_ENV)
+    if project_dir:
+        project = Path(project_dir).resolve()
+        project_layout = git_layout(project)
+        related = resolved.is_relative_to(project) or (
+            project_layout is not None and same_path(str(project_layout.common), str(layout.common))
+        )
+        if (
+            project != resolved
+            and related
+            and (_vouched(project, env) or _listed(project, env) is not None)
+        ):
+            return project
+    return main_checkout_of(root)
+
+
+def trust_decision(root: Path, spec_path: Path | None, env: Mapping[str, str]) -> TrustDecision:
+    """Whether the hook may run *spec_path* in *root*, with the anchor a worktree's trust came from.
 
     ``CONVOY_TRUSTED_ROOTS`` in *env* names roots the process that launched Claude Code
     vouches for — a harness or a CI job that stages a workspace it created and cannot
@@ -248,22 +405,233 @@ def trust_status(root: Path, spec_path: Path | None, env: Mapping[str, str]) -> 
     rewrite is no gate. The claim is only as strong as the environment the hook runs in;
     a project's own settings can set these variables, which is Claude Code's trust model
     to enforce, not this function's.
+
+    A linked git worktree that is not itself listed or vouched for inherits from its
+    :func:`trust_anchor`, for a pinned spec only: the anchor's own spec must still be the
+    one its entry pins, and the worktree's spec must match it once line endings are read
+    alike (:func:`spec_text_digest`) — ``trusted`` when it does, ``differs`` when it does
+    not, so a worktree cannot arm a different gate by itself. An anchor that cannot vouch
+    (an unpinned entry, a vouched-for root, a spec missing or changed) leaves the
+    worktree ``untrusted``, with the anchor named so the caller can judge the anchor's
+    own tree instead (:func:`fallback_gate`).
     """
     resolved = Path(root).resolve()
-    vouched = env.get(TRUSTED_ROOTS_ENV, '')
-    if any(Path(item).resolve() == resolved for item in vouched.split(os.pathsep) if item):
-        return 'trusted'
-    for entry in trusted_projects(env):
-        if entry.root.resolve() != resolved:
-            continue
+    if _vouched(resolved, env):
+        return TrustDecision('trusted')
+    entry = _listed(resolved, env)
+    if entry is not None:
         if (
             entry.spec_sha256
             and spec_path is not None
             and spec_digest(spec_path) != entry.spec_sha256
         ):
-            return 'changed'
-        return 'trusted'
-    return 'untrusted'
+            return TrustDecision('changed')
+        return TrustDecision('trusted')
+    anchor = trust_anchor(resolved, env)
+    if anchor is None or spec_path is None:
+        return TrustDecision('untrusted')
+    anchor_entry = _listed(anchor, env)
+    anchor_spec = anchor / GATE_SPEC_RELPATH
+    if (
+        anchor_entry is None
+        or not anchor_entry.spec_sha256
+        or not anchor_spec.is_file()
+        or spec_digest(anchor_spec) != anchor_entry.spec_sha256
+    ):
+        return TrustDecision('untrusted', anchor)
+    if spec_text_digest(spec_path) == spec_text_digest(anchor_spec):
+        return TrustDecision('trusted', anchor)
+    return TrustDecision('differs', anchor)
+
+
+def trust_status(root: Path, spec_path: Path | None, env: Mapping[str, str]) -> str:
+    """:func:`trust_decision`'s status, with ``differs`` read as ``changed``."""
+    status = trust_decision(root, spec_path, env).status
+    return 'changed' if status == 'differs' else status
+
+
+def fallback_gate(
+    spec_path: Path, workspace: Path, anchor: Path | None, env: Mapping[str, str]
+) -> tuple[Path, Path, TrustDecision] | None:
+    """The spec to judge by instead of an untrusted nearest one, so no gated tree goes ungated.
+
+    Before CONV-B75 the hook tried ``$CLAUDE_PROJECT_DIR``'s spec first and judged that
+    tree. When the nearest spec is untrusted, the anchor's spec and then that one are
+    tried, and the first whose tree the machine trusts (or refuses loudly) is returned
+    with its root and decision: the agent is judged in that tree, which the caller says.
+    ``None`` when neither gives anything but silence.
+    """
+    candidates: list[Path] = []
+    if anchor is not None:
+        candidates.append(anchor / GATE_SPEC_RELPATH)
+    project_dir = env.get(PROJECT_DIR_ENV)
+    if project_dir:
+        candidates.append(Path(project_dir).resolve() / GATE_SPEC_RELPATH)
+    nearest = Path(spec_path).resolve()
+    for candidate in candidates:
+        if not candidate.is_file() or candidate.resolve() == nearest:
+            continue
+        root = gate_root(candidate, workspace)
+        decision = trust_decision(root, candidate, env)
+        if decision.status != 'untrusted':
+            return candidate, root.resolve(), decision
+    return None
+
+
+def anchor_of(root: Path, env: Mapping[str, str]) -> Path:
+    """The tree *root* keys its default oracles on: itself, or the tree its spec came from.
+
+    A tree whose trust is its own entry (listed, or vouched for) is its own anchor, and so
+    is a tree with no spec yet (what ``convoy gate --init`` scaffolds) or one whose spec is
+    its own. A linked worktree whose spec is its :func:`trust_anchor`'s, line endings
+    aside, is that tree's checkout of it, and keys where that tree keys: an agent's worktree
+    under the session project runs the project's oracles, never ones named after the
+    worktree's own directory. Content and the trust list decide it, not who asks, so the
+    scaffold that writes an oracle and every gate that reads it agree.
+    """
+    resolved = Path(root).resolve()
+    if _vouched(resolved, env) or _listed(resolved, env) is not None:
+        return resolved
+    anchor = trust_anchor(resolved, env)
+    if anchor is None:
+        return resolved
+    own, theirs = resolved / GATE_SPEC_RELPATH, anchor / GATE_SPEC_RELPATH
+    if not own.is_file() or not theirs.is_file():
+        return resolved
+    if spec_text_digest(own) != spec_text_digest(theirs):
+        return resolved
+    return anchor_of(anchor, env)
+
+
+def oracles_root_for(root: Path, env: Mapping[str, str]) -> Path:
+    """The tree whose name keys *root*'s default oracles dir: :func:`anchor_of`.
+
+    A trust list that cannot be read is no list here: the loader is not where that is
+    reported, and the tree keys on itself.
+    """
+    try:
+        return anchor_of(root, env)
+    except SpecError:
+        return Path(root).resolve()
+
+
+def trust_hint(root: Path, env: Mapping[str, str]) -> str:
+    """What the operator does to arm *root*'s gate — never ``--trust`` inside an agent's worktree.
+
+    Trusting a linked worktree pins that worktree's own spec, which is how an edited gate
+    would arm itself; the advice names the checkout it is made from instead. A worktree that
+    already has its own entry (a long-lived checkout the operator trusted) is re-trusted
+    where it is.
+    """
+    resolved = Path(root).resolve()
+    layout = git_layout(resolved)
+    try:
+        own_entry = _vouched(resolved, env) or _listed(resolved, env) is not None
+        anchor = trust_anchor(resolved, env) if layout is not None and layout.linked else None
+    except SpecError:
+        own_entry, anchor = False, main_checkout_of(resolved)
+    if layout is None or not layout.linked or own_entry:
+        return f'run `convoy gate --trust` in {resolved}'
+    anchor = anchor or main_checkout_of(resolved)
+    if anchor is None:
+        return (
+            f'{resolved} is a git worktree: trust the checkout it is made from, and commit '
+            f'the spec there, never `convoy gate --trust` in the worktree itself'
+        )
+    return (
+        f'{resolved} is a git worktree: run `convoy gate --trust` in {anchor}, the checkout it '
+        f'inherits from, and commit the spec there so the worktree carries it'
+    )
+
+
+@dataclass(frozen=True)
+class GateTarget:
+    """The spec a discovered gate judges by, the tree it governs, and the machine's decision.
+
+    *nearest* is the spec discovery found; it differs from *spec* when
+    :func:`fallback_gate` replaced an untrusted nearest spec.
+    """
+
+    spec: Path
+    workspace: Path
+    decision: TrustDecision
+    nearest: Path
+
+    @property
+    def fallback_from(self) -> Path | None:
+        return self.nearest if self.spec != self.nearest else None
+
+
+def judged_target(spec_path: Path, start: Path, env: Mapping[str, str]) -> GateTarget:
+    """Decide which discovered spec runs where, for the hook and ``convoy_gate`` alike.
+
+    The nearest spec and the tree it governs, with :func:`trust_decision`; when that is
+    ``untrusted``, :func:`fallback_gate`'s spec and tree if it has one. Raises ``SpecError``
+    when the trust list cannot be read.
+    """
+    workspace = gate_root(spec_path, start)
+    decision = trust_decision(workspace, spec_path, env)
+    if decision.status == 'untrusted':
+        fallback = fallback_gate(spec_path, workspace, decision.anchor, env)
+        if fallback is not None:
+            spec, root, found = fallback
+            return GateTarget(spec, root, found, nearest=spec_path)
+    return GateTarget(spec_path, workspace, decision, nearest=spec_path)
+
+
+def gated_tree(target: GateTarget, agent_tree: Path) -> Path:
+    """The tree a trusted *target*'s checks run in for an agent working in *agent_tree*.
+
+    *target*'s own workspace, unless the agent works in another linked git worktree of the
+    same repository: then the same directory in the agent's worktree, so the checks see the
+    agent's edits. The spec stays the trusted one (it is read from where it was trusted,
+    never from the agent's tree), which is why a worktree with no spec of its own, or one
+    whose copy cannot be vouched for, is still judged where it worked. This is what
+    ``convoy gate`` and ``convoy_gate`` do when given the worktree as their workspace. Any
+    other tree (a separate repository nested in the project, a directory outside git, a
+    refused or untrusted target) is left to *target*'s workspace, and the hook says so.
+    """
+    workspace = Path(target.workspace).resolve()
+    if target.decision.status != 'trusted':
+        return workspace
+    agent = Path(agent_tree).resolve()
+    home = working_tree_of(workspace)
+    if home is None or home == agent:
+        return workspace
+    mine, theirs = git_layout(agent), git_layout(home)
+    if (
+        mine is None
+        or not mine.linked
+        or theirs is None
+        or not same_path(str(mine.common), str(theirs.common))
+    ):
+        return workspace
+    counterpart = agent / workspace.relative_to(home)
+    return counterpart if counterpart.is_dir() else workspace
+
+
+def refusal_reason(target: GateTarget, env: Mapping[str, str]) -> str:
+    """Why *target* may not run, addressed to the operator; ``''`` when it may."""
+    decision = target.decision
+    if decision.status == 'untrusted':
+        return (
+            f'the discovered gate spec {target.spec} is untrusted on this machine; '
+            f'{trust_hint(target.workspace, env)}'
+        )
+    if decision.status == 'changed':
+        return (
+            f'the gate spec {target.spec} changed since this machine trusted it; review it, '
+            f'then {trust_hint(target.workspace, env)}'
+        )
+    if decision.status == 'differs':
+        anchor = decision.anchor or target.workspace
+        return (
+            f'the gate spec {target.spec} in the worktree {target.workspace} differs from the '
+            f'spec trusted for {anchor} ({anchor / GATE_SPEC_RELPATH}); the worktree must carry '
+            f'the trusted spec: commit it where the worktree is made from, or review the '
+            f'difference'
+        )
+    return ''
 
 
 def is_trusted(root: Path, env: Mapping[str, str], spec_path: Path | None = None) -> bool:
