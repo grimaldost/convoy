@@ -1,2 +1,6 @@
 # Normalize line endings to LF in the repo; check out native on each platform.
 * text=auto eol=lf
+# >>> railform: owned by `railform adopt`; `railform adopt --check` fails on any edit
+.githooks/** text eol=lf
+scripts/git-hooks/** text eol=lf
+# <<< railform
