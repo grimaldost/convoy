@@ -72,7 +72,8 @@ def _spec_candidates(
     """Where the full hook looks for a gate spec, in its order.
 
     The payload's ``cwd`` (``.`` when absent or empty) and each of its parents, then
-    ``$CLAUDE_PROJECT_DIR``. Relative paths resolve against *cwd*, the process directory.
+    ``$CLAUDE_PROJECT_DIR``, then the main checkout of the linked git worktree the ``cwd``
+    lies in. Relative paths resolve against *cwd*, the process directory.
     """
     raw_cwd = payload.get('cwd')
     start = (cwd / (raw_cwd if isinstance(raw_cwd, str) and raw_cwd else '.')).resolve()
@@ -81,6 +82,10 @@ def _spec_candidates(
     project_dir = env.get(_PROJECT_DIR_ENV)
     if project_dir:
         yield cwd.joinpath(project_dir, *_GATE_SPEC)
+    tree = next((d for d in (start, *start.parents) if (d / '.git').exists()), None)
+    main = _main_checkout_of(tree) if tree is not None else None
+    if main is not None:
+        yield main.joinpath(*_GATE_SPEC)
 
 
 def _main_checkout_of(root: Path) -> Path | None:

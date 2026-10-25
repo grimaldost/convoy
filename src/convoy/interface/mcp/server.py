@@ -375,7 +375,9 @@ def _gate_impl(
             # A discovered spec runs on the model's say-so (the workspace argument is the
             # model's), so it is held to the hook's standard, through the hook's own
             # decision: the machine's trust, a worktree's anchor, and the fallback that
-            # keeps a gated tree gated. It runs in the workspace given, as it always has.
+            # keeps a gated tree gated. It runs in the workspace given, as it always has,
+            # which is where the hook runs it for an agent in that tree
+            # (gate_service.gated_tree).
             target = judged_target(spec_path, Path(workspace), os.environ)
             if target.decision.status != 'trusted':
                 raise SpecError(
@@ -419,7 +421,8 @@ async def convoy_gate(
                 'convoy series.toml, or a minimal file carrying only [series] id and '
                 '[[checks]]. Omitted, the project gate spec is used — '
                 '.convoy/gate.toml in the workspace and its parents, nearest first, then '
-                '$CLAUDE_PROJECT_DIR/.convoy/gate.toml; none found is a usage result. A '
+                "$CLAUDE_PROJECT_DIR/.convoy/gate.toml, then the main checkout's when the "
+                'workspace is a linked git worktree; none found is a usage result. A '
                 'relative path resolves against the server working directory, so prefer '
                 'absolute.'
             )

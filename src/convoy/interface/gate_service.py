@@ -114,7 +114,9 @@ def find_gate_spec(start: Path, env: Mapping[str, str]) -> Path | None:
     agent's under ``<project>/.claude/worktrees/<id>``) finds the worktree's own spec, not
     the main checkout's. Only when the walk finds none,
     ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` — the root Claude Code hands a hook or an
-    MCP server, which may lie outside *start*'s ancestry.
+    MCP server, which may lie outside *start*'s ancestry — and last, when *start* lies in a
+    linked git worktree, its main checkout's spec: a worktree made beside the project, or
+    from a project whose spec is not committed, has none of its own.
     """
     explicit = env.get(GATE_SPEC_ENV)
     if explicit:
@@ -130,7 +132,17 @@ def find_gate_spec(start: Path, env: Mapping[str, str]) -> Path | None:
     for candidate in candidates:
         if candidate.is_file():
             return candidate
+    tree = working_tree_of(resolved)
+    main = main_checkout_of(tree) if tree is not None else None
+    if main is not None and (main / GATE_SPEC_RELPATH).is_file():
+        return main / GATE_SPEC_RELPATH
     return None
+
+
+def working_tree_of(path: Path) -> Path | None:
+    """The nearest directory at or above *path* holding a ``.git``: the working tree it lies in."""
+    resolved = Path(path).resolve()
+    return next((d for d in (resolved, *resolved.parents) if (d / '.git').exists()), None)
 
 
 def resolve_gate_spec(series_file: Path | None, start: Path, env: Mapping[str, str]) -> Path:
@@ -338,6 +350,19 @@ def _vouched(resolved: Path, env: Mapping[str, str]) -> bool:
 
 def _listed(resolved: Path, env: Mapping[str, str]) -> TrustEntry | None:
     return next((e for e in trusted_projects(env) if e.root.resolve() == resolved), None)
+
+
+def has_own_entry(root: Path, env: Mapping[str, str]) -> bool:
+    """Whether this machine trusts *root* by name: listed, pinned or not, or vouched for.
+
+    The operator opted that tree in, so a firing it cannot vouch for is worth a trace there.
+    A trust list that cannot be read names nothing.
+    """
+    resolved = Path(root).resolve()
+    try:
+        return _vouched(resolved, env) or _listed(resolved, env) is not None
+    except SpecError:
+        return False
 
 
 def trust_anchor(root: Path, env: Mapping[str, str]) -> Path | None:
@@ -552,6 +577,37 @@ def judged_target(spec_path: Path, start: Path, env: Mapping[str, str]) -> GateT
             spec, root, found = fallback
             return GateTarget(spec, root, found, nearest=spec_path)
     return GateTarget(spec_path, workspace, decision, nearest=spec_path)
+
+
+def gated_tree(target: GateTarget, agent_tree: Path) -> Path:
+    """The tree a trusted *target*'s checks run in for an agent working in *agent_tree*.
+
+    *target*'s own workspace, unless the agent works in another linked git worktree of the
+    same repository: then the same directory in the agent's worktree, so the checks see the
+    agent's edits. The spec stays the trusted one (it is read from where it was trusted,
+    never from the agent's tree), which is why a worktree with no spec of its own, or one
+    whose copy cannot be vouched for, is still judged where it worked. This is what
+    ``convoy gate`` and ``convoy_gate`` do when given the worktree as their workspace. Any
+    other tree (a separate repository nested in the project, a directory outside git, a
+    refused or untrusted target) is left to *target*'s workspace, and the hook says so.
+    """
+    workspace = Path(target.workspace).resolve()
+    if target.decision.status != 'trusted':
+        return workspace
+    agent = Path(agent_tree).resolve()
+    home = working_tree_of(workspace)
+    if home is None or home == agent:
+        return workspace
+    mine, theirs = git_layout(agent), git_layout(home)
+    if (
+        mine is None
+        or not mine.linked
+        or theirs is None
+        or not same_path(str(mine.common), str(theirs.common))
+    ):
+        return workspace
+    counterpart = agent / workspace.relative_to(home)
+    return counterpart if counterpart.is_dir() else workspace
 
 
 def refusal_reason(target: GateTarget, env: Mapping[str, str]) -> str:

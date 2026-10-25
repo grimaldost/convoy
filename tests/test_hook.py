@@ -1311,46 +1311,237 @@ def test_a_session_in_a_linked_worktree_still_gates_its_agents_worktrees(tmp_pat
     assert result.record['anchor'] == str(session.resolve())
 
 
-def test_a_root_trusted_only_in_the_environment_still_gates(tmp_path: Path) -> None:
-    """MAJOR 3: an anchor that cannot vouch is judged in its own tree, and the verdict says so."""
+def _write_unpinned_entry(env: dict[str, str], root: Path) -> None:
+    """A trust entry for *root* with no pinned spec hash."""
+    home = Path(env['CONVOY_HOME'])
+    home.mkdir(parents=True, exist_ok=True)
+    (home / 'hook-trust.toml').write_text(
+        f'[[projects]]\nroot = {json.dumps(root.resolve().as_posix())}\n', encoding='utf-8'
+    )
+
+
+def _env_vouching(tmp_path: Path, project: Path, trust: str) -> dict[str, str]:
+    """An environment that trusts *project* without a pin: vouched for, or an unpinned entry."""
+    env = _home(tmp_path)
+    if trust == 'vouched':
+        env['CONVOY_TRUSTED_ROOTS'] = str(project)
+    else:
+        _write_unpinned_entry(env, project)
+    return env
+
+
+@pytest.mark.parametrize('project_dir', [True, False], ids=['project-dir', 'no-project-dir'])
+@pytest.mark.parametrize('trust', ['vouched', 'unpinned'])
+def test_a_project_that_cannot_vouch_for_a_worktree_spec_judges_the_worktree(
+    tmp_path: Path, trust: str, project_dir: bool
+) -> None:
+    """Third review, MAJOR (S8, S8b): the project's own spec runs in the agent's worktree.
+
+    The worktree's copy of the spec cannot be vouched for by an entry with no pin, so the
+    project's spec is judged instead, and it runs where the agent worked: the only red is
+    there.
+    """
     project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
-    (project / 'broken.txt').write_text('red\n', encoding='utf-8')
-    env = {
-        **_home(tmp_path),
-        'CLAUDE_PROJECT_DIR': str(project),
-        'CONVOY_TRUSTED_ROOTS': str(project),
-    }
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = _env_vouching(tmp_path, project, trust)
+    if project_dir:
+        env['CLAUDE_PROJECT_DIR'] = str(project)
     transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
     result = decide(_stop_payload(worktree, transcript), env)
     assert result.record is not None
     assert result.record['outcome'] == 'blocked'
-    assert result.record['workspace'] == str(project.resolve())
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    assert result.record['workspace'] == str(worktree.resolve())
+    assert result.record['spec'] == str(project.resolve() / '.convoy' / 'gate.toml')
+    assert result.record['anchor'] == str(project.resolve())
+    assert result.record['tree_mismatch'] is False
     assert result.record['fallback_from'] == str(worktree.resolve() / '.convoy' / 'gate.toml')
-    assert f'judged {project.resolve()}' in result.stderr
+    assert f'judged {worktree.resolve()}' in result.stderr
     assert 'not vouched for' in result.stderr
 
 
-def test_a_green_in_another_tree_is_said_and_logged(tmp_path: Path) -> None:
-    """MAJOR 4: an untracked spec in the main checkout judges it; the pass says which tree."""
+def _project_with_untracked_spec(
+    tmp_path: Path, *checks: str, sibling: bool = False
+) -> tuple[Path, Path]:
+    """A git project whose spec is written but not committed, and a linked worktree of it.
+
+    The state `convoy gate --init` leaves until the operator commits: the worktree has no
+    spec. *sibling* puts the worktree beside the project instead of under it.
+    """
     project = tmp_path / 'project'
     project.mkdir()
     _git(project, 'init', '-q', '-b', 'main')
     (project / 'README').write_text('x\n', encoding='utf-8')
     _git(project, 'add', '-A')
     _git(project, 'commit', '-q', '-m', 'init')
-    _project(project, _check('clean', _RED_IF_BROKEN))  # untracked: not in the worktree
-    worktree = project / '.claude' / 'worktrees' / 'agent-3'
+    _project(project, *checks)
+    worktree = tmp_path / 'agent-wt' if sibling else project / '.claude' / 'worktrees' / 'agent-3'
     _git(project, 'worktree', 'add', '-q', '-b', 'agent-3', str(worktree))
+    return project, worktree
+
+
+@pytest.mark.parametrize('project_dir', [True, False], ids=['project-dir', 'no-project-dir'])
+@pytest.mark.parametrize('sibling', [False, True], ids=['nested', 'sibling'])
+def test_an_untracked_project_spec_judges_the_agents_worktree(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], sibling: bool, project_dir: bool
+) -> None:
+    """Third review, MAJOR (S3, S3b, S6) and MINOR (S6b).
+
+    The worktree has no spec, so discovery finds the project's: on the walk (nested), from
+    `$CLAUDE_PROJECT_DIR`, or from git's main checkout (sibling, no project dir). It runs in
+    the agent's worktree and is logged in the project; nothing is written into the worktree.
+    """
+    project, worktree = _project_with_untracked_spec(
+        tmp_path, _check('clean', _RED_IF_BROKEN), sibling=sibling
+    )
     (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = _env_trusting(tmp_path, project)
+    if project_dir:
+        env['CLAUDE_PROJECT_DIR'] = str(project)
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    raw = json.dumps(_stop_payload(worktree, transcript)).encode()
+    assert run_hook(raw, env) == HOOK_EXIT_FEEDBACK
+    spec = project.resolve() / '.convoy' / 'gate.toml'
+    assert f'judged {worktree.resolve()} against {spec}' in capsys.readouterr().err
+    (line,) = _log_lines(project)
+    assert line['outcome'] == 'blocked'
+    assert line['workspace'] == str(worktree.resolve())
+    assert line['spec'] == str(spec)
+    assert line['anchor'] == str(project.resolve())
+    assert line['agent_tree'] == str(worktree.resolve())
+    assert line['tree_mismatch'] is False
+    assert not (worktree / '.convoy').exists()
+
+
+def test_a_worktree_judged_by_the_projects_spec_does_not_wait_for_the_projects_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two trees, two judge locks: a gate running in the project does not hold the worktree's."""
+    project, worktree = _project_with_untracked_spec(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
+    monkeypatch.setattr(hook_module, 'JUDGE_WAIT_SECONDS', 0.05)
+    monkeypatch.setattr(hook_module, 'JUDGE_POLL_SECONDS', 0.01)
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    held = project / '.convoy' / hook_module.JUDGE_LOCK_NAME
+    with judge_lock(held, wait_seconds=0, poll_seconds=0.01):
+        code = run_hook(json.dumps(_stop_payload(worktree, transcript)).encode(), env)
+    assert code == HOOK_EXIT_SILENT
+    (line,) = _log_lines(project)
+    assert line['outcome'] == 'completed'
+    assert line['workspace'] == str(worktree.resolve())
+
+
+def test_a_nested_repository_is_judged_in_the_project_and_says_so(tmp_path: Path) -> None:
+    """A separate repository under the project is no worktree of it: the project is judged.
+
+    A green there says which tree it judged, on stderr and in `tree_mismatch`.
+    """
+    project = tmp_path / 'project'
+    _project(project, _check('clean', _RED_IF_BROKEN))
+    _git(project, 'init', '-q', '-b', 'main')
+    nested = project / 'vendor' / 'lib'
+    nested.mkdir(parents=True)
+    _git(nested, 'init', '-q', '-b', 'main')
+    (nested / 'broken.txt').write_text('red\n', encoding='utf-8')
     env = {**_env_trusting(tmp_path, project), 'CLAUDE_PROJECT_DIR': str(project)}
     transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
-    result = decide(_stop_payload(worktree, transcript), env)
+    result = decide(_stop_payload(nested, transcript), env)
     assert result.exit_code == HOOK_EXIT_SILENT
     assert result.record is not None and result.record['outcome'] == 'completed'
+    assert result.record['workspace'] == str(project.resolve())
     assert result.record['tree_mismatch'] is True
-    assert result.record['agent_tree'] == str(worktree.resolve())
+    assert result.record['agent_tree'] == str(nested.resolve())
     assert f'judged {project.resolve()}' in result.stderr
-    assert str(worktree.resolve()) in result.stderr
+    assert str(nested.resolve()) in result.stderr
+
+
+# Writes side-effect.txt in the tree it runs in: proof that a check ran.
+_TOUCH = f"{_PY_QUOTED} -c \"open('side-effect.txt', 'w').close()\""
+
+
+@pytest.mark.parametrize('trust', ['vouched', 'unpinned'])
+def test_a_worktree_spec_nothing_trusted_can_vouch_for_leaves_a_trace(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], trust: str
+) -> None:
+    """Third review, MINOR (S4): the project is trusted, has no spec, the worktree has one.
+
+    Nothing trusted vouches for the worktree's spec, so it is not run; the firing says so on
+    stderr (exit 0) and leaves an `untrusted` line in the trusted project's log.
+    """
+    project = tmp_path / 'project'
+    project.mkdir()
+    _git(project, 'init', '-q', '-b', 'main')
+    (project / 'README').write_text('x\n', encoding='utf-8')
+    _git(project, 'add', '-A')
+    _git(project, 'commit', '-q', '-m', 'init')
+    worktree = project / '.claude' / 'worktrees' / 'agent-4'
+    _git(project, 'worktree', 'add', '-q', '-b', 'agent-4', str(worktree))
+    _project(worktree, _check('touch', _TOUCH))
+    env = {**_env_vouching(tmp_path, project, trust), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    raw = json.dumps(_stop_payload(worktree, transcript)).encode()
+    assert run_hook(raw, env) == HOOK_EXIT_SILENT
+    err = capsys.readouterr().err
+    assert f'convoy gate: {worktree.resolve()} was not judged' in err
+    assert f'`convoy gate --trust` in {project.resolve()}' in err
+    (line,) = _log_lines(project)
+    assert line['outcome'] == 'untrusted'
+    assert line['agent_tree'] == str(worktree.resolve())
+    assert not (worktree / 'side-effect.txt').exists()
+    assert not (worktree / '.convoy' / 'hook.log').exists()
+
+
+def test_a_worktree_of_an_untrusted_project_leaves_no_file(tmp_path: Path) -> None:
+    """The per-machine switch is unchanged: an untrusted project gets nothing written."""
+    project, worktree = _project_with_untracked_spec(tmp_path, _check('clean', _RED_IF_BROKEN))
+    env = {**_home(tmp_path), 'CLAUDE_PROJECT_DIR': str(project)}
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    raw = json.dumps(_stop_payload(worktree, transcript)).encode()
+    assert run_hook(raw, env) == HOOK_EXIT_SILENT
+    assert _log_lines(project) == []
+    assert not (worktree / '.convoy').exists()
+
+
+def test_a_worktree_agent_is_judged_and_reused_without_a_project_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Third review, NIT (S2, S5b): with `$CLAUDE_PROJECT_DIR` unset, the main checkout anchors."""
+    project, worktree = _project_with_worktree(tmp_path, _check('clean', _RED_IF_BROKEN))
+    (worktree / 'broken.txt').write_text('red\n', encoding='utf-8')
+    env = _env_trusting(tmp_path, project)
+    assert 'CLAUDE_PROJECT_DIR' not in env
+    transcript = _transcript(tmp_path / 't.jsonl', 'Implement it', 'Write')
+    stop = _stop_payload(worktree, transcript, stop_hook_active=True)
+    assert run_hook(json.dumps(stop).encode(), env) == HOOK_EXIT_SILENT  # residual red, recorded
+    (judged,) = _log_lines(project)
+    assert judged['outcome'] == 'blocked' and judged['blocked_stop'] is False
+    assert judged['workspace'] == str(worktree.resolve())
+    assert judged['anchor'] == str(project.resolve())
+    capsys.readouterr()
+    messenger = _payload(
+        project, tool_response={'agentId': judged['agent_id']}, session_id=judged['session_id']
+    )
+    assert run_hook(json.dumps(messenger).encode(), env) == HOOK_EXIT_FEEDBACK
+    assert f'judged {worktree.resolve()}' in capsys.readouterr().err
+    assert _log_lines(project)[-1]['reused_from'] == judged['ts']
+
+
+@pytest.mark.parametrize('trust', ['vouched', 'unpinned'])
+def test_convoy_gate_in_a_worktree_says_what_the_hook_judges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trust: str
+) -> None:
+    """Third review, MINOR (S8): the note describes the hook's decision, not `trust_decision`'s."""
+    project, worktree = _project_with_worktree(tmp_path, _check('ok', _OK))
+    env = _env_vouching(tmp_path, project, trust)
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    monkeypatch.delenv('CONVOY_TRUSTED_ROOTS', raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    result = runner.invoke(cli.app, ['gate', '--workspace', str(worktree)])
+    assert result.exit_code == 0, result.stderr + result.stdout
+    assert 'not armed' not in result.stderr
+    spec = project.resolve() / '.convoy' / 'gate.toml'
+    assert f'the hook judges {worktree.resolve()} with {spec}' in result.stderr
 
 
 def test_a_green_in_the_agents_own_tree_says_nothing(tmp_path: Path) -> None:

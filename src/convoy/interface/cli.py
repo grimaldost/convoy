@@ -37,13 +37,15 @@ from convoy.interface.gate_service import (
     gate_root,
     gate_spec_env,
     gate_usage_envelope,
+    gated_tree,
+    judged_target,
     load_gate_spec_file,
     oracles_root_for,
     resolve_gate_spec,
     run_gate,
-    trust_decision,
     trust_hint,
     trust_project,
+    working_tree_of,
 )
 from convoy.interface.git import Git, GitError
 from convoy.interface.hook import run_hook
@@ -360,7 +362,8 @@ def gate(
                 'The file holding the [[checks]] to run: a full series.toml, or a minimal '
                 '[series] id + [[checks]] file. Omitted, the project gate spec is used: '
                 '.convoy/gate.toml in the workspace and its parents, nearest first, then '
-                '$CLAUDE_PROJECT_DIR/.convoy/gate.toml; none found is a usage failure.'
+                "$CLAUDE_PROJECT_DIR/.convoy/gate.toml, then the main checkout's when "
+                'the workspace is a linked git worktree; none found is a usage failure.'
             ),
             show_default=False,
         ),
@@ -518,15 +521,23 @@ def gate(
         # A discovered project spec runs here because the operator asked; the hook would
         # not run it until the project is trusted, and a silent difference between the
         # two surfaces is exactly what an operator cannot see. Say so.
-        root = gate_root(spec_path, target)
+        # The note describes the hook's own decision (`judged_target`), fallback included.
         try:
-            decision = trust_decision(root, spec_path, os.environ)
-            hint = trust_hint(root, os.environ)
+            hooked = judged_target(spec_path, target, os.environ)
+            decision = hooked.decision
+            hint = trust_hint(hooked.workspace, os.environ)
         except SpecError as exc:
-            decision, hint = None, ''
+            hooked, decision, hint = None, None, ''
             typer.echo(f'note: {exc}', err=True)
         status = 'untrusted' if decision is None else decision.status
-        if status == 'differs' and decision is not None:
+        if status == 'trusted' and hooked is not None and hooked.fallback_from is not None:
+            judged = gated_tree(hooked, working_tree_of(target) or target.resolve())
+            typer.echo(
+                f'note: {spec_path} is not vouched for, so the hook judges {judged} with '
+                f'{hooked.spec} instead',
+                err=True,
+            )
+        elif status == 'differs' and decision is not None:
             typer.echo(
                 f"note: this worktree's gate spec differs from the one trusted for "
                 f'{decision.anchor}; the hook refuses it until the two match (commit the '
@@ -979,7 +990,8 @@ def hook() -> None:
     dispatch) the judge's verdict is reused and a residual red is exit 2 with the brief
     shown to the orchestrator, its cue to dispatch a fix subagent. Nothing happens
     unless the project has a gate spec — ``.convoy/gate.toml`` from the event's ``cwd``
-    upward, nearest first, then ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml`` — and this
+    upward, nearest first, then ``$CLAUDE_PROJECT_DIR/.convoy/gate.toml``, then a linked
+    worktree's main checkout's — and this
     machine trusts the project (``convoy gate --init`` / ``--trust``); a linked git
     worktree runs on its session project's or main checkout's entry while its spec
     matches the trusted one. Green: exit 0 and no output, except one stderr line naming

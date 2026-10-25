@@ -420,6 +420,42 @@ def test_a_session_inheriting_from_its_main_checkout_delegates_a_fallback(
     assert len(delegate.calls) == 1
 
 
+@pytest.mark.parametrize('listed', [True, False], ids=['main-listed', 'main-unlisted'])
+def test_a_sibling_worktree_finds_its_main_checkouts_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, listed: bool
+) -> None:
+    """Third review (S6b): no spec in the worktree, none on the walk, no project dir.
+
+    The full hook falls back to git's main checkout's spec; the guard must look there too,
+    and skip only when the full hook would be silent.
+    """
+    main = tmp_path / 'main'
+    main.mkdir()
+    _git(main, 'init', '-q', '-b', 'main')
+    (main / 'README').write_text('x\n', encoding='utf-8')
+    _git(main, 'add', '-A')
+    _git(main, 'commit', '-q', '-m', 'init')
+    _spec(main, _SIDE_EFFECT)  # untracked: the worktree has none
+    worktree = tmp_path / 'beside'
+    _git(main, 'worktree', 'add', '-q', '-b', 'beside', str(worktree))
+    env = _home(tmp_path)
+    if listed:
+        trust_project(main, env)
+    monkeypatch.chdir(worktree)
+    raw = _raw(_stop(worktree))
+    delegate = _Recorder()
+    _guard(raw, env, Path.cwd(), delegate)
+    assert bool(delegate.calls) == listed
+    if listed:
+        return
+    payload = parse_event(raw)
+    assert not isinstance(payload, str)
+    result = decide(payload, env)
+    assert result.exit_code == 0 and result.stderr == ''
+    assert result.record is not None and result.record['outcome'] == 'untrusted'
+    assert not (worktree / 'side-effect.txt').exists()
+
+
 # --- parity with the full hook ------------------------------------------------------------------
 
 

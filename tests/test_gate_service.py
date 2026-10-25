@@ -27,6 +27,8 @@ from convoy.interface.drivers.headless import EXIT_BLOCKED, EXIT_OK
 from convoy.interface.gate_runner import SubprocessGateRunner
 from convoy.interface.gate_service import (
     GateSpecNotFoundError,
+    GateTarget,
+    TrustDecision,
     anchor_of,
     convoy_home,
     fallback_gate,
@@ -36,6 +38,7 @@ from convoy.interface.gate_service import (
     gate_root,
     gate_spec_env,
     gate_usage_envelope,
+    gated_tree,
     is_trusted,
     main_checkout_of,
     oracles_dir_for,
@@ -48,6 +51,7 @@ from convoy.interface.gate_service import (
     trust_project,
     trust_status,
     trusted_projects,
+    working_tree_of,
 )
 
 _PY = sys.executable
@@ -487,6 +491,81 @@ def _repo_with_worktree(tmp_path: Path) -> tuple[Path, Path]:
     worktree = project / '.claude' / 'worktrees' / 'agent'
     _git(project, 'worktree', 'add', '-q', '-b', 'agent', str(worktree))
     return project, worktree
+
+
+def _beside(project: Path, name: str = 'beside') -> Path:
+    """A linked worktree of *project* made next to it, not under it."""
+    worktree = project.parent / name
+    _git(project, 'worktree', 'add', '-q', '-b', name, str(worktree))
+    return worktree
+
+
+def test_find_gate_spec_falls_back_to_the_main_checkouts_spec(tmp_path: Path) -> None:
+    """A worktree beside the project, with no spec and no project dir, finds the project's."""
+    project, _nested = _repo_with_worktree(tmp_path)
+    worktree = _beside(project)
+    (worktree / '.convoy' / 'gate.toml').unlink()
+    assert find_gate_spec(worktree, {}) == (project.resolve() / '.convoy' / 'gate.toml')
+    # Its own spec, when it has one, is still the nearest.
+    (worktree / '.convoy' / 'gate.toml').write_text('', encoding='utf-8')
+    assert find_gate_spec(worktree, {}) == worktree.resolve() / '.convoy' / 'gate.toml'
+
+
+def test_find_gate_spec_does_not_reach_a_separate_repositorys_spec(tmp_path: Path) -> None:
+    project, _nested = _repo_with_worktree(tmp_path)
+    other = tmp_path / 'other'
+    other.mkdir()
+    _git(other, 'init', '-q', '-b', 'main')
+    assert find_gate_spec(other, {}) is None
+    assert working_tree_of(other / 'x') == other.resolve()
+    assert working_tree_of(project / '.claude') == project.resolve()
+
+
+def _target(spec: Path, workspace: Path, status: str = 'trusted') -> GateTarget:
+    return GateTarget(spec, workspace, TrustDecision(status), nearest=spec)
+
+
+def test_a_trusted_spec_runs_in_a_linked_worktree_of_its_repository(tmp_path: Path) -> None:
+    project, nested = _repo_with_worktree(tmp_path)
+    beside = _beside(project)
+    spec = project / '.convoy' / 'gate.toml'
+    assert gated_tree(_target(spec, project), nested) == nested.resolve()
+    assert gated_tree(_target(spec, project), beside) == beside.resolve()
+    assert gated_tree(_target(spec, project), project) == project.resolve()
+
+
+@pytest.mark.parametrize('status', ['untrusted', 'changed', 'differs'])
+def test_a_spec_that_may_not_run_keeps_its_own_tree(tmp_path: Path, status: str) -> None:
+    project, nested = _repo_with_worktree(tmp_path)
+    spec = project / '.convoy' / 'gate.toml'
+    assert gated_tree(_target(spec, project, status), nested) == project.resolve()
+
+
+def test_a_tree_of_another_repository_is_not_judged_by_the_spec(tmp_path: Path) -> None:
+    """A separate repository nested in the project, or a directory outside git, is no checkout."""
+    project, _nested = _repo_with_worktree(tmp_path)
+    vendored = project / 'vendor'
+    vendored.mkdir()
+    _git(vendored, 'init', '-q', '-b', 'main')
+    spec = project / '.convoy' / 'gate.toml'
+    assert gated_tree(_target(spec, project), vendored) == project.resolve()
+    assert gated_tree(_target(spec, project), tmp_path) == project.resolve()
+
+
+def test_a_subproject_spec_runs_in_the_same_directory_of_the_worktree(tmp_path: Path) -> None:
+    """A spec governing ``pkg/`` of the repository runs in the worktree's ``pkg/``."""
+    project = tmp_path / 'mono'
+    (project / 'pkg').mkdir(parents=True)
+    (project / 'pkg' / 'mod.py').write_text('', encoding='utf-8')
+    _git(project, 'init', '-q', '-b', 'main')
+    _git(project, 'add', '-A')
+    _git(project, 'commit', '-q', '-m', 'init')
+    spec = _project_with_spec(project / 'pkg')
+    worktree = _beside(project)
+    assert gated_tree(_target(spec, project / 'pkg'), worktree) == worktree.resolve() / 'pkg'
+    (worktree / 'pkg' / 'mod.py').unlink()
+    (worktree / 'pkg').rmdir()
+    assert gated_tree(_target(spec, project / 'pkg'), worktree) == (project / 'pkg').resolve()
 
 
 def test_main_checkout_of_names_a_linked_worktrees_main_checkout(tmp_path: Path) -> None:

@@ -26,15 +26,21 @@ The vocabulary is the hook protocol's, not convoy's: exit 0 means nothing to say
 2 means stderr is feedback. Nothing enters a model's context on a green gate.
 
 Which spec, which tree. The nearest ``.convoy/gate.toml`` above the event's ``cwd`` is
-judged, in the tree it governs, so an agent in a linked git worktree that carries the
-spec is judged in its worktree. Such a worktree runs on its anchor's trust
-(``gate_service.trust_anchor``: the session project, else git's main checkout) while its
-spec matches the anchor's trusted one; its verdict is logged in the anchor, which
-outlives the worktree and is where the orchestrator's messenger looks, and its default
-oracles dir is the anchor's. A worktree spec that differs is refused loudly once and let
-through on the retry, recorded. When the nearest spec is not vouched for at all, the tree
-discovery judged before CONV-B75 is judged instead, if it is trusted, and the verdict
-says so: a tree that was gated never goes silent.
+judged (then ``$CLAUDE_PROJECT_DIR``'s, then a linked worktree's main checkout's), and an
+agent working in a linked git worktree is judged in that worktree. A worktree that
+carries the spec runs on its anchor's trust (``gate_service.trust_anchor``: the session
+project, else git's main checkout) while its spec matches the anchor's trusted one. A
+worktree with no spec of its own, or one whose copy cannot be vouched for (an anchor
+trusted without a pin), is judged by the anchor's trusted spec, run in the worktree
+(``gate_service.gated_tree``): the spec is read from where it was trusted, the checks see
+the agent's edits. Either way the verdict is logged in the anchor, which outlives the
+worktree and is where the orchestrator's messenger looks, and the default oracles dir is
+the anchor's. A worktree spec that differs is refused loudly once and let through on the
+retry, recorded. A worktree spec nothing trusted vouches for, under a trusted checkout
+with no spec to judge it by, is not run: the firing says so on stderr (exit 0) and
+leaves an ``untrusted`` line in that checkout's log. A tree that is no checkout of the
+spec's repository (a separate repository nested in the project) is judged in the spec's
+tree, and the verdict says so.
 
 Three switches, all before anything executes. The presence of a project spec is the
 per-project switch: with none found the hook exits 0 silently, so shipping it in the
@@ -100,12 +106,16 @@ from convoy.interface.gate_service import (
     GateOutcome,
     find_gate_spec,
     gate_root,
+    gated_tree,
     git_layout,
+    has_own_entry,
     judged_target,
     load_gate_spec_file,
     oracles_root_for,
     refusal_reason,
     run_gate,
+    trust_hint,
+    working_tree_of,
 )
 from convoy.interface.proc import TEXT_ENCODING, TEXT_ERRORS
 from convoy.interface.workspace_lock import JudgeBusyError, judge_lock, lock_path
@@ -179,18 +189,23 @@ class HookResult:
 class JudgedTree:
     """What a firing judges by and where: the spec, the tree its checks run in, and the rest.
 
-    *anchor* is the tree a linked worktree's trust came from (``gate_service.trust_anchor``):
-    the verdict is logged there, because the worktree is deleted when its agent is done and
+    *workspace* is the tree the checks run in: the spec's own tree, or the agent's worktree
+    when a trusted spec from another checkout of the repository judges it
+    (``gate_service.gated_tree``). *anchor* is the tree a linked worktree's trust came from
+    (``gate_service.trust_anchor``), or the spec's tree when the checks run elsewhere: the
+    verdict is logged there, because the worktree is deleted when its agent is done and
     the orchestrator's messenger looks there. *oracles_root* keys the default oracles dir.
-    *agent_tree* is the working tree the event's ``cwd`` lies in; *mismatch* says it is not
-    the one judged. *fallback_from* is the nearest spec, when it was untrusted and an older
-    discovery's spec was judged instead (``gate_service.fallback_gate``).
+    *lock* is the judge lock of *workspace*. *agent_tree* is the working tree the event's
+    ``cwd`` lies in; *mismatch* says it is not the one judged. *fallback_from* is the
+    nearest spec, when it was untrusted and an older discovery's spec was judged instead
+    (``gate_service.fallback_gate``).
     """
 
     spec: Path
     workspace: Path
     oracles_root: Path
     log: Path
+    lock: Path
     anchor: Path | None
     agent_tree: Path
     mismatch: bool
@@ -332,12 +347,6 @@ def log_path_for(spec_path: Path, cwd: Path) -> Path:
     return gate_root(spec_path, cwd) / HOOK_LOG_RELPATH
 
 
-def working_tree_of(path: Path) -> Path | None:
-    """The nearest directory at or above *path* holding a ``.git``: the working tree it lies in."""
-    resolved = Path(path).resolve()
-    return next((d for d in (resolved, *resolved.parents) if (d / '.git').exists()), None)
-
-
 def _mismatch(cwd: Path, workspace: Path) -> bool:
     """Whether the gate runs in another working tree than the one the event's ``cwd`` is in.
 
@@ -384,6 +393,17 @@ def judge_lock_path(spec_path: Path, cwd: Path) -> Path:
     a project scaffolded before it did, the file shows as untracked while a gate runs.
     """
     return log_path_for(spec_path, cwd).parent / JUDGE_LOCK_NAME
+
+
+def visiting_lock_path(log: Path, workspace: Path) -> Path:
+    """The judge lock of *workspace* when its checks come from another tree's spec.
+
+    Kept beside that tree's log, where the scaffold's ``judge.lock*`` ignore covers it, and
+    named after *workspace*: the agent's worktree gets no file, and two worktrees, or a
+    worktree and the project, never wait for each other's gate.
+    """
+    key = hashlib.sha256(str(Path(workspace).resolve()).encode('utf-8')).hexdigest()[:16]
+    return log.parent / f'{JUDGE_LOCK_NAME}.{key}'
 
 
 def judge_wait_seconds(worst_case: float) -> float:
@@ -467,7 +487,7 @@ def _gate(
     try:
         # Loaded before the lock is taken: how long a firing may wait depends on its gate.
         spec = load_gate_spec_file(spec_path, env, root=tree.oracles_root)
-        hold(judge_lock_path(spec_path, workspace), len(spec.checks) * spec.timeout_seconds)
+        hold(tree.lock, len(spec.checks) * spec.timeout_seconds)
         started = time.monotonic()
         outcome = run_gate(spec, workspace, phases)
     except (OSError, UnicodeDecodeError, SpecError, GateUsageError, JudgeBusyError) as exc:
@@ -719,14 +739,22 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
                 ),
             )
         )
-    spec_path, workspace, decision = target.spec, target.workspace, target.decision
+    spec_path, home, decision = target.spec, target.workspace, target.decision
+    agent_tree = working_tree_of(cwd) or cwd.resolve()
+    # A trusted spec from another checkout of the repository runs in the agent's worktree,
+    # the tree that holds its edits; the spec's own tree keeps the log and the oracles.
+    moved = gated_tree(target, agent_tree)
+    visiting = moved != Path(home).resolve()
+    workspace = moved if visiting else home
+    log = (decision.anchor or home) / HOOK_LOG_RELPATH
     tree = JudgedTree(
         spec=spec_path,
         workspace=workspace,
-        oracles_root=oracles_root_for(workspace, env),
-        log=(decision.anchor or workspace) / HOOK_LOG_RELPATH,
-        anchor=decision.anchor,
-        agent_tree=working_tree_of(cwd) or cwd.resolve(),
+        oracles_root=oracles_root_for(home, env),
+        log=log,
+        lock=visiting_lock_path(log, workspace) if visiting else judge_lock_path(spec_path, home),
+        anchor=decision.anchor or (Path(home).resolve() if visiting else None),
+        agent_tree=agent_tree,
         mismatch=_mismatch(cwd, workspace),
         fallback_from=target.fallback_from,
     )
@@ -743,18 +771,19 @@ def decide(payload: Mapping[str, Any], env: Mapping[str, str], hold: Hold = _unh
         return _finish(replace(result, log_path=tree.log))
 
     if decision.status == 'untrusted':
-        return _finish(
-            HookResult(
-                HOOK_EXIT_SILENT,
-                '',
-                _record(
-                    payload,
-                    outcome='untrusted',
-                    reason=trust_advice,
-                    **stamp,
-                ),
+        record = _record(payload, outcome='untrusted', reason=trust_advice, **stamp)
+        if decision.anchor is not None and has_own_entry(decision.anchor, env):
+            # The checkout the worktree is made from is trusted, but nothing it holds vouches
+            # for the worktree's spec, and it has no spec to judge the worktree by instead.
+            # The operator opted that checkout in, so the unjudged agent leaves a trace there.
+            message = (
+                f'convoy gate: {tree.agent_tree} was not judged — its gate spec {spec_path} is '
+                f'not vouched for, and {decision.anchor}, the trusted checkout it is made from, '
+                f'has no gate spec to judge it by; {trust_hint(home, env)}'
             )
-        )
+            record['reason'] = message
+            return finish(HookResult(HOOK_EXIT_SILENT, message + '\n', record))
+        return _finish(HookResult(HOOK_EXIT_SILENT, '', record))
     agent_in_worktree = tree.mismatch and _is_linked_worktree(tree.agent_tree)
     if decision.status == 'changed' and agent_in_worktree:
         # Reached through the fallback: the agent works in a worktree, and the tree judged
@@ -902,12 +931,9 @@ def run_hook(raw: bytes, env: Mapping[str, str]) -> int:
 
         result = decide(payload, env, hold)
         # An untrusted project gets no file written into it: the machine refused it, and a
-        # log line in a clone's tree would be the first trace the refusal left.
-        if (
-            result.record is not None
-            and result.record.get('outcome') != 'untrusted'
-            and result.log_path is not None
-        ):
+        # log line in a clone's tree would be the first trace the refusal left. ``decide``
+        # names no log for one; an ``untrusted`` line it does name goes to a trusted checkout.
+        if result.record is not None and result.log_path is not None:
             failure = append_log(result.log_path, result.record)
             if failure is not None:
                 sys.stderr.write(failure)
