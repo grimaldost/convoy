@@ -11,32 +11,10 @@ in [What the log shows](#what-the-log-shows) were produced by feeding hand-built
 events to `convoy hook`, not by a live Workflow run, so they show the record's shape and not a
 Workflow agent's own transcript. The only observation of the hook under the Workflow tool is the
 dated probe, [2026-10-08-subagentstop-under-workflow.md](../notes/2026-10-08-subagentstop-under-workflow.md).
-
-## Read this first: worktree isolation needs a committed spec
-
-Since [CONV-B75](../backlog.md#conv-b75--a-worktree-isolated-subagent-is-judged-against-the-main-checkout-not-the-worktree-that-holds-its-changes),
-an agent started with `isolation: 'worktree'` is judged in its own worktree when the worktree
-carries the gate spec. The hook walks up from the agent's `cwd` and uses the nearest
-`.convoy/gate.toml` (`gate_service.find_gate_spec`), and the worktree runs on the trust of the
-project it was made from, as long as its spec matches the one `convoy gate --trust` pinned there
-(line endings aside). So:
-
-- **Commit `.convoy/gate.toml` before starting isolated agents**, and trust it with
-  `convoy gate --trust --workspace <project>` (a pinned entry). Never run `--trust` inside an
-  agent's worktree: that would pin whatever spec the worktree holds.
-- In every other case a red that exists only in the worktree is not caught, and the agent and the
-  orchestrator hear nothing: the spec is untracked in the project (the worktree has none, so the
-  gate runs in the project checkout), or the project is trusted only through
-  `CONVOY_TRUSTED_ROOTS`, or by an entry with no pinned hash (the project checkout is judged
-  instead). The only traces are an exit-0 stderr line naming the judged tree and
-  `"tree_mismatch": true` in `.convoy/hook.log`. A worktree spec that differs from the trusted
-  one, or a project spec changed since it was trusted, is refused instead: once to the subagent,
-  then the subagent may stop unjudged and the orchestrator's messenger reports the refusal.
-- Read-only agents are not gated wherever they run: a subagent whose transcript shows only
-  read-only tool use is skipped (`hook.py`, `_decide_stop`).
-
-Concurrent writers in one checkout are not safe either: the hook's judge lock makes gates take
-turns, but each gate then judges whatever the other agents have half written.
+The behaviour in [Worktree-isolated agents](#worktree-isolated-agents) comes with the
+[CONV-B75](../backlog.md#conv-b75--a-worktree-isolated-subagent-is-judged-against-the-main-checkout-not-the-worktree-that-holds-its-changes)
+fix, in the first release after 0.17.2; the tests named there pin it, and no Workflow run has
+exercised it yet.
 
 ## What you need
 
@@ -52,7 +30,11 @@ turns, but each gate then judges whatever the other agents have half written.
 - `uv`, which the plugin's hook runs through, and the `convoy` command for the setup commands
   below (`uv tool install git+https://github.com/grimaldost/convoy`).
 - A git repository that is the session's project root, where the session was started. The hook
-  finds the gate at `$CLAUDE_PROJECT_DIR/.convoy/gate.toml`.
+  uses the nearest `.convoy/gate.toml` above the agent's `cwd`, and
+  `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` when the walk finds none
+  (`gate_service.find_gate_spec`). An agent in the project checkout therefore runs the project's
+  spec; an agent in a worktree runs the worktree's, when the worktree has one (see
+  [Worktree-isolated agents](#worktree-isolated-agents)).
 
 ## Step 1: write the gate
 
@@ -133,8 +115,7 @@ The exact effect (`gate_service.trust_project`): the project root and the sha256
 - **Re-run `convoy gate --trust` after every deliberate edit of the spec.** A spec that no longer
   matches its pinned hash is refused loudly (exit 2, outcome `spec_changed`), because the
   implementer edits the tree the spec lives in and a gate it can rewrite is no gate.
-- `convoy gate --init` does not trust the project it scaffolds. (Its `--help` text for `--trust`
-  says it does; the code and the README say it does not, and the code wins.)
+- `convoy gate --init` does not trust the project it scaffolds; run `--trust` after it.
 - `convoy gate` with no argument prints `note: the hook is not armed for this project` on stderr
   until the project is trusted, so it is also the check that arming took.
 - A harness that stages a fresh workspace can instead set `CONVOY_TRUSTED_ROOTS` (roots separated
@@ -190,12 +171,12 @@ export const meta = {
 const { since, tasks } = args
 
 // The fields of a judge record that decide the verdict, as short Grep matches.
-const FIELDS = String.raw`"ts": "[^"]*"|"leg": "[^"]*"|"agent_id": "[^"]*"|"stop_hook_active": [a-z]+|"outcome": "[^"]*"|"phases": \[[^\]]*\]|"blocked_stop": [a-z]+|"reason": "[^"]*"|"error": "[^"]*"`
+const FIELDS = String.raw`"ts": "[^"]*"|"leg": "[^"]*"|"agent_id": "[^"]*"|"stop_hook_active": [a-z]+|"outcome": "[^"]*"|"phases": \[[^\]]*\]|"blocked_stop": [a-z]+|"reason": "[^"]*"|"error": "[^"]*"|"tree_mismatch": [a-z]+`
 
 phase('Implement')
 for (const task of tasks) {
   // Sequential, so the agents share the project checkout safely. To run writers in parallel,
-  // give each `isolation: 'worktree'` with the spec committed (see "Read this first").
+  // give each `isolation: 'worktree'` with the spec committed (see "Worktree-isolated agents").
   // Add model / effort here if the task needs a tier other than the session's.
   await agent(`[convoy-phase: ${task.tag}]\n${task.brief}`, {
     label: `implement ${task.tag}`,
@@ -233,7 +214,11 @@ const verdicts = tasks.map(task => {
   const mine = lines.filter(record => (record.phases || []).includes(task.tag))
   const last = mine[mine.length - 1]
   if (!last) return { tag: task.tag, state: 'not judged' }
-  if (last.outcome === 'completed') return { tag: task.tag, state: 'green' }
+  if (last.outcome === 'completed') {
+    // Judged in another tree than the agent's: a red only in its worktree was not seen.
+    if (last.tree_mismatch === true) return { tag: task.tag, state: 'green in another tree', log_line: last.line }
+    return { tag: task.tag, state: 'green' }
+  }
   if (last.outcome === 'blocked' && last.blocked_stop === false) {
     // The failing checks' text: `convoy gate --phase <tag> --brief` prints it as JSON.
     return { tag: task.tag, state: 'residual red', log_line: last.line, agent_id: last.agent_id }
@@ -250,13 +235,15 @@ hook (judge lines of 1100 to 1700 characters, one more with a 4400-character `re
 the parsing was run under Node with `agent()` stubbed to return that Grep output. It gave `green`
 for a pass, `residual red` for a residual red, `usage` with its `error`, and `not judged` for a tag
 with no line; the same run with every line omitted, as a plain Grep would return, gave `not
-judged` throughout. What was not checked: a live Workflow agent making the Grep call and repeating
+judged` throughout. The `tree_mismatch` field and the `green in another tree` state were checked
+the same way on 2026-10-25, against a `hook.log` written by the CONV-B75 hook for an agent in a
+worktree of a project whose spec was untracked. What was not checked: a live Workflow agent making the Grep call and repeating
 its output, because no Workflow run was available. If that agent mangles the pattern or the
 output, the failure is `not judged`, never a green. A `spec_changed` line carries no `phases`, so
 its task also reads `not judged`; the line itself is in the log.
 
 What happens when a task's agent tries to stop: Claude Code fires `SubagentStop`, the hook runs
-the gate in the project, and
+the gate in the tree whose spec it found (the agent's worktree, when it carries one), and
 
 - green: the hook exits 0, says nothing, and the agent stops;
 - blocking red: the hook exits 2 with the repair brief on stderr, which Claude Code hands to the
@@ -268,10 +255,13 @@ The script above never sees either exchange. Its only evidence is the log.
 
 ## What the log shows
 
-Each firing appends one JSON line to `.convoy/hook.log` in the project root. Count the lines with
+Each firing appends one JSON line to `.convoy/hook.log` in the project root; an agent working in a
+worktree of the project is logged there too, not in the worktree. Count the lines with
 `"leg": "judge"`; the `messenger` leg does not fire for Workflow agents. Below, fields that do not
 help in reading the verdict (`session_id`, `tool_name`, `tool_use_id`, `model`, `cwd`,
-`convoy_version`, `checks`, `spec`, `spec_sha256`, `workspace`, `gate_ms`) are left out. Timestamps
+`convoy_version`, `checks`, `spec`, `spec_sha256`, `workspace`, `gate_ms`, and `anchor`,
+`agent_tree` and `tree_mismatch`, which [Worktree-isolated agents](#worktree-isolated-agents)
+describes) are left out. Timestamps
 and ids are from the run that produced them.
 
 **Pass.** `outcome` `completed`, no red, hook exit code 0:
@@ -315,9 +305,53 @@ An untrusted project leaves no line in its own tree at all (the plugin's guard e
 starting `convoy`, and `convoy hook` itself writes nothing into an untrusted project), so a
 missing line is never a green. A task that shows `not judged` in the
 script, with the hook installed, is most often one of: the project was never trusted, no
-`.convoy/gate.toml` was found from the session's project, the agent used only read-only tools, the spec changed after it was trusted (a `spec_changed` line
-has no `phases`, so the script cannot attribute it to a task), or Claude Code killed a hook that
-outran its 1800 s timeout.
+`.convoy/gate.toml` was found above the agent's `cwd` or in the session's project, the agent used
+only read-only tools, the spec changed after it was trusted or a worktree's spec differs from the
+trusted one (a `spec_changed` line has no `phases`, so the script cannot attribute it to a task),
+or Claude Code killed a hook that outran its 1800 s timeout. A task that shows `green in another
+tree` was judged in the project checkout while its agent worked in a worktree: a red only in the
+worktree was not seen (next section).
+
+## Worktree-isolated agents
+
+An agent started with `isolation: 'worktree'` works in a linked git worktree, which Claude Code
+puts under `<project>/.claude/worktrees/<id>`. The hook walks up from the agent's `cwd` to the
+nearest `.convoy/gate.toml`, so when the worktree carries the spec the checks run in the worktree
+and see the agent's edits. The worktree is not on the trust list itself: it runs on the entry of
+the project it was made from (the session project, else git's main checkout), as long as that
+entry pins a hash, the project's spec still matches it, and the worktree's spec matches it too,
+with CRLF and CR line endings read as LF so git's line-ending conversion is no difference. A
+blocked verdict carries `convoy gate: judged <tree> against <spec>`, and the default oracles
+directory is the project's, so an independent check finds the oracle the scaffold wrote there.
+
+To use it:
+
+- **Commit `.convoy/gate.toml` before starting isolated agents**, and trust it from the project:
+  `convoy gate --trust --workspace <project>`, which pins its hash. Never run `--trust` inside an
+  agent's worktree: that would pin whatever spec the worktree holds. No message from convoy asks
+  for it there; the advice names the project.
+- Give each parallel writer its own worktree. Writers that share one checkout are not safe: the
+  judge lock makes their gates take turns, but each gate judges whatever the others have half
+  written.
+
+The cases in which the worktree is not judged:
+
+| Case | What happens | Trace |
+|---|---|---|
+| The spec is untracked in the project, so the worktree has none | The walk finds the project's spec and the project checkout is judged. A red only in the worktree passes; the agent and the orchestrator are told nothing. | An exit-0 stderr line, `convoy gate: judged <project> against <spec> — not <worktree> ...`, which Claude Code keeps out of the model's context; `"tree_mismatch": true` and `agent_tree` in `hook.log`; `green in another tree` in the script above. |
+| The project is trusted only through `CONVOY_TRUSTED_ROOTS`, or by an entry with no pinned hash | The worktree's spec cannot be vouched for, so the tree the earlier discovery order judged, the project checkout, is judged instead. A red only in the worktree passes. | The same, plus a stderr line saying the nearest spec is not vouched for and `fallback_from` naming it in `hook.log`. |
+| The worktree's spec differs from the trusted one, or the project's spec changed since it was trusted | Refused (`spec_changed`) once, with a message addressed to the operator; on the retry the agent stops unjudged. | `spec_changed` lines in the project's `hook.log`. The messenger leg reports the refusal to an orchestrator on an `Agent` dispatch, but it did not fire for Workflow agents (Known limits). |
+
+Read-only agents are not gated wherever they run (`skipped`, above).
+
+The tests that pin this, all in `tests/test_hook.py`:
+`test_a_worktree_agent_is_judged_in_its_own_worktree`,
+`test_a_green_in_another_tree_is_said_and_logged`,
+`test_a_root_trusted_only_in_the_environment_still_gates`,
+`test_a_differing_worktree_spec_is_refused_once_then_let_through`,
+`test_a_changed_anchor_spec_reached_from_a_worktree_is_refused_once`,
+`test_a_worktree_spec_differing_only_in_line_endings_is_judged` and
+`test_run_hook_logs_a_worktree_verdict_in_its_anchors_log`.
 
 ## A residual red after the repair round
 
@@ -343,18 +377,11 @@ omitted by the Grep tool (Step 4).
 From the probe note and [ADR-0011](../adr/0011-the-runner-is-frozen-the-gate-is-the-product.md),
 fact 2:
 
-1. **A worktree-isolated agent is judged in its worktree only when the worktree carries the
-   trusted spec**
-   ([CONV-B75](../backlog.md#conv-b75--a-worktree-isolated-subagent-is-judged-against-the-main-checkout-not-the-worktree-that-holds-its-changes)).
-   With the spec untracked in the project, or the project trusted without a pinned hash, the
-   project checkout is judged instead, and a red only in the worktree passes; the `hook.log`
-   line then has `"tree_mismatch": true`, an `agent_tree` under `.claude/worktrees/` and a
-   `workspace` equal to the project root. See "Read this first".
-2. **A gate in a directory the agent does not work in is not found**, even when the agent edits
+1. **A gate in a directory the agent does not work in is not found**, even when the agent edits
    that directory. The hook finds the nearest `.convoy/gate.toml` above the agent's `cwd`, then
    the one in the project the session was started in. (`$CONVOY_GATE_SPEC` in the environment that launches Claude Code names a spec
    elsewhere; neither the probe nor this recipe exercised it.)
-3. **The messenger leg did not fire for Workflow agents**, so an orchestrator that started the
+2. **The messenger leg did not fire for Workflow agents**, so an orchestrator that started the
    agents from a script hears of a residual red only by reading `.convoy/hook.log` (read from the
    hook's code, not observed: the probe's gates were all green).
 
@@ -370,6 +397,8 @@ verdicts, which is the end-to-end run ADR-0011 names as the precondition for ret
 | `convoy validate <file>` prints `ok (gate-only)` for a gate-only file | `interface/cli.py` |
 | Trust list `~/.convoy/hook-trust.toml`, root plus spec hash | `interface/gate_service.py` (`trust_project`, `trust_status`) |
 | Gate discovery order | `gate_service.find_gate_spec` |
+| A worktree's trust, anchor and fallback | `gate_service.trust_decision`, `anchor_of`, `judged_target` |
+| The judged-tree line and the `anchor`, `agent_tree`, `tree_mismatch`, `fallback_from` fields | `hook.py` (`_notice`, `_judged_line`) |
 | Phase marker `[convoy-phase: <tag>]` | `interface/hook.py` (`parse_phase_markers`) |
 | Repair brief text and one repair round | `core/gate.py` (`repair_brief`), `hook.py` (`_decide_stop`) |
 | Log record fields and `outcome` values | `hook.py` (`_record`, `_verdict_record`, `_decide_stop`) |

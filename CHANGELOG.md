@@ -13,6 +13,17 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The Workflow gate recipe describes the worktree fix below.** In
+  [`docs/recipes/workflow-gate.md`](docs/recipes/workflow-gate.md) the "Read this first" warning
+  and the known limit that a worktree-isolated agent is judged against the main checkout are
+  gone; a new section, "Worktree-isolated agents", says how an isolated agent is judged, to commit
+  and pin the spec first, and the three cases in which the worktree is still not judged, with the
+  trace each leaves. The example script reads `tree_mismatch` and reports `green in another tree`
+  for a pass judged in the project checkout while the agent worked in a worktree. The
+  `--init`/`--trust` help-text note, fixed in 0.17.2, is dropped. Documentation only.
+
 ### Fixed
 
 - **A worktree-isolated subagent is judged in its own worktree, not the main checkout.**
