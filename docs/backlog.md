@@ -1218,7 +1218,8 @@ was observed. [probe 2026-10-08]
 
 **Change.** Option (c), both. Discovery walks up from the payload `cwd` first and uses the
 nearest `.convoy/gate.toml`, falling back to `$CLAUDE_PROJECT_DIR` only when the walk finds
-none (`gate_service.find_gate_spec`, mirrored in `hook_guard.py`). Trust already keyed on the
+none, then to a linked worktree's main checkout (`gate_service.find_gate_spec`, mirrored in
+`hook_guard.py`). Trust already keyed on the
 root and the spec's sha256. A linked git worktree that is not itself listed inherits from its
 anchor (`gate_service.trust_anchor`): the session project when it is trusted and the worktree
 lies in it or shares its repository, else git's main checkout (`git_layout` reads the `.git`
@@ -1226,22 +1227,29 @@ file, `commondir` and the `gitdir` back-link, no git process). The anchor's spec
 match its pin, and the worktree's must match the anchor's with line endings normalised
 (`spec_text_digest`): `trusted`, else `differs`, refused once to the operator and let through
 on the retry, logged. An anchor that cannot vouch (unpinned, vouched-only, missing spec)
-leads to `fallback_gate`: the tree the old order judged is judged, and the verdict says so.
-A worktree's verdict is logged in its anchor, where the messenger reuses it. The oracles
+leads to `fallback_gate`: the anchor's trusted spec is judged instead, and the verdict says so.
+A trusted spec from another checkout of the repository (the fallback's, or the main
+checkout's when the worktree has none) runs in the agent's worktree (`gate_service.gated_tree`),
+under a judge lock of its own kept beside the anchor's log. A worktree spec nothing trusted
+vouches for, under a trusted anchor with no spec, runs nothing and leaves an exit-0 stderr line
+and an `untrusted` line in the anchor's log. A worktree's verdict is logged in its anchor,
+where the messenger reuses it. The oracles
 default keys on `gate_service.anchor_of`, which the scaffold, the hook, the CLI and the MCP
 tool share; `convoy_gate` uses the hook's own decision and fallback (`judged_target`), and no
 advice tells anyone to trust an agent's worktree (`trust_hint`). Every blocked verdict carries
-`convoy gate: judged <tree> against <spec>`; a green in another tree than the agent's writes
-it to stderr and `hook.log` records `tree_mismatch`. **(consumer-affecting: discovery order,
-new `hook.log` fields)**
+`convoy gate: judged <tree> against <spec>`; a green in another tree than the agent's (a
+separate repository nested in the project) writes it to stderr and `hook.log` records
+`tree_mismatch`. `convoy gate`'s note describes the hook's decision (`judged_target`), and
+`convoy_gate` given the worktree judges the same tree as the hook. **(consumer-affecting:
+discovery order, new `hook.log` fields)**
 
 **Status.** Built, unreleased; no version bump until the owner sets the measurement window.
-Not covered: a worktree is judged in place only when it carries a spec its anchor's pinned
-entry vouches for. When the spec is untracked in the main checkout, or the anchor is trusted
-only through `CONVOY_TRUSTED_ROOTS` or an unpinned entry, the main checkout is judged and a red
-only in the worktree passes without a word to the subagent or the orchestrator; only an exit-0
-stderr line and `tree_mismatch: true` in `hook.log` record it. A differing worktree spec or an
-anchor spec changed since trust is refused once and let through, reported by the messenger.
+Not judged: a differing worktree spec or an anchor spec changed since trust (refused once and
+let through, reported by the messenger); a worktree spec nothing trusted vouches for under an
+anchor with no spec (a stderr line and an `untrusted` log line); a separate repository nested
+in the project (the project is judged, `tree_mismatch`). A project nobody opted in (no spec
+anywhere, or not trusted) stays silent by design; `convoy gate --where` for that case is T72c,
+held at watch.
 
 **Effort** M · **Source** [probe 2026-10-08]
 
