@@ -1247,7 +1247,11 @@ discovery order, new `hook.log` fields)**
 Not judged: a differing worktree spec or an anchor spec changed since trust (refused once and
 let through, reported by the messenger); a worktree spec nothing trusted vouches for under an
 anchor with no spec (a stderr line and an `untrusted` log line); a separate repository nested
-in the project (the project is judged, `tree_mismatch`). A project nobody opted in (no spec
+in the project (the project is judged, `tree_mismatch`); a dispatch the orchestrator made with
+`isolation: "worktree"` for which the judge left no record (the messenger runs no gate in its own
+checkout: a stderr line and a `skipped` log line; that the `PostToolUse` payload carries the
+`Agent` call's `isolation` key is inferred from a recorded call, not captured live). Isolation
+declared in an agent's definition and Workflow agents are not covered. A project nobody opted in (no spec
 anywhere, or not trusted) stays silent by design; `convoy gate --where` for that case is T72c,
 held at watch.
 

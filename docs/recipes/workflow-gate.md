@@ -361,6 +361,8 @@ The cases in which the agent's work is not judged:
 | The worktree's spec differs from the trusted one, or the project's spec changed since it was trusted | Refused (`spec_changed`) once, with a message addressed to the operator; on the retry the agent stops unjudged. | `spec_changed` lines in the project's `hook.log`. The messenger leg reports the refusal to an orchestrator on an `Agent` dispatch, but it did not fire for Workflow agents (Known limits). |
 | The worktree carries a spec, the project is trusted without a pin (or only through `CONVOY_TRUSTED_ROOTS`), and the project has no spec of its own | Nothing runs: nothing trusted vouches for the worktree's spec, and there is no project spec to judge it by. | An exit-0 stderr line, `convoy gate: <worktree> was not judged — ...`, which Claude Code keeps out of the model's context, and an `untrusted` line in the project's `hook.log`. |
 | The agent works in a separate repository nested in the project, not a worktree of it | The project's checkout is judged. A red only in the nested repository passes. | An exit-0 stderr line, `convoy gate: judged <project> against <spec> — not <tree> ...`; `"tree_mismatch": true` and `agent_tree` in `hook.log`; `green in another tree` in the script above. |
+| The orchestrator dispatched the agent with `isolation: "worktree"` in the `Agent` call and the judge left no record for it (for example a busy judge lock at its stop) | The messenger runs no gate: the tree it finds is the orchestrator's checkout, not the agent's worktree, and a green there would say nothing about the agent's work. | An exit-0 stderr line, `convoy gate: subagent <id> was not judged — it was worktree-isolated ...`, and a `skipped` line whose reason names the worktree-isolated dispatch in the project's `hook.log`. |
+| The agent's definition declares the isolation (frontmatter), not the call | Not covered: the call's input does not say so, so a dispatch with no judge record is gated in the orchestrator's checkout as before. | None; a green line in `hook.log` from the messenger without a judge line for that agent is not a judgement of its worktree. |
 
 Read-only agents are not gated wherever they run (`skipped`, above).
 
@@ -373,8 +375,9 @@ The tests that pin this, all in `tests/test_hook.py`:
 `test_a_differing_worktree_spec_is_refused_once_then_let_through`,
 `test_a_changed_anchor_spec_reached_from_a_worktree_is_refused_once`,
 `test_a_worktree_spec_differing_only_in_line_endings_is_judged`,
-`test_a_worktree_agent_is_judged_and_reused_without_a_project_dir` and
-`test_run_hook_logs_a_worktree_verdict_in_its_anchors_log`; `tests/test_mcp_server.py`'s
+`test_a_worktree_agent_is_judged_and_reused_without_a_project_dir`,
+`test_run_hook_logs_a_worktree_verdict_in_its_anchors_log` and
+`test_a_worktree_isolated_dispatch_with_no_judge_record_is_reported_unjudged`; `tests/test_mcp_server.py`'s
 `test_convoy_gate_and_the_hook_judge_the_same_worktree` pins that `convoy_gate` agrees.
 
 ## A residual red after the repair round

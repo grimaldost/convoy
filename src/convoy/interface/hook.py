@@ -15,12 +15,15 @@ Two hook events, one gate, two legs:
 - ``PostToolUse`` on ``Agent`` (or ``Task``) is the messenger, for synchronous dispatch.
   When the dispatch returns completed, the hook reuses the judge's verdict for that
   subagent from the log — same session, same agent, within the hour — or runs the gate
-  when there is none, and on a residual red exits 2 with the brief on stderr, which
-  Claude Code shows to the ORCHESTRATOR as feedback on the completed tool call — its
-  cue to dispatch a fix subagent. An asynchronous dispatch (the Agent tool's default when
-  ``run_in_background`` is unset) returns before the subagent has done anything
-  (``async_launched``); it is recorded and not gated here, and its subagent is still
-  judged at its stop.
+  when there is none, except for an agent the orchestrator dispatched with
+  ``isolation: "worktree"``: with no judge record the tree this firing finds is the
+  orchestrator's checkout, not the agent's worktree, so the messenger runs no gate, says on
+  stderr (exit 0) that the agent was not judged, and logs ``skipped``. On a residual red it
+  exits 2 with the brief on stderr, which Claude Code shows to the ORCHESTRATOR as feedback on
+  the completed tool call — its cue to dispatch a fix subagent. An asynchronous dispatch
+  (the Agent tool's default when ``run_in_background`` is unset) returns before the subagent
+  has done anything (``async_launched``); it is recorded and not gated here, and its
+  subagent is still judged at its stop.
 
 The vocabulary is the hook protocol's, not convoy's: exit 0 means nothing to say, exit
 2 means stderr is feedback. Nothing enters a model's context on a green gate.
@@ -672,6 +675,21 @@ def _decide_dispatch(
             return HookResult(HOOK_EXIT_SILENT, notice, record)
         return HookResult(
             HOOK_EXIT_FEEDBACK, _orchestrator_header(agent_id, phases) + line + brief, record
+        )
+    if _string(payload.get('tool_input'), 'isolation') == 'worktree':
+        # The agent worked in a worktree of its own and the judge left no record of it, so the
+        # only tree this firing can run the gate in is the orchestrator's checkout: a green
+        # there says nothing about the agent's work. Said once, not gated.
+        who = f'subagent {agent_id}' if agent_id else 'the subagent'
+        return HookResult(
+            HOOK_EXIT_SILENT,
+            f'convoy gate: {who} was not judged — it was worktree-isolated and the judge '
+            f'left no record, and this tree is not its worktree.\n',
+            _record(
+                payload,
+                outcome='skipped',
+                reason='worktree-isolated dispatch with no judge record: not gated in this tree',
+            ),
         )
     phases = parse_phase_markers(_string(payload.get('tool_input'), 'prompt'))
     gated = _gate(payload, tree, phases, env, hold)

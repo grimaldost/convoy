@@ -531,6 +531,67 @@ def test_the_messenger_ignores_a_stale_or_foreign_verdict(tmp_path: Path) -> Non
     assert 'reused_from' not in result.record
 
 
+def _marker_check(marker: Path) -> str:
+    """A blocking check that leaves *marker* behind when it runs, then fails."""
+    code = f"open('{marker.as_posix()}', 'w').close(); raise SystemExit(1)"
+    return _check('marks', f'"{sys.executable}" -c "{code}"')
+
+
+def test_a_worktree_isolated_dispatch_with_no_judge_record_is_reported_unjudged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / 'proj'
+    marker = tmp_path / 'ran.marker'
+    _project(root, _marker_check(marker))
+    env = _env_trusting(tmp_path, root)
+    payload = _payload(root, tool_input={'isolation': 'worktree'})
+    assert run_hook(json.dumps(payload).encode(), env) == HOOK_EXIT_SILENT
+    assert not marker.exists()
+    err = capsys.readouterr().err
+    assert err.startswith('convoy gate: ')
+    assert 'was not judged' in err and 'worktree-isolated' in err
+    assert 'a1b909db97960854e' in err
+    (line,) = _log_lines(root)
+    assert line['outcome'] == 'skipped'
+    assert 'worktree-isolated' in line['reason'] and 'no judge record' in line['reason']
+    assert line['exit_code'] == HOOK_EXIT_SILENT
+    assert line['leg'] == 'messenger'
+
+
+def test_a_dispatch_without_isolation_and_no_judge_record_still_runs_the_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / 'proj'
+    marker = tmp_path / 'ran.marker'
+    _project(root, _marker_check(marker))
+    env = _env_trusting(tmp_path, root)
+    assert run_hook(json.dumps(_payload(root)).encode(), env) == HOOK_EXIT_FEEDBACK
+    assert marker.exists()
+    assert 'BLOCKED' in capsys.readouterr().err
+    (line,) = _log_lines(root)
+    assert line['outcome'] == 'blocked'
+
+
+def test_a_worktree_isolated_dispatch_still_reuses_a_judge_record(tmp_path: Path) -> None:
+    root = tmp_path / 'proj'
+    marker = tmp_path / 'ran.marker'
+    _project(root, _marker_check(marker))
+    env = _env_trusting(tmp_path, root)
+    stored = {
+        'ts': datetime.now(UTC).isoformat(timespec='seconds'),
+        'event': 'SubagentStop',
+        'agent_id': 'a1b909db97960854e',
+        'session_id': 'session-0000',
+        'outcome': 'blocked',
+        'repair_brief': 'stored-brief-marker',
+    }
+    (root / '.convoy' / 'hook.log').write_text(json.dumps(stored) + '\n', encoding='utf-8')
+    result = decide(_payload(root, tool_input={'isolation': 'worktree'}), env)
+    assert result.exit_code == HOOK_EXIT_FEEDBACK
+    assert 'stored-brief-marker' in result.stderr
+    assert not marker.exists()
+
+
 def test_the_plugin_ships_the_judge_too() -> None:
     hooks = json.loads(
         (Path(__file__).parent.parent / 'hooks' / 'hooks.json').read_text(encoding='utf-8')

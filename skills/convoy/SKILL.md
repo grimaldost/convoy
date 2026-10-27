@@ -419,7 +419,9 @@ brief to scope the gate to that tag's checks (a tag no check declares is reporte
 narrowed). Exit codes are the hook protocol's (0 silent, 2 feedback), not convoy's. Gate
 cost: the judge runs the checks once per writing subagent stop (twice when it blocks);
 the messenger reuses that verdict and runs the gate itself only when no judge record
-exists for that agent and session, or the record is older than an hour. The hook's
+exists for that agent and session, or the record is older than an hour; for an agent
+dispatched with `isolation: "worktree"` and no judge record it runs no gate (that tree is
+the orchestrator's checkout, not the agent's) and says on stderr that the agent was not judged. The hook's
 timeout is 1800 s; each check is bounded by the spec's `timeout_seconds`, and a gate
 whose checks together exceed the hook timeout is killed by Claude Code — the one path on
 which nothing is said. Keep the sum within 1500 s, the gate budget, which leaves 30 s for
@@ -466,6 +468,11 @@ The cases in which the worktree's work is not judged:
 - The agent works in a separate repository nested in the project, not a worktree of it: the
   project is judged, and the verdict says so (an exit-0 stderr line on a green, which Claude
   Code keeps out of the model's context, and `tree_mismatch: true` in `hook.log`).
+- The orchestrator dispatched the agent with `isolation: "worktree"` and the judge left no
+  record (for example the judge could not run at the agent's stop): the messenger runs no gate
+  in its own checkout; an exit-0 stderr line saying the agent was not judged, and a `skipped`
+  line in `hook.log`. Isolation declared in an agent's definition rather than in the call is
+  not recognised.
 
 Commit the spec and trust it with a pin before relying on worktree isolation, and never run
 `convoy gate --trust` inside an agent's worktree.
