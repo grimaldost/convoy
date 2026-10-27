@@ -431,3 +431,17 @@ def test_the_role_tables_are_not_called_per_phase(doc: str) -> None:
         'the budget and tool tables are keyed by the governance role (implementation / '
         'review / fix), not by phase; say "per role":\n' + '\n'.join(offenders)
     )
+
+
+def test_the_convoy_gate_section_names_the_per_check_timeout_key() -> None:
+    """An operator who reads ``timed out after`` in a result must find the key that bounds it."""
+    body = _text('skills', 'convoy', 'SKILL.md')
+    section = body.split('### `convoy_gate`', 1)[1].split('### `convoy_status`', 1)[0]
+    assert '[governance] timeout_seconds' in section
+
+
+def test_the_unreleased_changelog_states_what_trust_pins_in_a_linked_worktree() -> None:
+    text = _text('CHANGELOG.md')
+    unreleased = text.split('## [Unreleased]', 1)[1].split('\n## [', 1)[0]
+    flat = ' '.join(unreleased.split())
+    assert any('linked worktree' in s and 'judge.lock.' in s for s in flat.split('. '))

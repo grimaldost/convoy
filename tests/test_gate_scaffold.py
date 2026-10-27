@@ -1,6 +1,8 @@
 """Tests for the per-project gate scaffold (interface/gate_scaffold.py, ``convoy gate --init``)."""
 
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -23,6 +25,7 @@ from convoy.interface.gate_service import (
     JUDGE_MIN_WAIT_SECONDS,
     find_gate_spec,
     load_gate_spec_file,
+    spec_digest,
 )
 from convoy.interface.hook import judge_wait_seconds
 
@@ -388,3 +391,96 @@ def test_explicit_gate_on_an_untrusted_project_notes_the_unarmed_hook(
     assert trusted.exit_code == EXIT_OK
     again = runner.invoke(cli.app, ['gate', '-w', str(root)])
     assert 'hook is not armed' not in again.stderr
+
+
+# --- trust inside a linked git worktree: which root is pinned (CONV-B75 follow-up) -----------
+
+
+_SPEC_TEXT = (
+    '[series]'
+    + chr(10)
+    + 'id = "{series_id}"'
+    + chr(10)
+    + chr(10)
+    + '[[checks]]'
+    + chr(10)
+    + 'name = "{check}"'
+    + chr(10)
+    + 'run = "exit 0"'
+    + chr(10)
+    + 'blocking = true'
+    + chr(10)
+    + 'independent = false'
+    + chr(10)
+)
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.com', *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _repo_and_linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """A repository with a committed gate spec, and a linked worktree made beside it."""
+    project = tmp_path / 'proj'
+    (project / '.convoy').mkdir(parents=True)
+    (project / '.convoy' / 'gate.toml').write_text(
+        _SPEC_TEXT.format(series_id='c', check='x'),
+        encoding='utf-8',
+    )
+    _git(project, 'init', '-q', '-b', 'main')
+    _git(project, 'add', '-A')
+    _git(project, 'commit', '-q', '-m', 'spec')
+    worktree = tmp_path / 'agent'
+    _git(project, 'worktree', 'add', '-q', '-b', 'agent', str(worktree))
+    return project, worktree
+
+
+def _pinned(home: Path) -> dict[str, str]:
+    """The trust list as ``{root: spec_sha256}``."""
+    listed = tomllib.loads((home / 'hook-trust.toml').read_text(encoding='utf-8'))
+    return {entry['root']: entry['spec_sha256'] for entry in listed['projects']}
+
+
+def test_gate_trust_in_a_linked_worktree_with_its_own_spec_pins_the_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / 'home'
+    monkeypatch.setenv('CONVOY_HOME', str(home))
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    project, worktree = _repo_and_linked_worktree(tmp_path)
+    assert (worktree / '.convoy' / 'gate.toml').is_file()
+    # What the worktree holds is what gets pinned, whatever the project's spec says.
+    (worktree / '.convoy' / 'gate.toml').write_text(
+        _SPEC_TEXT.format(series_id='edited', check='y'),
+        encoding='utf-8',
+    )
+    result = runner.invoke(cli.app, ['gate', '--trust', '-w', str(worktree)])
+    assert result.exit_code == EXIT_OK, result.stderr
+    pinned = _pinned(home)
+    assert set(pinned) == {worktree.resolve().as_posix()}
+    assert pinned[worktree.resolve().as_posix()] == spec_digest(worktree / '.convoy' / 'gate.toml')
+    assert project.resolve().as_posix() not in pinned
+
+
+def test_gate_trust_in_a_linked_worktree_without_a_spec_pins_the_main_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / 'home'
+    monkeypatch.setenv('CONVOY_HOME', str(home))
+    monkeypatch.delenv('CLAUDE_PROJECT_DIR', raising=False)
+    project, worktree = _repo_and_linked_worktree(tmp_path)
+    (worktree / '.convoy' / 'gate.toml').unlink()
+    # An uncommitted edit in the main checkout is pinned as it stands on disk.
+    spec = project / '.convoy' / 'gate.toml'
+    spec.write_text(spec.read_text(encoding='utf-8') + '# uncommitted' + chr(10), encoding='utf-8')
+    result = runner.invoke(cli.app, ['gate', '--trust', '-w', str(worktree)])
+    assert result.exit_code == EXIT_OK, result.stderr
+    pinned = _pinned(home)
+    assert set(pinned) == {project.resolve().as_posix()}
+    assert pinned[project.resolve().as_posix()] == spec_digest(spec)
+    assert worktree.resolve().as_posix() not in pinned
