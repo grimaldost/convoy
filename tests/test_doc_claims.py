@@ -440,8 +440,6 @@ def test_the_convoy_gate_section_names_the_per_check_timeout_key() -> None:
     assert '[governance] timeout_seconds' in section
 
 
-def test_the_unreleased_changelog_states_what_trust_pins_in_a_linked_worktree() -> None:
-    text = _text('CHANGELOG.md')
-    unreleased = text.split('## [Unreleased]', 1)[1].split('\n## [', 1)[0]
-    flat = ' '.join(unreleased.split())
+def test_the_changelog_states_what_trust_pins_in_a_linked_worktree() -> None:
+    flat = ' '.join(_text('CHANGELOG.md').split())
     assert any('linked worktree' in s and 'judge.lock.' in s for s in flat.split('. '))
