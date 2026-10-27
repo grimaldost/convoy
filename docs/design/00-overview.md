@@ -8,7 +8,7 @@
 ## 1. What convoy is
 
 You give convoy a **series** — a set of PR-sized tasks with dependencies, a base
-branch, per-phase budgets, and a quality gate. convoy drives a coding agent to
+branch, per-role budgets, and a quality gate. convoy drives a coding agent to
 implement each PR, checks the result against the gate, repairs on failure,
 integrates the branches, and records **per-spawn economy** (tokens, turns, cost,
 duration) as a versioned, machine-readable trace.
@@ -159,7 +159,7 @@ safeguards — postdates this founding doc and has its own doc:
 
 - **C1 spec + dag** — convoy's own series schema (general-purpose, self-documenting,
   versioned): `[series]`, `[branches]`, `[paths]` (absolute), `[governance]`
-  (per-phase model/effort/permission/budget/tools), `[[checks]]` (the gate — each
+  (model/effort/permission, and per-role budget/tools), `[[checks]]` (the gate — each
   a `name` / `run` / `blocking`, plus an optional `independent = true` marker),
   `[[prs]]` (id, branch, prompt, phase, depends_on). Plain TOML value types so a
   machine-regenerated spec round-trips. `dag` orders PRs by phase + `depends_on`
