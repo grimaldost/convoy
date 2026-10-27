@@ -15,6 +15,25 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- **`convoy validate` scopes its gate-budget warning, and the skill names the per-check timeout.**
+  The warning put the hook-timeout consequence (Claude Code kills a hook that outlasts it, or a
+  waiting firing gives up) in front of every gate-only file, though a file given only to
+  `convoy_gate` or `convoy gate <file>` never runs under the hook. It now says "if this file is
+  the project's hook spec" before that consequence and that such a file does not run under the
+  hook timeout. The `convoy_gate` section of `skills/convoy/SKILL.md` names `[governance]
+  timeout_seconds` as the per-check timeout a gate-only file sets, so an operator who reads
+  `timed out after` in a result knows which key to raise. A check's own `detail` is unchanged: it
+  is copied into the repair brief the judged agent reads, and no hint to raise the timeout belongs
+  there.
+- **`convoy gate --trust` run inside a linked worktree: what it pins.** Inside a linked worktree
+  that carries its own `.convoy/gate.toml`, `--trust` pins that worktree's root and spec, and a
+  firing in it takes `.convoy/judge.lock` beside the worktree's own hook log (`judge_lock_path`
+  in `hook.py`) unless the worktree is judged by the project's spec, when it takes
+  `.convoy/judge.lock.` followed by 16 hex digits (`visiting_lock_path`). Inside a linked worktree
+  without one, `--trust` pins the main checkout's root and its spec as it stands on disk,
+  uncommitted edits included, from a tree the operator did not name. Both cases are now tested;
+  the recipe's rule "Never run `--trust` inside an agent's worktree" states its reason for each.
+  No behaviour changes.
 - **The Workflow gate recipe describes the worktree fix below.** In
   [`docs/recipes/workflow-gate.md`](docs/recipes/workflow-gate.md) the "Read this first" warning
   and the known limit that a worktree-isolated agent is judged against the main checkout are

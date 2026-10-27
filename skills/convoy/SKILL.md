@@ -128,6 +128,11 @@ with the `run_id` it returns.
   the ones scoped to a named tag). Tags selecting zero checks are refused as a usage
   error rather than answered green.
 
+Each check is bounded by the file's `[governance] timeout_seconds`, the per-check timeout a
+gate-only file sets; a check that reads `timed out after <n>s` in a result ran past it. An
+operator raises that key in the gate file. A file given only to `convoy_gate` never runs under
+the hook, so the hook's 1800 s timeout does not bound it.
+
 ### `convoy_status`
 
 - `series_file` (required) — absolute path to the series.toml whose run you want the

@@ -345,8 +345,10 @@ To use it:
 
 - **Trust the spec from the project**, with a pin: `convoy gate --trust --workspace <project>`.
   Commit it before starting isolated agents if they should run their own copy. Never run
-  `--trust` inside an agent's worktree: that would pin whatever spec the worktree holds. No
-  message from convoy asks for it there; the advice names the project.
+  `--trust` inside an agent's worktree. A worktree that carries its own `.convoy/gate.toml`
+  would have the pin trust whatever the worktree holds; one without would record the main
+  checkout's spec as it stands on disk, uncommitted edits included, from a tree the operator
+  did not name. No message from convoy asks for it there; the advice names the project.
 - Give each parallel writer its own worktree. Writers that share one checkout are not safe: the
   judge lock makes their gates take turns, but each gate judges whatever the others have half
   written. Worktrees judged by the project's spec each take a judge lock of their own, so they do

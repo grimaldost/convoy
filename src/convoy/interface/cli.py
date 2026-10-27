@@ -228,6 +228,10 @@ def _gate_budget_warning(checks: int, timeout_seconds: int) -> str:
     The threshold is ``GATE_BUDGET_SECONDS``, the one the scaffold fits its checks into
     and the hook plans its wait against, not the bare hook timeout: a gate between the two
     fits the timeout but leaves a firing that finds the tree busy too little time to wait.
+
+    The hook consequence is stated conditionally: only the project's own spec ever runs
+    under the hook, and a file given to ``convoy_gate``, or to ``convoy gate`` as an
+    argument, is bounded by its checks' own timeouts alone.
     """
     worst_case = checks * timeout_seconds
     if worst_case <= GATE_BUDGET_SECONDS:
@@ -245,7 +249,11 @@ def _gate_budget_warning(checks: int, timeout_seconds: int) -> str:
             f'{JUDGE_MIN_WAIT_SECONDS} s for a firing to wait while another firing gates the '
             'same tree, so with this gate such a firing waits less, or not at all, and gives up'
         )
-    return f'{found}: {consequence}. Lower timeout_seconds or split the checks.'
+    return (
+        f"{found}: if this file is the project's hook spec, {consequence}. "
+        'A file only ever given to convoy_gate, or to `convoy gate` as an argument, never '
+        'runs under the hook timeout. Lower timeout_seconds or split the checks.'
+    )
 
 
 class _SeriesFlagRejected(typer.BadParameter):

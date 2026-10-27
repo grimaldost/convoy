@@ -289,6 +289,15 @@ def test_validate_warns_when_a_gate_leaves_a_waiting_firing_no_room(
     assert 'wait' in result.stderr
 
 
+def test_the_budget_warning_scopes_the_hook_consequence_to_the_hook_spec() -> None:
+    """A file only ever given to ``convoy_gate`` never runs under the hook timeout."""
+    for checks, timeout in ((6, 300), (7, 300)):  # between the budget and the timeout; past it
+        assert "if this file is the project's hook spec" in cli._gate_budget_warning(
+            checks, timeout
+        )
+    assert cli._gate_budget_warning(1, 300) == ''
+
+
 def test_validate_stays_quiet_when_a_gate_fits_the_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
