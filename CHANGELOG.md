@@ -13,6 +13,15 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The manual, the plugin manifests and the design overview call the budget and tool tables "per role".**
+  `[governance.budgets]` and `[governance.tools]` are keyed by the role (implementation, review, fix),
+  not by `[[prs]].phase`, yet `skills/convoy/SKILL.md`, `.claude-plugin/plugin.json`,
+  `.claude-plugin/marketplace.json` and `docs/design/00-overview.md` still said "per-phase".
+  `tests/test_doc_claims.py` now guards those four files with the three it already guarded.
+  Wording only; no behaviour changes.
+
 ## [0.18.0] - 2026-10-27
 
 **Minor**, by the test in `docs/design/02-formats.md`: two entries below carry

@@ -2,7 +2,7 @@
 description: >-
   Two separable capabilities, dispatched separately. (1) Execute an already-settled plan of
   two or more PR-sized changes as a governed, measured series — a coding agent driven
-  through each task in dependency order under a per-phase budget, each result gated
+  through each task in dependency order under a per-role budget, each result gated
   deterministically, repaired on a red gate, the green branches integrated, and a per-spawn
   economy plus gate summary read back. The trigger is the plan, not convoy's own file: use
   when a spec, plan or PR manifest already names two or more PR-sized changes; when a wave
@@ -27,7 +27,7 @@ This document describes convoy `0.18.0`, locked to `.claude-plugin/plugin.json` 
 then costs a glance at this line rather than a walk through the plugin cache.
 
 convoy runs a **governed, measurable multi-PR series**. You give it a series
-(PR-sized tasks with dependencies, a base branch, per-phase budgets, and a
+(PR-sized tasks with dependencies, a base branch, per-role budgets, and a
 quality gate); it drives a coding agent to implement each PR in dependency order
 under budget, gates the result against the series' checks, repairs on a blocking
 failure, integrates the green branches, and records **per-spawn economy** (tokens,
@@ -782,7 +782,7 @@ count. The gate checks themselves are local commands (near-free).
   run clean (a `kind: "seat"` pre-flight problem) instead of at that PR after branches
   were staged. It stops at the first dead model. `dry_run` never spawns, probe included.
 
-Per-phase budgets are hard caps: a spawn cut off by its `--max-budget-usd` is treated
+Per-role budgets are hard caps: a spawn cut off by its `--max-budget-usd` is treated
 as truncated, untrustworthy work — the run halts `budget` (exit 4) rather than gating
 a partial result. Set budgets with headroom.
 

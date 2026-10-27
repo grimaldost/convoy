@@ -412,9 +412,16 @@ def test_the_skill_names_no_model_id() -> None:
 
 # `[governance.budgets]` and `[governance.tools]` are keyed by the governance role
 # (implementation / review / fix); "phase" is the `[[prs]].phase` grouping tag. These files
-# say so. skills/convoy/SKILL.md and the plugin manifests join this list once the CONV-B75
-# branch has landed.
-_ROLE_TABLE_DOCS = ('README.md', 'docs/design/02-formats.md', 'docs/authoring-series.md')
+# say so.
+_ROLE_TABLE_DOCS = (
+    'README.md',
+    'docs/design/02-formats.md',
+    'docs/authoring-series.md',
+    'skills/convoy/SKILL.md',
+    '.claude-plugin/plugin.json',
+    '.claude-plugin/marketplace.json',
+    'docs/design/00-overview.md',
+)
 _PER_PHASE = re.compile(r'(?i)per[- ]phase')
 _ROLE_TABLE_WORDS = re.compile(r'(?i)budget|cap|ceiling|allow-list|tool')
 
