@@ -13,6 +13,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-27
+
+**Patch**, by the test in `docs/design/02-formats.md`: neither entry below carries
+**(consumer-affecting)**; one is a wording change in the manual and manifests, the other a test
+behaviour outside a git repository.
+
+The manual, the plugin manifests and the design overview now call the budget and tool tables
+"per role", as the governance keys are, and the doc-claims tests that read `railform frame` skip
+instead of failing in a snapshot without `.git`.
+
 ### Changed
 
 - The seven tests of `tests/test_doc_claims.py` that read `railform frame` skip, with the reason
