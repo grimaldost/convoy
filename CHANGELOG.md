@@ -15,6 +15,9 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Changed
 
+- The seven tests of `tests/test_doc_claims.py` that read `railform frame` skip, with the reason
+  `not inside a git repository`, in a snapshot without `.git` (a `lab run` copy) instead of failing;
+  CONTRIBUTING says so and names the throwaway `git init` that runs them.
 - **The manual, the plugin manifests and the design overview call the budget and tool tables "per role".**
   `[governance.budgets]` and `[governance.tools]` are keyed by the role (implementation, review, fix),
   not by `[[prs]].phase`, yet `skills/convoy/SKILL.md`, `.claude-plugin/plugin.json`,
