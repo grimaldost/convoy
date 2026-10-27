@@ -28,6 +28,22 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ### Fixed
 
+- **A worktree-isolated dispatch with no judge record is reported unjudged, not gated in the
+  orchestrator's checkout.** **(consumer-affecting)** — the hook's behaviour changes for that
+  case. With no judge record for the agent, the `PostToolUse` messenger ran the gate in the tree
+  it found, which for an agent dispatched with `isolation: "worktree"` is the orchestrator's
+  checkout, so a red that existed only in the agent's worktree read as a silent green. When the
+  payload's `tool_input.isolation` is `"worktree"` and no judge record is found, the messenger now
+  runs no gate: it exits 0 with a stderr line, `convoy gate: subagent <id> was not judged — it was
+  worktree-isolated ...`, and appends a `skipped` line to `hook.log` with a reason naming the
+  case (an existing outcome value, so no consumer meets a new one). A dispatch without worktree
+  isolation and with no judge record behaves as before, because that path is also the fallback
+  when the judge could not run at the agent's stop. Isolation declared in an agent's definition
+  and Workflow agents are not covered; the recipe lists them. That a `PostToolUse` payload carries
+  the `Agent` call's `isolation` key is inferred from a recorded call, not captured live.
+  The recipe's table of unjudged cases, the serving design, the skill and the CONV-B75 status say
+  the same.
+
 - **A worktree-isolated subagent is judged in its own worktree, not the main checkout.**
   **(consumer-affecting)** — the gate spec discovery order changes, and `hook.log` lines
   gain fields. `find_gate_spec` tried `$CLAUDE_PROJECT_DIR/.convoy/gate.toml` before the walk
