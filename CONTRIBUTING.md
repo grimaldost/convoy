@@ -49,7 +49,10 @@ The unit suite spends no money and spawns no real agent — if it suddenly takes
 much longer than ~30 s, a real spawn has leaked past the `tests/conftest.py`
 guard; treat the runtime jump as a failure. The tests in `tests/test_doc_claims.py`
 that read the pipeline run `railform` at the commit `ci.yml` pins, through
-`uv run --with`, so the first run on a machine needs the network.
+`uv run --with`, so the first run on a machine needs the network. They need a git repository too: in a
+snapshot without `.git` (a `lab run` copy) the seven that read `railform frame` skip, with the
+reason `not inside a git repository`; a throwaway `git init` in the snapshot runs them (no commit
+is needed).
 
 ## Workflow
 

@@ -26,6 +26,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -165,12 +166,36 @@ def _railform_pin() -> str:
     return match.group(1)
 
 
+def _inside_repository() -> bool:
+    """Whether ``_ROOT`` is the root of a git repository.
+
+    ``railform frame`` needs one. A snapshot of the tracked files without ``.git`` (a ``lab run``
+    copy) has none, and a copy nested in some other repository answers with that repository's root,
+    not ``_ROOT``; both count as no repository.
+    """
+    try:
+        done = subprocess.run(
+            ['git', 'rev-parse', '--show-toplevel'],
+            cwd=_ROOT,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            timeout=60,
+            check=False,
+        )
+    except OSError:
+        return False
+    return done.returncode == 0 and Path(done.stdout.strip()).resolve() == _ROOT.resolve()
+
+
 def _run_railform(*args: str, env: dict[str, str] | None = None) -> str:
     """Run ``railform <args>`` at the pinned commit, through an interpreter launch (never a
     console-script shim), and return its output without the closing verdict line.
 
     Needs the network the first time a commit is installed, like the CI jobs that do the same.
     """
+    if not _inside_repository():
+        pytest.skip('not inside a git repository')
     uv = shutil.which('uv')
     assert uv is not None, 'uv is not on PATH'
     done = subprocess.run(
@@ -197,6 +222,26 @@ def _run_railform(*args: str, env: dict[str, str] | None = None) -> str:
     return '\n'.join(
         line for line in done.stdout.splitlines() if not line.startswith('railform-verdict:')
     )
+
+
+def test_the_railform_reading_tests_skip_outside_a_git_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A snapshot without ``.git`` skips the tests that read ``railform frame``, with its reason."""
+    monkeypatch.setattr(sys.modules[__name__], '_ROOT', tmp_path)
+    with pytest.raises(pytest.skip.Exception, match='not inside a git repository'):
+        _run_railform('frame', '--json')
+
+
+def test_a_missing_git_executable_skips_the_railform_reading_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _no_git(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError('git')
+
+    monkeypatch.setattr(subprocess, 'run', _no_git)
+    with pytest.raises(pytest.skip.Exception, match='not inside a git repository'):
+        _run_railform('frame', '--json')
 
 
 @functools.cache

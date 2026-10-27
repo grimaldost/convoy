@@ -13,6 +13,12 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- The seven tests of `tests/test_doc_claims.py` that read `railform frame` skip, with the reason
+  `not inside a git repository`, in a snapshot without `.git` (a `lab run` copy) instead of failing;
+  CONTRIBUTING says so and names the throwaway `git init` that runs them.
+
 ## [0.18.0] - 2026-10-27
 
 **Minor**, by the test in `docs/design/02-formats.md`: two entries below carry
