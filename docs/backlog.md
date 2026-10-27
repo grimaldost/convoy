@@ -1243,7 +1243,7 @@ separate repository nested in the project) writes it to stderr and `hook.log` re
 `convoy_gate` given the worktree judges the same tree as the hook. **(consumer-affecting:
 discovery order, new `hook.log` fields)**
 
-**Status.** Built, unreleased; no version bump until the owner sets the measurement window.
+**Status.** Built; served by 0.18.0.
 Not judged: a differing worktree spec or an anchor spec changed since trust (refused once and
 let through, reported by the messenger); a worktree spec nothing trusted vouches for under an
 anchor with no spec (a stderr line and an `untrusted` log line); a separate repository nested

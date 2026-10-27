@@ -13,6 +13,19 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-27
+
+**Minor**, by the test in `docs/design/02-formats.md`: two entries below carry
+**(consumer-affecting)** — the gate spec discovery order and the `hook.log` fields of a
+worktree-isolated subagent's verdict, and the hook's report of a worktree-isolated dispatch that
+has no judge record.
+
+A subagent dispatched with worktree isolation is now judged in its own worktree instead of the
+main checkout, and the orchestrator's messenger says so when such a dispatch was not judged at
+all instead of running the gate in its own tree. Alongside them, `convoy validate` scopes its
+gate-budget warning, the skill names the per-check timeout key, and the Workflow gate recipe and
+the `--trust` notes describe the new behaviour.
+
 ### Changed
 
 - **`convoy validate` scopes its gate-budget warning, and the skill names the per-check timeout.**
