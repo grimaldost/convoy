@@ -6,7 +6,7 @@
     "email": "grimaldosj93@gmail.com"
   },
   "metadata": {
-    "description": "Governed, measurable multi-PR execution for agents — a dependency-ordered PR series, driven under a per-phase budget, gated, repaired, and integrated, with a structured per-spawn economy + gate summary."
+    "description": "Governed, measurable multi-PR execution for agents — a dependency-ordered PR series, driven under a per-role budget, gated, repaired, and integrated, with a structured per-spawn economy + gate summary."
   },
   "plugins": [
     {
