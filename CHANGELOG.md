@@ -13,6 +13,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **CI, the commit hooks and the tag-watch move to railform 0.4.0.** `railform adopt` at `3e6f27f` rewrites
+  the pin (from `300d175`) in `.github/workflows/ci.yml`, `.github/workflows/railform-tag-watch.yml` and
+  `.pre-commit-config.yaml`, the two `.githooks/` wrappers, and the `runs-on` line of the caller-level
+  `gate` job. `pr-text` gains two findings, `unclosed-fence` and `carriage-return`, that fail a pull
+  request body with an unclosed fence or a lone carriage return. From this pin `railform private-refs`,
+  in the hook and in CI, judges home-directory paths only: no project gate checks names, and that check
+  takes an environment's egress hook, which railform does not ship. No engine behaviour changes.
+
 ## [0.18.1] - 2026-10-27
 
 **Patch**, by the test in `docs/design/02-formats.md`: neither entry below carries
