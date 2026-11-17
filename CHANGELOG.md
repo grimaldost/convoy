@@ -13,6 +13,13 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+### Security
+
+- **The lock takes opentelemetry-api 1.45.2**, which fixes the medium-severity advisory behind Dependabot
+  alert #51. The development lock also takes hypothesis 6.170.13, ruff 0.17.3 and ty 0.0.94; ty 0.0.94
+  deprecates `Iterator[T]` as the return type of a `@contextmanager` function, so `isolated_config`,
+  `workspace_lock` and `judge_lock` are annotated `Generator[T]`. No behaviour changes.
+
 ### Changed
 
 - **CI, the commit hooks and the tag-watch move to railform 0.4.0.** `railform adopt` at `3e6f27f` rewrites
