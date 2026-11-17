@@ -1,7 +1,7 @@
 """Suite-wide guards.
 
-No unit test may reach a real agent spawn. Two autouse guards hold that, one per
-spawn-reaching path:
+No unit test may reach a real agent spawn or a real credential. Two autouse guards hold the
+first, one per spawn-reaching path:
 
 - **The seat probe** is the spawn-reaching path inside ``run_series_headless`` that even a
   fully stubbed run crosses, so it is neutralized for every test by default — a test that
@@ -18,6 +18,9 @@ spawn-reaching path:
 
 Without these, a machine with a live ``claude`` seat spends real money per suite run and a
 machine without one fails with a seat problem.
+
+A third autouse guard pins ``CLAUDE_CONFIG_DIR`` to an empty per-test directory, so the seat
+probe's free credential check never reads the developer's real config dir.
 """
 
 import shutil
@@ -50,6 +53,21 @@ def _no_real_convoy_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     monkeypatch.setenv('CONVOY_HOME', str(tmp_path / '.convoy-home'))
     monkeypatch.delenv('CONVOY_TRUSTED_ROOTS', raising=False)
     monkeypatch.delenv('CONVOY_GATE_SPEC', raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_claude_config_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Every test sees its own empty Claude config dir, outside ``tmp_path``.
+
+    The seat probe's free credential check reads the operator's real config dir when a test
+    passes no ``environ``; a developer whose on-disk credential was expired saw 13 failures
+    that CI, which has no credential, never sees.
+    """
+    # Beside ``tmp_path``, not inside it: tests that assert their own tree is empty must not see it.
+    config_dir = tmp_path_factory.mktemp('claude-config')
+    monkeypatch.setenv('CLAUDE_CONFIG_DIR', str(config_dir))
 
 
 @pytest.fixture(autouse=True)
