@@ -12,7 +12,7 @@ run lock's file name, so nothing that reads the run lock can mistake one for the
 
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -121,7 +121,7 @@ def remove_stale_lock(workspace: Path) -> bool:
 
 
 @contextmanager
-def workspace_lock(workspace: Path) -> Iterator[None]:
+def workspace_lock(workspace: Path) -> Generator[None]:
     """Hold an exclusive lock on ``workspace`` for the duration of the ``with`` block.
 
     Raises :class:`WorkspaceBusyError` if the lock is already held. Always releases the
@@ -242,7 +242,7 @@ def _busy_message(path: Path, wait_seconds: float) -> str:
 
 
 @contextmanager
-def judge_lock(path: Path, *, wait_seconds: float, poll_seconds: float) -> Iterator[None]:
+def judge_lock(path: Path, *, wait_seconds: float, poll_seconds: float) -> Generator[None]:
     """Hold the advisory lock file at *path* for the ``with`` block, waiting up to *wait_seconds*.
 
     The hook's lock: one firing at a time gates a tree and writes its log line, where

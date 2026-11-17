@@ -27,7 +27,7 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,7 +133,7 @@ def write_isolation_settings(config_dir: Path, cwd: Path) -> Path:
 
 
 @contextmanager
-def isolated_config(environ: Mapping[str, str] | None = None) -> Iterator[IsolatedConfig]:
+def isolated_config(environ: Mapping[str, str] | None = None) -> Generator[IsolatedConfig]:
     """Yield a temp credential-only config dir, removed on exit (incl. on exception).
 
     Creates a fresh temp dir outside any workspace, copies only the auth credential from
