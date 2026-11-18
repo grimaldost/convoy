@@ -30,6 +30,10 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
   in the hook and in CI, judges home-directory paths only: no project gate checks names, and that check
   takes an environment's egress hook, which railform does not ship. No engine behaviour changes.
 
+- **The unit suite pins `CLAUDE_CONFIG_DIR` to an empty per-test directory**, so the seat-probe tests no
+  longer read the developer's real credential and no longer fail on a machine whose on-disk credential is
+  expired. Tests only; no behaviour changes.
+
 ## [0.18.1] - 2026-10-27
 
 **Patch**, by the test in `docs/design/02-formats.md`: neither entry below carries
