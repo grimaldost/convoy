@@ -20,7 +20,7 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 behaviour.
 
 The lock takes opentelemetry-api 1.45.2, the fix for Dependabot alert #51, together with the
-development-tool bumps. CI, the commit hooks and the tag-watch move to railform 0.4.0. The unit suite
+other lock bumps of the 2026-11-01 round and the development-tool bumps. CI, the commit hooks and the tag-watch move to railform 0.4.0. The unit suite
 pins `CLAUDE_CONFIG_DIR`, so the seat-probe tests no longer read the developer's credential.
 
 ### Security
@@ -29,6 +29,12 @@ pins `CLAUDE_CONFIG_DIR`, so the seat-probe tests no longer read the developer's
   alert #51. The development lock also takes hypothesis 6.170.13, ruff 0.17.3 and ty 0.0.94; ty 0.0.94
   deprecates `Iterator[T]` as the return type of a `@contextmanager` function, so `isolated_config`,
   `workspace_lock` and `judge_lock` are annotated `Generator[T]`. No behaviour changes.
+
+- **The 2026-11-01 lock round (#144), recorded here:** filelock 3.32.4 to 4.2.4 and virtualenv 21.7.13
+  to 21.14.13 move past the open Dependabot alerts, and typer 0.27.2 to 0.27.3 is the one runtime package
+  in the round that the lock records. In development, ruff 0.16.9 to 0.17.1, pre-commit 4.6.2 to 4.7.0,
+  hypothesis 6.168.3 to 6.170.1, packaging 26.2 to 26.3 and python-discovery 1.6.0 to 1.9.0; ruff and
+  hypothesis then moved again, to the versions in the entry above. No behaviour changes.
 
 ### Changed
 
