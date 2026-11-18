@@ -13,6 +13,16 @@ discipline in [docs/design/02-formats.md](docs/design/02-formats.md).
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-11-17
+
+**Patch**, by the test in `docs/design/02-formats.md`: no entry below carries
+**(consumer-affecting)**; the entries are dependency, tooling and test changes with no change to engine
+behaviour.
+
+The lock takes opentelemetry-api 1.45.2, the fix for Dependabot alert #51, together with the
+development-tool bumps. CI, the commit hooks and the tag-watch move to railform 0.4.0. The unit suite
+pins `CLAUDE_CONFIG_DIR`, so the seat-probe tests no longer read the developer's credential.
+
 ### Security
 
 - **The lock takes opentelemetry-api 1.45.2**, which fixes the medium-severity advisory behind Dependabot
