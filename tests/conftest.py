@@ -1,7 +1,14 @@
 """Suite-wide guards.
 
-No unit test may reach a real agent spawn or a real credential. Two autouse guards hold the
-first, one per spawn-reaching path:
+No unit test may reach a real agent spawn or a real credential. Four autouse guards hold this.
+Two keep a test off the developer's real state, one per path to it:
+
+- **The convoy home** is pinned to a per-test directory under ``tmp_path``, and the trusted-roots
+  and gate-spec overrides are cleared, so no test reads or writes the real trust list or oracles.
+- **The Claude config dir** (``CLAUDE_CONFIG_DIR``) is pinned to an empty per-test directory, so
+  the seat probe's free credential check never reads the developer's real one.
+
+Two keep a test off a real spawn, one per spawn-reaching path:
 
 - **The seat probe** is the spawn-reaching path inside ``run_series_headless`` that even a
   fully stubbed run crosses, so it is neutralized for every test by default — a test that
@@ -18,9 +25,6 @@ first, one per spawn-reaching path:
 
 Without these, a machine with a live ``claude`` seat spends real money per suite run and a
 machine without one fails with a seat problem.
-
-A third autouse guard pins ``CLAUDE_CONFIG_DIR`` to an empty per-test directory, so the seat
-probe's free credential check never reads the developer's real config dir.
 """
 
 import shutil
